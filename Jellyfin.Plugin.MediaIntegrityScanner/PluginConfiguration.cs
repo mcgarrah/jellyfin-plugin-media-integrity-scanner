@@ -41,7 +41,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>
     /// Gets or sets a value indicating whether Phase 2 deep scanning is enabled.
     /// </summary>
-    public bool EnableDeepScan { get; set; } = false;
+    public bool EnableDeepScan { get; set; }
 
     /// <summary>
     /// Gets or sets the maximum read rate in MB/s for scanning I/O.
@@ -51,7 +51,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>
     /// Gets or sets a value indicating whether scanning is restricted to quiet hours.
     /// </summary>
-    public bool UseQuietHoursOnly { get; set; } = false;
+    public bool UseQuietHoursOnly { get; set; }
 
     /// <summary>
     /// Gets or sets the start of the quiet hours window (HH:mm format).
