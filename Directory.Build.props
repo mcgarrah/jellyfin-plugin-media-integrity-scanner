@@ -1,0 +1,21 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>Jellyfin.Plugin.MediaIntegrityScanner</RootNamespace>
+    <AssemblyName>Jellyfin.Plugin.MediaIntegrityScanner</AssemblyName>
+    <LangVersion>13.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Authors>mcgarrah</Authors>
+    <Company>mcgarrah</Company>
+    <Product>Jellyfin Media Integrity Scanner Plugin</Product>
+    <Copyright>Copyright © 2026 mcgarrah</Copyright>
+    <RepositoryUrl>https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner</RepositoryUrl>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+</Project>

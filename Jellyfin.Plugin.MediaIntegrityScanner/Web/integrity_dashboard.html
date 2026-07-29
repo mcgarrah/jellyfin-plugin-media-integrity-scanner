@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Media Integrity Scanner</title>
+    <style>
+        .integrity-dashboard { padding: 1em 2em; font-family: inherit; }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1em;
+            margin: 1.5em 0;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 1.2em;
+            text-align: center;
+        }
+        .stat-value { font-size: 2em; font-weight: bold; margin: 0.2em 0; }
+        .stat-label { opacity: 0.7; font-size: 0.9em; }
+        .status-pass { color: #4caf50; }
+        .status-fail { color: #f44336; }
+        .status-pending { color: #ff9800; }
+        .status-scanning { color: #2196f3; }
+        .health-bar {
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 1em 0;
+        }
+        .health-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        .btn {
+            padding: 0.5em 1.2em;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin-right: 0.5em;
+        }
+        .btn-primary { background: #00a4dc; color: white; }
+        .btn-danger { background: #f44336; color: white; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .controls { margin: 1em 0; display: flex; gap: 0.5em; align-items: center; }
+        .placeholder-msg {
+            padding: 2em;
+            text-align: center;
+            opacity: 0.6;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="integrity-dashboard">
+        <h1>Media Integrity Scanner</h1>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Library Health</div>
+                <div class="stat-value status-pass" id="health-pct">&mdash;</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Files</div>
+                <div class="stat-value" id="total-files">&mdash;</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Passed</div>
+                <div class="stat-value status-pass" id="passed-files">&mdash;</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Failed</div>
+                <div class="stat-value status-fail" id="failed-files">&mdash;</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Pending</div>
+                <div class="stat-value status-pending" id="pending-files">&mdash;</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Status</div>
+                <div class="stat-value status-scanning" id="scan-status">Idle</div>
+            </div>
+        </div>
+
+        <div class="health-bar">
+            <div class="health-bar-fill" id="health-bar"
+                 style="width: 0%; background: #4caf50;"></div>
+        </div>
+
+        <div class="controls">
+            <button class="btn btn-primary" id="btn-scan-headers" onclick="triggerScan(false)">
+                Run Header Scan
+            </button>
+            <button class="btn btn-primary" id="btn-scan-deep" onclick="triggerScan(true)">
+                Run Deep Scan
+            </button>
+            <button class="btn btn-danger" id="btn-cancel" onclick="cancelScan()" disabled>
+                Cancel Scan
+            </button>
+        </div>
+
+        <div class="placeholder-msg">
+            <p>Plugin is in early development. Dashboard functionality coming soon.</p>
+            <p>See <a href="https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner">GitHub</a> for progress.</p>
+        </div>
+    </div>
+
+    <script>
+        // Placeholder — API integration will be added once the controller is implemented
+        function triggerScan(deep) {
+            console.log('Scan triggered (deep=' + deep + ') — not yet implemented');
+        }
+        function cancelScan() {
+            console.log('Cancel triggered — not yet implemented');
+        }
+    </script>
+</body>
+</html>

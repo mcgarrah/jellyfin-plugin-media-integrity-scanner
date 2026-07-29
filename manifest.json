@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c",
+    "name": "Media Integrity Scanner",
+    "description": "Validates media file integrity using FFmpeg. Detects corrupt, truncated, and damaged files without impacting playback.",
+    "overview": "Production-safe media integrity scanning with two-phase validation, I/O throttling, and admin dashboard.",
+    "owner": "mcgarrah",
+    "category": "General",
+    "versions": [
+      {
+        "version": "0.1.0.0",
+        "changelog": "Initial development scaffold. Plugin structure and interfaces only — not yet functional.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner",
+        "checksum": "",
+        "timestamp": "2026-07-29T00:00:00Z"
+      }
+    ]
+  }
+]

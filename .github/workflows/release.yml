@@ -1,0 +1,37 @@
+name: Release Plugin
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build Release
+        run: dotnet publish --configuration Release --output ./publish
+
+      - name: Package
+        run: |
+          cd publish
+          zip -r ../media-integrity-scanner-${{ github.ref_name }}.zip .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: media-integrity-scanner-${{ github.ref_name }}.zip
+          generate_release_notes: true
