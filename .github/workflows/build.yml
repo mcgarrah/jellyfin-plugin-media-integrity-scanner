@@ -1,0 +1,43 @@
+name: Build Plugin
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore --verbosity normal
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore --verbosity normal
+
+      # Tests will be added once test project exists
+      # - name: Test
+      #   run: dotnet test --no-restore --verbosity normal
+
+      - name: Publish
+        run: dotnet publish --configuration Release --output ./artifacts --no-build
+
+      - name: List artifacts
+        run: ls -la ./artifacts/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: media-integrity-scanner
+          path: ./artifacts/
+          retention-days: 30
