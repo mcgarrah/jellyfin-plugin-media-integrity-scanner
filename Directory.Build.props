@@ -11,11 +11,11 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Authors>mcgarrah</Authors>
-    <Company>mcgarrah</Company>
+    <Authors>Michael McGarrah</Authors>
+    <Company>Michael McGarrah</Company>
     <Product>Jellyfin Media Integrity Scanner Plugin</Product>
-    <Copyright>Copyright © 2026 mcgarrah</Copyright>
+    <Copyright>Copyright © 2026 Michael McGarrah &lt;mcgarrah@gmail.com&gt;</Copyright>
     <RepositoryUrl>https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner</RepositoryUrl>
-    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <PackageLicenseExpression>GPL-2.0-or-later</PackageLicenseExpression>
   </PropertyGroup>
 </Project>

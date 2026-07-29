@@ -181,7 +181,9 @@ Contributions welcome once the initial architecture stabilizes. Please open an i
 
 ## License
 
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
+Copyright © 2026 Michael McGarrah &lt;mcgarrah@gmail.com&gt;
+
+This project is licensed under the [GNU General Public License v2.0 or later](LICENSE) — the same license as [Jellyfin server](https://github.com/jellyfin/jellyfin), chosen to keep the door open for potential inclusion as a core Jellyfin plugin.
 
 ## Acknowledgments
 
