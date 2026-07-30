@@ -21,7 +21,7 @@ using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Plugins;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaIntegrityScanner.EventHandlers;
@@ -30,7 +30,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.EventHandlers;
 /// Monitors Jellyfin library events to trigger scans on new items
 /// and purge records on removed items.
 /// </summary>
-public class LibraryMonitor : IServerEntryPoint, IDisposable
+public class LibraryMonitor : IHostedService, IDisposable
 {
     private readonly ILibraryManager _library;
     private readonly IScanEngine _scanner;
@@ -60,13 +60,28 @@ public class LibraryMonitor : IServerEntryPoint, IDisposable
     /// <summary>
     /// Registers library event handlers on server startup.
     /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A completed task.</returns>
-    public Task RunAsync()
+    public Task StartAsync(CancellationToken cancellationToken)
     {
         _library.ItemAdded += OnItemAdded;
         _library.ItemRemoved += OnItemRemoved;
 
         _logger.LogInformation("Library event monitor registered");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Unregisters library event handlers on server shutdown.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A completed task.</returns>
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        _library.ItemAdded -= OnItemAdded;
+        _library.ItemRemoved -= OnItemRemoved;
+
+        _logger.LogInformation("Library event monitor unregistered");
         return Task.CompletedTask;
     }
 

@@ -41,6 +41,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<SqliteDatabaseManager>();
 
         // Event handlers
-        serviceCollection.AddSingleton<IServerEntryPoint, LibraryMonitor>();
+        serviceCollection.AddHostedService<LibraryMonitor>();
     }
 }
