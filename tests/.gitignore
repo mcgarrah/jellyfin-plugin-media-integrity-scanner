@@ -1,0 +1,4 @@
+# Integration test artifacts (generated at runtime)
+jellyfin-config/
+jellyfin-cache/
+test-media/

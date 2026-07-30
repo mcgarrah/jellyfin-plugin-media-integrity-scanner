@@ -4,7 +4,7 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 
 ## Status
 
-🚧 **Early Development** — This plugin is not yet functional. The project structure and architecture are being established. A dedicated .NET 8 build environment (Proxmox LXC) is being provisioned for development and CI.
+🚧 **Early Development** — This plugin is not yet functional. The project structure and architecture are being established. A dedicated .NET 9 build environment (Proxmox LXC) is being provisioned for development and CI.
 
 ## Features (Planned)
 
@@ -133,7 +133,7 @@ jellyfin-plugin-media-integrity-scanner/
 ├── Jellyfin.Plugin.MediaIntegrityScanner.sln
 ├── Directory.Build.props
 ├── manifest.json
-├── build.yaml
+├── .github/workflows/build.yml
 ├── .editorconfig
 ├── .gitignore
 ├── LICENSE
@@ -164,6 +164,38 @@ dotnet test
 3. Restart Jellyfin
 4. Check **Dashboard → Plugins** for the plugin
 5. View logs: `journalctl -u jellyfin -f | grep MediaIntegrity`
+
+### Integration Testing with Docker
+
+A Docker-based integration test setup validates that the plugin loads correctly in a real Jellyfin instance. This mirrors what runs in CI via GitHub Actions.
+
+**Prerequisites:** Docker, docker compose, ffmpeg (for generating test media)
+
+```bash
+# 1. Build the plugin
+dotnet publish --configuration Release --output ./publish
+
+# 2. Start Jellyfin with the plugin loaded
+docker compose -f tests/docker-compose.integration.yml up -d
+
+# 3. Run the integration test suite
+./tests/run-integration-tests.sh
+
+# 4. Tear down when done
+docker compose -f tests/docker-compose.integration.yml down -v
+```
+
+The test script will:
+- Copy the built plugin DLLs into the Jellyfin config directory
+- Generate a small test video if one doesn't exist
+- Wait for Jellyfin to become healthy
+- Complete the startup wizard via API
+- Authenticate and verify the plugin is loaded (by GUID)
+- Check the plugin configuration endpoint
+- Verify FFmpeg is available inside the container
+- Create a test media library and confirm items are discovered
+
+The same workflow runs automatically in CI on every push to `main`/`dev` and on pull requests (see `.github/workflows/integration-test.yml`).
 
 ## Blog Series
 

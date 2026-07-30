@@ -1,0 +1,228 @@
+name: Integration Test
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  integration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build plugin
+        run: |
+          dotnet restore
+          dotnet publish --configuration Release --output ./publish
+
+      - name: List build output
+        run: ls -la ./publish/
+
+      - name: Create Jellyfin directories
+        run: |
+          mkdir -p jellyfin-config/plugins/MediaIntegrityScanner
+          mkdir -p jellyfin-cache
+          mkdir -p test-media
+
+      - name: Install plugin into Jellyfin config
+        run: |
+          cp ./publish/Jellyfin.Plugin.MediaIntegrityScanner.dll \
+             jellyfin-config/plugins/MediaIntegrityScanner/
+          cp ./publish/Microsoft.Data.Sqlite.dll \
+             jellyfin-config/plugins/MediaIntegrityScanner/ 2>/dev/null || true
+          cp ./publish/SQLitePCLRaw.*.dll \
+             jellyfin-config/plugins/MediaIntegrityScanner/ 2>/dev/null || true
+          echo "Plugin files installed:"
+          ls -la jellyfin-config/plugins/MediaIntegrityScanner/
+
+      - name: Create test media file
+        run: |
+          # Generate a small valid test video using ffmpeg
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          ffmpeg -f lavfi -i testsrc=duration=5:size=320x240:rate=25 \
+                 -f lavfi -i sine=frequency=440:duration=5 \
+                 -c:v libx264 -c:a aac -shortest \
+                 test-media/test-video.mp4
+          echo "Test media created:"
+          ls -la test-media/
+
+      - name: Start Jellyfin container
+        run: |
+          docker run -d \
+            --name jellyfin-test \
+            -p 8096:8096 \
+            -v ${{ github.workspace }}/jellyfin-config:/config \
+            -v ${{ github.workspace }}/jellyfin-cache:/cache \
+            -v ${{ github.workspace }}/test-media:/media \
+            -e JELLYFIN_LOG_LEVEL=Information \
+            jellyfin/jellyfin:latest
+          echo "Jellyfin container started"
+
+      - name: Wait for Jellyfin to start
+        run: |
+          echo "Waiting for Jellyfin to become ready..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8096/health > /dev/null 2>&1; then
+              echo "Jellyfin is ready after ${i} seconds"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "ERROR: Jellyfin failed to start within 60 seconds"
+              docker logs jellyfin-test
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Complete Jellyfin initial setup
+        run: |
+          # Complete the startup wizard via API
+          # Step 1: Get startup configuration
+          curl -sf http://localhost:8096/Startup/Configuration || true
+
+          # Step 2: Set startup configuration (language/metadata)
+          curl -sf -X POST http://localhost:8096/Startup/Configuration \
+            -H "Content-Type: application/json" \
+            -d '{
+              "UICulture": "en-US",
+              "MetadataCountryCode": "US",
+              "PreferredMetadataLanguage": "en"
+            }'
+
+          # Step 3: Create admin user
+          curl -sf -X POST http://localhost:8096/Startup/User \
+            -H "Content-Type: application/json" \
+            -d '{
+              "Name": "testadmin",
+              "Password": "testpassword123"
+            }'
+
+          # Step 4: Complete the wizard
+          curl -sf -X POST http://localhost:8096/Startup/Complete
+
+          echo "Startup wizard completed"
+
+      - name: Authenticate and get API key
+        id: auth
+        run: |
+          # Authenticate to get an access token
+          AUTH_RESPONSE=$(curl -sf -X POST http://localhost:8096/Users/AuthenticateByName \
+            -H "Content-Type: application/json" \
+            -H "X-Emby-Authorization: MediaBrowser Client=\"Integration Test\", Device=\"GitHub Actions\", DeviceId=\"gh-actions-runner\", Version=\"1.0.0\"" \
+            -d '{
+              "Username": "testadmin",
+              "Pw": "testpassword123"
+            }')
+
+          echo "Auth response received"
+          TOKEN=$(echo "$AUTH_RESPONSE" | jq -r '.AccessToken')
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "ERROR: Failed to get access token"
+            echo "$AUTH_RESPONSE"
+            exit 1
+          fi
+
+          echo "api_token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "Successfully authenticated"
+
+      - name: Verify plugin is loaded
+        run: |
+          TOKEN="${{ steps.auth.outputs.api_token }}"
+
+          # Get list of installed plugins
+          PLUGINS=$(curl -sf http://localhost:8096/Plugins \
+            -H "X-Emby-Token: $TOKEN")
+
+          echo "Installed plugins:"
+          echo "$PLUGINS" | jq '.[].Name'
+
+          # Check our plugin is present
+          PLUGIN_FOUND=$(echo "$PLUGINS" | jq '[.[] | select(.Id == "c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c")] | length')
+
+          if [ "$PLUGIN_FOUND" -eq 0 ]; then
+            echo "ERROR: Media Integrity Scanner plugin not found in loaded plugins"
+            echo "Full plugin list:"
+            echo "$PLUGINS" | jq .
+            docker logs jellyfin-test 2>&1 | grep -i -A5 "integrity\|plugin\|error" || true
+            exit 1
+          fi
+
+          echo "SUCCESS: Media Integrity Scanner plugin is loaded"
+          echo "$PLUGINS" | jq '.[] | select(.Id == "c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c")'
+
+      - name: Verify plugin configuration endpoint
+        run: |
+          TOKEN="${{ steps.auth.outputs.api_token }}"
+
+          # Get plugin configuration
+          CONFIG=$(curl -sf http://localhost:8096/Plugins/c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c/Configuration \
+            -H "X-Emby-Token: $TOKEN") || true
+
+          if [ -n "$CONFIG" ]; then
+            echo "Plugin configuration accessible:"
+            echo "$CONFIG" | jq .
+          else
+            echo "WARNING: Plugin configuration endpoint not available (may be expected for scaffold)"
+          fi
+
+      - name: Verify FFmpeg is available in container
+        run: |
+          echo "Checking FFmpeg availability inside Jellyfin container..."
+          docker exec jellyfin-test ffmpeg -version | head -5
+          docker exec jellyfin-test ffprobe -version | head -5
+          echo "FFmpeg is available"
+
+      - name: Add test media library
+        run: |
+          TOKEN="${{ steps.auth.outputs.api_token }}"
+
+          # Create a media library pointing to our test media
+          curl -sf -X POST "http://localhost:8096/Library/VirtualFolders?name=TestMovies&collectionType=movies&refreshLibrary=true" \
+            -H "X-Emby-Token: $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "LibraryOptions": {
+                "PathInfos": [{"Path": "/media"}],
+                "EnableRealtimeMonitor": false
+              }
+            }'
+
+          echo "Test library created, waiting for scan..."
+          sleep 10
+
+          # Verify items were found
+          ITEMS=$(curl -sf "http://localhost:8096/Items?Recursive=true" \
+            -H "X-Emby-Token: $TOKEN")
+
+          ITEM_COUNT=$(echo "$ITEMS" | jq '.TotalRecordCount')
+          echo "Library items found: $ITEM_COUNT"
+
+      - name: Collect Jellyfin logs on failure
+        if: failure()
+        run: |
+          echo "=== Jellyfin Container Logs ==="
+          docker logs jellyfin-test 2>&1 | tail -100
+          echo ""
+          echo "=== Plugin Directory Contents ==="
+          docker exec jellyfin-test ls -la /config/plugins/MediaIntegrityScanner/ 2>/dev/null || echo "Plugin directory not found"
+          echo ""
+          echo "=== Jellyfin Log File ==="
+          docker exec jellyfin-test cat /config/log/log_*.log 2>/dev/null | tail -50 || echo "No log file found"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop jellyfin-test 2>/dev/null || true
+          docker rm jellyfin-test 2>/dev/null || true

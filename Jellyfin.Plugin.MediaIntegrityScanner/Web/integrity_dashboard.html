@@ -62,19 +62,30 @@
         .btn-primary { background: #00a4dc; color: white; }
         .btn-danger { background: #f44336; color: white; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .controls { margin: 1em 0; display: flex; gap: 0.5em; align-items: center; }
-        .placeholder-msg {
-            padding: 2em;
-            text-align: center;
-            opacity: 0.6;
-            font-style: italic;
+        .controls { margin: 1em 0; display: flex; gap: 0.5em; align-items: center; flex-wrap: wrap; }
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1em;
         }
+        .results-table th,
+        .results-table td {
+            padding: 0.6em 1em;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .results-table th { opacity: 0.7; font-weight: 600; }
+        .filter-row { display: flex; gap: 1em; margin: 1em 0; align-items: center; }
+        .pagination { display: flex; gap: 0.5em; margin-top: 1em; align-items: center; }
+        .error-msg { color: #f44336; font-style: italic; margin: 1em 0; }
+        .loading { opacity: 0.5; font-style: italic; }
     </style>
 </head>
 <body>
     <div class="integrity-dashboard">
         <h1>Media Integrity Scanner</h1>
 
+        <!-- Status Overview -->
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-label">Library Health</div>
@@ -107,6 +118,7 @@
                  style="width: 0%; background: #4caf50;"></div>
         </div>
 
+        <!-- Controls -->
         <div class="controls">
             <button class="btn btn-primary" id="btn-scan-headers" onclick="triggerScan(false)">
                 Run Header Scan
@@ -117,22 +129,246 @@
             <button class="btn btn-danger" id="btn-cancel" onclick="cancelScan()" disabled>
                 Cancel Scan
             </button>
+            <select id="filter-status" onchange="loadResults()">
+                <option value="">All Results</option>
+                <option value="2">Failed Only</option>
+                <option value="1">Passed Only</option>
+                <option value="0">Pending Only</option>
+                <option value="3">Errors Only</option>
+            </select>
         </div>
 
-        <div class="placeholder-msg">
-            <p>Plugin is in early development. Dashboard functionality coming soon.</p>
-            <p>See <a href="https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner">GitHub</a> for progress.</p>
-        </div>
+        <!-- Error display -->
+        <div id="error-msg" class="error-msg" style="display:none;"></div>
+
+        <!-- Results Table -->
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th>File</th>
+                    <th>Status</th>
+                    <th>Phase</th>
+                    <th>Last Scanned</th>
+                    <th>Duration</th>
+                    <th>Error</th>
+                </tr>
+            </thead>
+            <tbody id="results-body">
+                <tr><td colspan="6" class="loading">Loading...</td></tr>
+            </tbody>
+        </table>
+
+        <!-- Pagination -->
+        <div class="pagination" id="pagination"></div>
     </div>
 
     <script>
-        // Placeholder — API integration will be added once the controller is implemented
+        // Jellyfin's ApiClient handles authentication automatically within plugin pages
+        var currentPage = 1;
+        var pageSize = 50;
+        var refreshInterval = null;
+
+        function getApiUrl(path) {
+            return ApiClient.getUrl('MediaIntegrity/' + path);
+        }
+
+        function apiFetch(path, options) {
+            var url = getApiUrl(path);
+            var opts = Object.assign({
+                headers: {
+                    'X-Emby-Token': ApiClient.accessToken()
+                }
+            }, options || {});
+            return fetch(url, opts).then(function(resp) {
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                return resp.json();
+            });
+        }
+
+        function loadStatus() {
+            apiFetch('Status').then(function(data) {
+                document.getElementById('health-pct').textContent =
+                    data.healthPercentage + '%';
+                document.getElementById('total-files').textContent =
+                    data.totalFiles;
+                document.getElementById('passed-files').textContent =
+                    data.passedFiles;
+                document.getElementById('failed-files').textContent =
+                    data.failedFiles;
+                document.getElementById('pending-files').textContent =
+                    data.pendingFiles;
+                document.getElementById('scan-status').textContent =
+                    data.isScanning ? 'Scanning...' : 'Idle';
+                document.getElementById('health-bar').style.width =
+                    data.healthPercentage + '%';
+
+                // Update button states
+                document.getElementById('btn-cancel').disabled = !data.isScanning;
+                document.getElementById('btn-scan-headers').disabled = data.isScanning;
+                document.getElementById('btn-scan-deep').disabled = data.isScanning;
+
+                // Color the health bar based on percentage
+                var bar = document.getElementById('health-bar');
+                if (data.healthPercentage >= 95) {
+                    bar.style.background = '#4caf50';
+                } else if (data.healthPercentage >= 80) {
+                    bar.style.background = '#ff9800';
+                } else {
+                    bar.style.background = '#f44336';
+                }
+
+                hideError();
+            }).catch(function(err) {
+                showError('Failed to load status: ' + err.message);
+            });
+        }
+
+        function loadResults() {
+            var status = document.getElementById('filter-status').value;
+            var params = 'Results?page=' + currentPage + '&pageSize=' + pageSize;
+            if (status) params += '&status=' + status;
+
+            apiFetch(params).then(function(data) {
+                renderResults(data);
+                renderPagination(data);
+                hideError();
+            }).catch(function(err) {
+                showError('Failed to load results: ' + err.message);
+            });
+        }
+
+        function renderResults(data) {
+            var tbody = document.getElementById('results-body');
+            if (!data.items || data.items.length === 0) {
+                tbody.innerHTML =
+                    '<tr><td colspan="6">No results yet. Run a scan to begin.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.items.map(function(item) {
+                var filename = item.filePath ? item.filePath.split('/').pop().split('\\').pop() : '—';
+                var statusClass = getStatusClass(item.scanStatus);
+                var statusLabel = getStatusLabel(item.scanStatus);
+                var phaseLabel = item.scanPhase === 1 ? 'Header' : 'Full Decode';
+                var timestamp = formatDate(item.scanTimestamp);
+                var duration = item.scanDurationMs ? (item.scanDurationMs / 1000).toFixed(1) + 's' : '—';
+                var error = item.errorOutput
+                    ? '<span title="' + escapeHtml(item.errorOutput) + '">' +
+                      escapeHtml(item.errorOutput.substring(0, 50)) + '...</span>'
+                    : '—';
+
+                return '<tr>' +
+                    '<td title="' + escapeHtml(item.filePath || '') + '">' + escapeHtml(filename) + '</td>' +
+                    '<td class="status-' + statusClass + '">' + statusLabel + '</td>' +
+                    '<td>' + phaseLabel + '</td>' +
+                    '<td>' + timestamp + '</td>' +
+                    '<td>' + duration + '</td>' +
+                    '<td>' + error + '</td>' +
+                    '</tr>';
+            }).join('');
+        }
+
+        function renderPagination(data) {
+            var totalPages = Math.ceil(data.totalCount / pageSize);
+            var container = document.getElementById('pagination');
+
+            if (totalPages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+
+            var html = '';
+            if (currentPage > 1) {
+                html += '<button class="btn btn-primary" onclick="goToPage(' + (currentPage - 1) + ')">&laquo; Prev</button>';
+            }
+            html += '<span>Page ' + currentPage + ' of ' + totalPages +
+                    ' (' + data.totalCount + ' total)</span>';
+            if (currentPage < totalPages) {
+                html += '<button class="btn btn-primary" onclick="goToPage(' + (currentPage + 1) + ')">Next &raquo;</button>';
+            }
+            container.innerHTML = html;
+        }
+
+        function goToPage(page) {
+            currentPage = page;
+            loadResults();
+        }
+
         function triggerScan(deep) {
-            console.log('Scan triggered (deep=' + deep + ') — not yet implemented');
+            apiFetch('Scan', {
+                method: 'POST',
+                headers: {
+                    'X-Emby-Token': ApiClient.accessToken(),
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ deepScan: deep })
+            }).then(function() {
+                setTimeout(loadStatus, 1000);
+            }).catch(function(err) {
+                if (err.message.indexOf('409') >= 0) {
+                    showError('A scan is already in progress.');
+                } else {
+                    showError('Failed to trigger scan: ' + err.message);
+                }
+            });
         }
+
         function cancelScan() {
-            console.log('Cancel triggered — not yet implemented');
+            apiFetch('Cancel', {
+                method: 'POST',
+                headers: {
+                    'X-Emby-Token': ApiClient.accessToken()
+                }
+            }).then(function() {
+                setTimeout(loadStatus, 1000);
+            }).catch(function(err) {
+                showError('Failed to cancel scan: ' + err.message);
+            });
         }
+
+        function getStatusClass(status) {
+            var classes = ['pending', 'pass', 'fail', 'fail'];
+            return classes[status] || 'pending';
+        }
+
+        function getStatusLabel(status) {
+            var labels = ['Pending', 'Pass', 'Fail', 'Error'];
+            return labels[status] || 'Unknown';
+        }
+
+        function formatDate(iso) {
+            if (!iso) return '—';
+            try {
+                return new Date(iso).toLocaleString();
+            } catch (e) {
+                return iso;
+            }
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;')
+                      .replace(/</g, '&lt;')
+                      .replace(/>/g, '&gt;')
+                      .replace(/"/g, '&quot;');
+        }
+
+        function showError(msg) {
+            var el = document.getElementById('error-msg');
+            el.textContent = msg;
+            el.style.display = 'block';
+        }
+
+        function hideError() {
+            document.getElementById('error-msg').style.display = 'none';
+        }
+
+        // Initial load
+        loadStatus();
+        loadResults();
+
+        // Auto-refresh status every 10 seconds
+        refreshInterval = setInterval(loadStatus, 10000);
     </script>
 </body>
 </html>
