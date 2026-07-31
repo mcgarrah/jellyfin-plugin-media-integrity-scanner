@@ -134,10 +134,8 @@ public class ScanEngine : IScanEngine, IDisposable
             }
             else
             {
-                _logger.LogWarning(
-                    "Scan failed: {File} — {Error}",
-                    item.Path,
-                    result.ErrorOutput?.Split('\n').FirstOrDefault());
+                var firstError = GetFirstLine(result.ErrorOutput);
+                _logger.LogWarning("Scan failed: {File} — {Error}", item.Path, firstError);
             }
         }
         catch (OperationCanceledException)
@@ -244,6 +242,17 @@ public class ScanEngine : IScanEngine, IDisposable
         }
     }
 
+    private static string? GetFirstLine(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+
+        var idx = text.IndexOf('\n');
+        return idx >= 0 ? text.Substring(0, idx).TrimEnd('\r') : text;
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -252,6 +261,7 @@ public class ScanEngine : IScanEngine, IDisposable
             _scanLock.Dispose();
             _cts?.Dispose();
             _disposed = true;
+            GC.SuppressFinalize(this);
         }
     }
 }

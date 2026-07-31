@@ -164,6 +164,7 @@ public class LibraryMonitor : IHostedService, IDisposable
             _library.ItemAdded -= OnItemAdded;
             _library.ItemRemoved -= OnItemRemoved;
             _disposed = true;
+            GC.SuppressFinalize(this);
         }
     }
 }
