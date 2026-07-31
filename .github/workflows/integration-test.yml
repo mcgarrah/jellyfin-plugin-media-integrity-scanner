@@ -23,8 +23,8 @@ jobs:
 
       - name: Build plugin
         run: |
-          dotnet restore
-          dotnet publish --configuration Release --output ./publish
+          dotnet restore Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
 
       - name: List build output
         run: ls -la ./publish/
