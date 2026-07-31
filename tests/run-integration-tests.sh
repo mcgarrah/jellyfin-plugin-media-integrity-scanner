@@ -1,7 +1,7 @@
 #!/bin/bash
 # Integration test runner for local development
 # Prerequisites:
-#   - Plugin built: dotnet publish --configuration Release --output ./publish
+#   - Plugin built and placed in ./publish (build via CI or cross-compile)
 #   - Docker Compose running: docker compose -f tests/docker-compose.integration.yml up -d
 #
 # This script mirrors the GitHub Actions integration-test.yml workflow steps.
@@ -32,11 +32,10 @@ mkdir -p "$SCRIPT_DIR/jellyfin-config/plugins/MediaIntegrityScanner"
 mkdir -p "$SCRIPT_DIR/jellyfin-cache"
 mkdir -p "$SCRIPT_DIR/test-media"
 
-# Copy plugin DLLs
+# Copy plugin DLLs (must be pre-built — dotnet is not available in WSL)
 if [ ! -d "$PROJECT_ROOT/publish" ]; then
-    info "Building plugin..."
-    cd "$PROJECT_ROOT"
-    dotnet publish --configuration Release --output ./publish
+    fail "Plugin not built. The ./publish directory does not exist.
+    Build via CI or on the LXC build environment, then copy artifacts to ./publish/"
 fi
 
 cp "$PROJECT_ROOT/publish/Jellyfin.Plugin.MediaIntegrityScanner.dll" \
@@ -55,12 +54,12 @@ if [ ! -f "$SCRIPT_DIR/test-media/test-video.mp4" ]; then
            "$SCRIPT_DIR/test-media/test-video.mp4" -y 2>/dev/null
 fi
 
-# --- Wait for Jellyfin ---
+# --- Wait for Jellyfin health check ---
 
 info "Waiting for Jellyfin to start..."
 for i in $(seq 1 60); do
     if curl -sf "$JELLYFIN_URL/health" > /dev/null 2>&1; then
-        pass "Jellyfin is ready (${i}s)"
+        pass "Jellyfin health check passed (${i}s)"
         break
     fi
     if [ "$i" -eq 60 ]; then
@@ -69,34 +68,83 @@ for i in $(seq 1 60); do
     sleep 1
 done
 
+# --- Wait for Startup Wizard API readiness ---
+
+info "Waiting for startup wizard API to become available..."
+for i in $(seq 1 30); do
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$JELLYFIN_URL/Startup/Configuration")
+    if [ "$HTTP_CODE" = "200" ]; then
+        pass "Startup wizard API ready (${i}s after health check)"
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        fail "Startup wizard API not available after 30 seconds (last HTTP code: $HTTP_CODE)"
+    fi
+    sleep 1
+done
+
 # --- Complete Startup Wizard ---
 
 info "Completing startup wizard..."
 
-curl -sf -X POST "$JELLYFIN_URL/Startup/Configuration" \
+# Step 1: Set startup configuration
+HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+    -X POST "$JELLYFIN_URL/Startup/Configuration" \
     -H "Content-Type: application/json" \
     -d '{
         "UICulture": "en-US",
         "MetadataCountryCode": "US",
         "PreferredMetadataLanguage": "en"
-    }' > /dev/null 2>&1 || true
+    }')
+if [ "$HTTP_CODE" -ge 400 ]; then
+    fail "Startup/Configuration failed with HTTP $HTTP_CODE: $(cat /tmp/response.txt)"
+fi
+info "  Configuration: HTTP $HTTP_CODE"
 
-curl -sf -X POST "$JELLYFIN_URL/Startup/User" \
+# Step 2: Create admin user
+HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+    -X POST "$JELLYFIN_URL/Startup/User" \
     -H "Content-Type: application/json" \
     -d '{
         "Name": "testadmin",
         "Password": "testpassword123"
-    }' > /dev/null 2>&1 || true
+    }')
+if [ "$HTTP_CODE" -ge 400 ]; then
+    fail "Startup/User failed with HTTP $HTTP_CODE: $(cat /tmp/response.txt)"
+fi
+info "  User creation: HTTP $HTTP_CODE"
 
-curl -sf -X POST "$JELLYFIN_URL/Startup/Complete" > /dev/null 2>&1 || true
+# Step 3: Set remote access (required by 10.11 wizard)
+HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+    -X POST "$JELLYFIN_URL/Startup/RemoteAccess" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "EnableRemoteAccess": true,
+        "EnableAutomaticPortMapping": false
+    }')
+info "  Remote access: HTTP $HTTP_CODE"
+# Don't fail on 4xx — endpoint may not exist on all versions
+if [ "$HTTP_CODE" -ge 500 ]; then
+    fail "Startup/RemoteAccess server error HTTP $HTTP_CODE: $(cat /tmp/response.txt)"
+fi
+
+# Step 4: Complete the wizard
+HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+    -X POST "$JELLYFIN_URL/Startup/Complete")
+if [ "$HTTP_CODE" -ge 400 ]; then
+    fail "Startup/Complete failed with HTTP $HTTP_CODE: $(cat /tmp/response.txt)"
+fi
 
 pass "Startup wizard completed"
+
+# Give Jellyfin a moment to reconfigure after wizard completion
+sleep 3
 
 # --- Authenticate ---
 
 info "Authenticating..."
 
-AUTH_RESPONSE=$(curl -sf -X POST "$JELLYFIN_URL/Users/AuthenticateByName" \
+AUTH_RESPONSE=$(curl -s -X POST "$JELLYFIN_URL/Users/AuthenticateByName" \
     -H "Content-Type: application/json" \
     -H "X-Emby-Authorization: MediaBrowser Client=\"Integration Test\", Device=\"Local\", DeviceId=\"local-test\", Version=\"1.0.0\"" \
     -d '{
@@ -107,7 +155,7 @@ AUTH_RESPONSE=$(curl -sf -X POST "$JELLYFIN_URL/Users/AuthenticateByName" \
 TOKEN=$(echo "$AUTH_RESPONSE" | jq -r '.AccessToken')
 
 if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-    fail "Failed to authenticate (no token received)"
+    fail "Failed to authenticate (no token received). Response: $AUTH_RESPONSE"
 fi
 
 pass "Authenticated successfully"
@@ -167,16 +215,19 @@ curl -sf -X POST "$JELLYFIN_URL/Library/VirtualFolders?name=TestMovies&collectio
         }
     }' > /dev/null
 
-sleep 10
-
-ITEMS=$(curl -sf "$JELLYFIN_URL/Items?Recursive=true" -H "X-Emby-Token: $TOKEN")
-ITEM_COUNT=$(echo "$ITEMS" | jq '.TotalRecordCount')
-
-if [ "$ITEM_COUNT" -gt 0 ]; then
-    pass "Media library created with $ITEM_COUNT item(s)"
-else
-    info "Library created but no items detected yet (metadata fetch may be slow)"
-fi
+# Poll for library items instead of fixed sleep
+for i in $(seq 1 30); do
+    ITEMS=$(curl -sf "$JELLYFIN_URL/Items?Recursive=true" -H "X-Emby-Token: $TOKEN")
+    ITEM_COUNT=$(echo "$ITEMS" | jq '.TotalRecordCount')
+    if [ "$ITEM_COUNT" -gt 0 ]; then
+        pass "Media library created with $ITEM_COUNT item(s) (after ${i}s)"
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        info "Library created but no items detected after 30s (metadata fetch may be slow)"
+    fi
+    sleep 1
+done
 
 # --- Summary ---
 

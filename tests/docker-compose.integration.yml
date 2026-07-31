@@ -10,7 +10,7 @@
 
 services:
   jellyfin:
-    image: jellyfin/jellyfin:latest
+    image: jellyfin/jellyfin:10.11.11
     container_name: jellyfin-integration-test
     ports:
       - "8096:8096"
