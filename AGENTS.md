@@ -3,18 +3,27 @@
 ## Development Environment
 
 ### Shell & Platform
-- **OS:** Windows 11 with WSL2 (Ubuntu 24.04)
-- **Shell:** zsh inside WSL2
-- **IDE:** VS Code / Kiro connecting to WSL2 Remote
-- **.NET SDK:** Not installed locally in WSL — builds run via GitHub Actions CI only
+- **Host OS:** Windows 11 — but you are NOT running in Windows or PowerShell
+- **Execution environment:** WSL2 (Ubuntu 24.04 LTS) — this is a Linux environment
+- **Shell:** zsh inside WSL2 (bash also available)
+- **IDE:** VS Code / Kiro connecting via WSL2 Remote extension
+- **.NET SDK:** Not installed in WSL — builds run via GitHub Actions CI or the LXC build environment
 - **Git:** Configured in WSL2, pushes to GitHub via HTTPS with `gh` CLI credential helper
 
 ### Important: Shell Execution
-- The workspace is accessed via WSL2 paths (`\\wsl$\Ubuntu-24.04\home\mcgarrah\github\...`)
-- Shell commands must run in a Linux context (bash/zsh), not PowerShell
-- `dotnet` is not available locally — do not attempt local builds
-- Use `gh` CLI for GitHub API access (runs, PRs, issues)
-- Set `GH_PAGER=cat` when using `gh` commands to prevent interactive pager issues
+- **You are in Linux (Ubuntu 24.04).** Use Linux commands, paths, and tooling.
+- Do NOT use PowerShell, `cmd.exe`, or Windows-style paths in commands.
+- The IDE may present paths as `\\wsl$\Ubuntu-24.04\home\mcgarrah\github\...` — these are Windows UNC paths for the IDE's file access. Shell commands use native Linux paths: `/home/mcgarrah/github/...`
+- Do NOT prefix commands with `bash -c` — the shell is already bash/zsh.
+- `dotnet` is not available in WSL — do not attempt local builds here.
+- Use `gh` CLI for GitHub API access (runs, PRs, issues).
+- Set `GH_PAGER=cat` when using `gh` commands to prevent interactive pager issues.
+
+### Build Environment: Proxmox LXC (Debian 13)
+- A dedicated Proxmox LXC container (Debian 13 / Trixie) serves as the .NET 9 build and integration test environment.
+- This container has `dotnet` SDK 9.0, `jellyfin-ffmpeg`, and a test Jellyfin instance.
+- SSH access from WSL to the LXC is available for remote builds when needed.
+- GitHub Actions CI (Ubuntu runners) remains the primary build verification path.
 
 ### Git Configuration
 - Remote: `https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner.git`

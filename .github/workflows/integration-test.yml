@@ -14,17 +14,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup .NET 9
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '9.0.x'
 
       - name: Build plugin
         run: |
-          dotnet restore
-          dotnet publish --configuration Release --output ./publish
+          dotnet restore Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
 
       - name: List build output
         run: ls -la ./publish/
@@ -66,15 +66,15 @@ jobs:
             -v ${{ github.workspace }}/jellyfin-cache:/cache \
             -v ${{ github.workspace }}/test-media:/media \
             -e JELLYFIN_LOG_LEVEL=Information \
-            jellyfin/jellyfin:latest
+            jellyfin/jellyfin:10.11.11
           echo "Jellyfin container started"
 
-      - name: Wait for Jellyfin to start
+      - name: Wait for Jellyfin to be fully ready
         run: |
-          echo "Waiting for Jellyfin to become ready..."
+          echo "Waiting for Jellyfin health check..."
           for i in $(seq 1 60); do
             if curl -sf http://localhost:8096/health > /dev/null 2>&1; then
-              echo "Jellyfin is ready after ${i} seconds"
+              echo "Health check passed after ${i} seconds"
               break
             fi
             if [ "$i" -eq 60 ]; then
@@ -85,39 +85,104 @@ jobs:
             sleep 1
           done
 
+          # Health check passes before initialization completes.
+          # Wait for the startup wizard API to become available.
+          echo "Waiting for startup wizard API..."
+          for i in $(seq 1 60); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8096/Startup/Configuration || true)
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Startup wizard API ready after ${i} additional seconds"
+              break
+            fi
+            echo "  Attempt ${i}: HTTP $HTTP_CODE (waiting...)"
+            if [ "$i" -eq 60 ]; then
+              echo "ERROR: Startup wizard API not available after 60 seconds (last HTTP code: $HTTP_CODE)"
+              docker logs jellyfin-test 2>&1 | tail -30
+              exit 1
+            fi
+            sleep 1
+          done
+
       - name: Complete Jellyfin initial setup
         run: |
           # Complete the startup wizard via API
-          # Step 1: Get startup configuration
-          curl -sf http://localhost:8096/Startup/Configuration || true
-
-          # Step 2: Set startup configuration (language/metadata)
-          curl -sf -X POST http://localhost:8096/Startup/Configuration \
+          # Step 1: Set startup configuration (language/metadata)
+          echo "Setting startup configuration..."
+          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+            -X POST http://localhost:8096/Startup/Configuration \
             -H "Content-Type: application/json" \
             -d '{
               "UICulture": "en-US",
               "MetadataCountryCode": "US",
               "PreferredMetadataLanguage": "en"
-            }'
+            }' || true)
+          echo "  Configuration response: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "  Response body: $(cat /tmp/response.txt)"
+            exit 1
+          fi
 
-          # Step 3: Create admin user
-          curl -sf -X POST http://localhost:8096/Startup/User \
+          # Step 2: Initialize and update admin user
+          # GET /Startup/User triggers user initialization in 10.11+
+          echo "Initializing default user..."
+          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+            http://localhost:8096/Startup/User || true)
+          echo "  Get user response: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "  WARNING: GET /Startup/User returned $HTTP_CODE (response: $(cat /tmp/response.txt 2>/dev/null))"
+          fi
+
+          echo "Setting admin username and password..."
+          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+            -X POST http://localhost:8096/Startup/User \
             -H "Content-Type: application/json" \
             -d '{
               "Name": "testadmin",
               "Password": "testpassword123"
-            }'
+            }' || true)
+          echo "  User creation response: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "  Response body: $(cat /tmp/response.txt)"
+            exit 1
+          fi
+
+          # Step 3: Set remote access (required by 10.11 wizard)
+          echo "Setting remote access..."
+          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+            -X POST http://localhost:8096/Startup/RemoteAccess \
+            -H "Content-Type: application/json" \
+            -d '{
+              "EnableRemoteAccess": true,
+              "EnableAutomaticPortMapping": false
+            }' || true)
+          echo "  Remote access response: HTTP $HTTP_CODE"
+          # RemoteAccess may not exist on all versions, don't fail
+          if [ "$HTTP_CODE" -ge 500 ]; then
+            echo "  Response body: $(cat /tmp/response.txt)"
+            exit 1
+          fi
 
           # Step 4: Complete the wizard
-          curl -sf -X POST http://localhost:8096/Startup/Complete
+          echo "Completing wizard..."
+          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+            -X POST http://localhost:8096/Startup/Complete || true)
+          echo "  Complete response: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "  Response body: $(cat /tmp/response.txt)"
+            exit 1
+          fi
 
-          echo "Startup wizard completed"
+          echo "Startup wizard completed successfully"
+
+          # Give Jellyfin a moment to restart/reconfigure after wizard completion
+          sleep 3
 
       - name: Authenticate and get API key
         id: auth
         run: |
           # Authenticate to get an access token
-          AUTH_RESPONSE=$(curl -sf -X POST http://localhost:8096/Users/AuthenticateByName \
+          echo "Authenticating as testadmin..."
+          AUTH_RESPONSE=$(curl -s -X POST http://localhost:8096/Users/AuthenticateByName \
             -H "Content-Type: application/json" \
             -H "X-Emby-Authorization: MediaBrowser Client=\"Integration Test\", Device=\"GitHub Actions\", DeviceId=\"gh-actions-runner\", Version=\"1.0.0\"" \
             -d '{
@@ -125,12 +190,11 @@ jobs:
               "Pw": "testpassword123"
             }')
 
-          echo "Auth response received"
           TOKEN=$(echo "$AUTH_RESPONSE" | jq -r '.AccessToken')
 
           if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
             echo "ERROR: Failed to get access token"
-            echo "$AUTH_RESPONSE"
+            echo "Response: $AUTH_RESPONSE"
             exit 1
           fi
 
@@ -149,7 +213,7 @@ jobs:
           echo "$PLUGINS" | jq '.[].Name'
 
           # Check our plugin is present
-          PLUGIN_FOUND=$(echo "$PLUGINS" | jq '[.[] | select(.Id == "c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c")] | length')
+          PLUGIN_FOUND=$(echo "$PLUGINS" | jq '[.[] | select(.Id == "c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c")] | length')
 
           if [ "$PLUGIN_FOUND" -eq 0 ]; then
             echo "ERROR: Media Integrity Scanner plugin not found in loaded plugins"
@@ -160,14 +224,14 @@ jobs:
           fi
 
           echo "SUCCESS: Media Integrity Scanner plugin is loaded"
-          echo "$PLUGINS" | jq '.[] | select(.Id == "c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c")'
+          echo "$PLUGINS" | jq '.[] | select(.Id == "c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c")'
 
       - name: Verify plugin configuration endpoint
         run: |
           TOKEN="${{ steps.auth.outputs.api_token }}"
 
           # Get plugin configuration
-          CONFIG=$(curl -sf http://localhost:8096/Plugins/c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c/Configuration \
+          CONFIG=$(curl -sf http://localhost:8096/Plugins/c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c/Configuration \
             -H "X-Emby-Token: $TOKEN") || true
 
           if [ -n "$CONFIG" ]; then
@@ -200,14 +264,21 @@ jobs:
             }'
 
           echo "Test library created, waiting for scan..."
-          sleep 10
 
-          # Verify items were found
-          ITEMS=$(curl -sf "http://localhost:8096/Items?Recursive=true" \
-            -H "X-Emby-Token: $TOKEN")
-
-          ITEM_COUNT=$(echo "$ITEMS" | jq '.TotalRecordCount')
-          echo "Library items found: $ITEM_COUNT"
+          # Poll for library items instead of fixed sleep
+          for i in $(seq 1 30); do
+            ITEMS=$(curl -sf "http://localhost:8096/Items?Recursive=true" \
+              -H "X-Emby-Token: $TOKEN")
+            ITEM_COUNT=$(echo "$ITEMS" | jq '.TotalRecordCount')
+            if [ "$ITEM_COUNT" -gt 0 ]; then
+              echo "Library items found: $ITEM_COUNT (after ${i} seconds)"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "WARNING: No library items detected after 30 seconds (metadata fetch may be slow)"
+            fi
+            sleep 1
+          done
 
       - name: Collect Jellyfin logs on failure
         if: failure()
