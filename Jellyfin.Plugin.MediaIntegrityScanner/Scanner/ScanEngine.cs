@@ -208,18 +208,20 @@ public partial class ScanEngine : IScanEngine, IDisposable
             var items = _library.GetItemList(query);
             LogLibraryScanStarting(items.Count, phase);
 
-            foreach (var item in items)
-            {
-                token.ThrowIfCancellationRequested();
-
-                // Skip if already scanned and file unchanged
-                if (await _db.IsCurrentAsync(item.Id.ToString(), item.Path).ConfigureAwait(false))
+            var maxConcurrent = Math.Max(1, Plugin.Instance?.Configuration?.MaxConcurrentScans ?? 1);
+            await Parallel.ForEachAsync(
+                items,
+                new ParallelOptions { MaxDegreeOfParallelism = maxConcurrent, CancellationToken = token },
+                async (item, ct) =>
                 {
-                    continue;
-                }
+                    // Skip if already scanned and file unchanged
+                    if (await _db.IsCurrentAsync(item.Id.ToString(), item.Path).ConfigureAwait(false))
+                    {
+                        return;
+                    }
 
-                await ScanItemAsync(item, phase, token).ConfigureAwait(false);
-            }
+                    await ScanItemAsync(item, phase, ct).ConfigureAwait(false);
+                }).ConfigureAwait(false);
 
             LogLibraryScanComplete();
         }
