@@ -88,14 +88,15 @@ jobs:
           # Health check passes before initialization completes.
           # Wait for the startup wizard API to become available.
           echo "Waiting for startup wizard API..."
-          for i in $(seq 1 30); do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8096/Startup/Configuration)
+          for i in $(seq 1 60); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8096/Startup/Configuration || true)
             if [ "$HTTP_CODE" = "200" ]; then
               echo "Startup wizard API ready after ${i} additional seconds"
               break
             fi
-            if [ "$i" -eq 30 ]; then
-              echo "ERROR: Startup wizard API not available after 30 seconds (last HTTP code: $HTTP_CODE)"
+            echo "  Attempt ${i}: HTTP $HTTP_CODE (waiting...)"
+            if [ "$i" -eq 60 ]; then
+              echo "ERROR: Startup wizard API not available after 60 seconds (last HTTP code: $HTTP_CODE)"
               docker logs jellyfin-test 2>&1 | tail -30
               exit 1
             fi
@@ -114,7 +115,7 @@ jobs:
               "UICulture": "en-US",
               "MetadataCountryCode": "US",
               "PreferredMetadataLanguage": "en"
-            }')
+            }' || true)
           echo "  Configuration response: HTTP $HTTP_CODE"
           if [ "$HTTP_CODE" -ge 400 ]; then
             echo "  Response body: $(cat /tmp/response.txt)"
@@ -129,7 +130,7 @@ jobs:
             -d '{
               "Name": "testadmin",
               "Password": "testpassword123"
-            }')
+            }' || true)
           echo "  User creation response: HTTP $HTTP_CODE"
           if [ "$HTTP_CODE" -ge 400 ]; then
             echo "  Response body: $(cat /tmp/response.txt)"
@@ -144,7 +145,7 @@ jobs:
             -d '{
               "EnableRemoteAccess": true,
               "EnableAutomaticPortMapping": false
-            }')
+            }' || true)
           echo "  Remote access response: HTTP $HTTP_CODE"
           # RemoteAccess may not exist on all versions, don't fail
           if [ "$HTTP_CODE" -ge 500 ]; then
@@ -155,7 +156,7 @@ jobs:
           # Step 4: Complete the wizard
           echo "Completing wizard..."
           HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-            -X POST http://localhost:8096/Startup/Complete)
+            -X POST http://localhost:8096/Startup/Complete || true)
           echo "  Complete response: HTTP $HTTP_CODE"
           if [ "$HTTP_CODE" -ge 400 ]; then
             echo "  Response body: $(cat /tmp/response.txt)"

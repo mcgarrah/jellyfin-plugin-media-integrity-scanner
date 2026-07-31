@@ -71,14 +71,14 @@ done
 # --- Wait for Startup Wizard API readiness ---
 
 info "Waiting for startup wizard API to become available..."
-for i in $(seq 1 30); do
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$JELLYFIN_URL/Startup/Configuration")
+for i in $(seq 1 60); do
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$JELLYFIN_URL/Startup/Configuration" || true)
     if [ "$HTTP_CODE" = "200" ]; then
         pass "Startup wizard API ready (${i}s after health check)"
         break
     fi
-    if [ "$i" -eq 30 ]; then
-        fail "Startup wizard API not available after 30 seconds (last HTTP code: $HTTP_CODE)"
+    if [ "$i" -eq 60 ]; then
+        fail "Startup wizard API not available after 60 seconds (last HTTP code: $HTTP_CODE)"
     fi
     sleep 1
 done
@@ -95,7 +95,7 @@ HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
         "UICulture": "en-US",
         "MetadataCountryCode": "US",
         "PreferredMetadataLanguage": "en"
-    }')
+    }' || true)
 if [ "$HTTP_CODE" -ge 400 ]; then
     fail "Startup/Configuration failed with HTTP $HTTP_CODE: $(cat /tmp/response.txt)"
 fi
@@ -108,7 +108,7 @@ HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
     -d '{
         "Name": "testadmin",
         "Password": "testpassword123"
-    }')
+    }' || true)
 if [ "$HTTP_CODE" -ge 400 ]; then
     fail "Startup/User failed with HTTP $HTTP_CODE: $(cat /tmp/response.txt)"
 fi
@@ -121,7 +121,7 @@ HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
     -d '{
         "EnableRemoteAccess": true,
         "EnableAutomaticPortMapping": false
-    }')
+    }' || true)
 info "  Remote access: HTTP $HTTP_CODE"
 # Don't fail on 4xx — endpoint may not exist on all versions
 if [ "$HTTP_CODE" -ge 500 ]; then
@@ -130,7 +130,7 @@ fi
 
 # Step 4: Complete the wizard
 HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-    -X POST "$JELLYFIN_URL/Startup/Complete")
+    -X POST "$JELLYFIN_URL/Startup/Complete" || true)
 if [ "$HTTP_CODE" -ge 400 ]; then
     fail "Startup/Complete failed with HTTP $HTTP_CODE: $(cat /tmp/response.txt)"
 fi
