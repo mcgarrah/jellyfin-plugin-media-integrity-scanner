@@ -9,7 +9,7 @@
 set -euo pipefail
 
 JELLYFIN_URL="http://localhost:8096"
-PLUGIN_GUID="c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c"
+PLUGIN_GUID="c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 

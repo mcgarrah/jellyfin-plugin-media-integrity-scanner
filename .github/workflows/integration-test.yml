@@ -213,7 +213,7 @@ jobs:
           echo "$PLUGINS" | jq '.[].Name'
 
           # Check our plugin is present
-          PLUGIN_FOUND=$(echo "$PLUGINS" | jq '[.[] | select(.Id == "c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c")] | length')
+          PLUGIN_FOUND=$(echo "$PLUGINS" | jq '[.[] | select(.Id == "c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c")] | length')
 
           if [ "$PLUGIN_FOUND" -eq 0 ]; then
             echo "ERROR: Media Integrity Scanner plugin not found in loaded plugins"
@@ -224,14 +224,14 @@ jobs:
           fi
 
           echo "SUCCESS: Media Integrity Scanner plugin is loaded"
-          echo "$PLUGINS" | jq '.[] | select(.Id == "c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c")'
+          echo "$PLUGINS" | jq '.[] | select(.Id == "c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c")'
 
       - name: Verify plugin configuration endpoint
         run: |
           TOKEN="${{ steps.auth.outputs.api_token }}"
 
           # Get plugin configuration
-          CONFIG=$(curl -sf http://localhost:8096/Plugins/c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c/Configuration \
+          CONFIG=$(curl -sf http://localhost:8096/Plugins/c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c/Configuration \
             -H "X-Emby-Token: $TOKEN") || true
 
           if [ -n "$CONFIG" ]; then
