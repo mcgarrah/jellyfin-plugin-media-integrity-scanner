@@ -139,11 +139,30 @@ public class FfmpegWrapper
         var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await Task.WhenAll(
+                process.WaitForExitAsync(cancellationToken),
+                stdoutTask,
+                stderrTask).ConfigureAwait(false);
 
-        return (
-            process.ExitCode,
-            await stdoutTask.ConfigureAwait(false),
-            await stderrTask.ConfigureAwait(false));
+            return (
+                process.ExitCode,
+                await stdoutTask.ConfigureAwait(false),
+                await stderrTask.ConfigureAwait(false));
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Ignore process exit race conditions during termination
+            }
+
+            throw;
+        }
     }
 }

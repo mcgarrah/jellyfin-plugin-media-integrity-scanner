@@ -18,6 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using MediaBrowser.Controller.Entities;
@@ -80,7 +81,7 @@ public class DeepScanTask : IScheduledTask
         {
             new TaskTriggerInfo
             {
-                Type = TaskTriggerInfo.TriggerWeekly,
+                Type = TaskTriggerInfoType.WeeklyTrigger,
                 DayOfWeek = DayOfWeek.Sunday,
                 TimeOfDayTicks = TimeSpan.FromHours(1).Ticks
             }

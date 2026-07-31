@@ -17,6 +17,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using MediaBrowser.Controller.Entities;
