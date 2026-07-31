@@ -36,9 +36,10 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<FfmpegWrapper>();
         serviceCollection.AddSingleton<IScanEngine, ScanEngine>();
 
-        // Database
-        serviceCollection.AddSingleton<IDatabaseManager, SqliteDatabaseManager>();
+        // Database — registered once as the concrete type; IDatabaseManager
+        // forwards to the same singleton instance so both resolve identically.
         serviceCollection.AddSingleton<SqliteDatabaseManager>();
+        serviceCollection.AddSingleton<IDatabaseManager>(sp => sp.GetRequiredService<SqliteDatabaseManager>());
 
         // Event handlers
         serviceCollection.AddHostedService<LibraryMonitor>();

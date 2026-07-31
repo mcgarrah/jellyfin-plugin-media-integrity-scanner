@@ -99,24 +99,20 @@ public partial class HeaderScanTask : IScheduledTask
 
         LogHeaderScanItemCount(total);
 
-        foreach (var item in items)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Skip if already scanned and file unchanged
-            if (await _db.IsCurrentAsync(item.Id.ToString(), item.Path).ConfigureAwait(false))
+        var maxConcurrent = Math.Max(1, Plugin.Instance?.Configuration?.MaxConcurrentScans ?? 1);
+        await Parallel.ForEachAsync(
+            items,
+            new ParallelOptions { MaxDegreeOfParallelism = maxConcurrent, CancellationToken = cancellationToken },
+            async (item, ct) =>
             {
-                processed++;
-                progress.Report((double)processed / total * 100);
-                continue;
-            }
+                if (!await _db.IsCurrentAsync(item.Id.ToString(), item.Path).ConfigureAwait(false))
+                {
+                    await _scanner.ScanItemAsync(item, ScanPhase.Header, ct).ConfigureAwait(false);
+                }
 
-            await _scanner.ScanItemAsync(item, ScanPhase.Header, cancellationToken)
-                .ConfigureAwait(false);
-
-            processed++;
-            progress.Report((double)processed / total * 100);
-        }
+                var done = Interlocked.Increment(ref processed);
+                progress.Report((double)done / total * 100);
+            }).ConfigureAwait(false);
 
         LogHeaderScanComplete(processed, total);
     }
