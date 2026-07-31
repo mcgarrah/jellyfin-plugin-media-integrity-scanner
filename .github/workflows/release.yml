@@ -20,10 +20,10 @@ jobs:
           dotnet-version: '9.0.x'
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj
 
       - name: Build Release
-        run: dotnet publish --configuration Release --output ./publish
+        run: dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
 
       - name: Package
         run: |
@@ -35,3 +35,13 @@ jobs:
         with:
           files: media-integrity-scanner-${{ github.ref_name }}.zip
           generate_release_notes: true
+
+      - name: Update manifest.json
+        run: |
+          python3 scripts/update-manifest.py "${{ github.ref_name }}" "media-integrity-scanner-${{ github.ref_name }}.zip"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "chore: update manifest.json for ${{ github.ref_name }}"
+          # Assumes the tag was created from the current tip of main.
+          git push origin HEAD:main

@@ -104,6 +104,10 @@
                 <div class="stat-value status-fail" id="failed-files">&mdash;</div>
             </div>
             <div class="stat-card">
+                <div class="stat-label">Errored</div>
+                <div class="stat-value status-fail" id="errored-files">&mdash;</div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-label">Pending</div>
                 <div class="stat-value status-pending" id="pending-files">&mdash;</div>
             </div>
@@ -195,6 +199,8 @@
                     data.passedFiles;
                 document.getElementById('failed-files').textContent =
                     data.failedFiles;
+                document.getElementById('errored-files').textContent =
+                    data.erroredFiles;
                 document.getElementById('pending-files').textContent =
                     data.pendingFiles;
                 document.getElementById('scan-status').textContent =
