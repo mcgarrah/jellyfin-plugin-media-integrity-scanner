@@ -101,7 +101,15 @@ if [ "$HTTP_CODE" -ge 400 ]; then
 fi
 info "  Configuration: HTTP $HTTP_CODE"
 
-# Step 2: Create admin user
+# Step 2: Initialize and update admin user
+# GET /Startup/User triggers user initialization in 10.11+
+info "  Initializing default user..."
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$JELLYFIN_URL/Startup/User" || true)
+if [ "$HTTP_CODE" != "200" ]; then
+    info "  WARNING: GET /Startup/User returned HTTP $HTTP_CODE"
+fi
+
+info "  Setting admin username and password..."
 HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
     -X POST "$JELLYFIN_URL/Startup/User" \
     -H "Content-Type: application/json" \

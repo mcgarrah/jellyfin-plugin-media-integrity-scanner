@@ -122,8 +122,17 @@ jobs:
             exit 1
           fi
 
-          # Step 2: Create admin user
-          echo "Creating admin user..."
+          # Step 2: Initialize and update admin user
+          # GET /Startup/User triggers user initialization in 10.11+
+          echo "Initializing default user..."
+          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+            http://localhost:8096/Startup/User || true)
+          echo "  Get user response: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "  WARNING: GET /Startup/User returned $HTTP_CODE (response: $(cat /tmp/response.txt 2>/dev/null))"
+          fi
+
+          echo "Setting admin username and password..."
           HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
             -X POST http://localhost:8096/Startup/User \
             -H "Content-Type: application/json" \
