@@ -31,7 +31,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.ScheduledTasks;
 /// <summary>
 /// Scheduled task for Phase 1 header/metadata scanning of all media files.
 /// </summary>
-public class HeaderScanTask : IScheduledTask
+public partial class HeaderScanTask : IScheduledTask
 {
     private readonly ILibraryManager _library;
     private readonly IScanEngine _scanner;
@@ -86,7 +86,7 @@ public class HeaderScanTask : IScheduledTask
     /// <inheritdoc />
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Starting scheduled header scan");
+        LogHeaderScanStarting();
 
         var items = _library.GetItemList(new InternalItemsQuery
         {
@@ -97,7 +97,7 @@ public class HeaderScanTask : IScheduledTask
         var total = items.Count;
         var processed = 0;
 
-        _logger.LogInformation("Header scan: {Count} items to process", total);
+        LogHeaderScanItemCount(total);
 
         foreach (var item in items)
         {
@@ -118,6 +118,15 @@ public class HeaderScanTask : IScheduledTask
             progress.Report((double)processed / total * 100);
         }
 
-        _logger.LogInformation("Header scan complete: {Processed}/{Total} items processed", processed, total);
+        LogHeaderScanComplete(processed, total);
     }
+
+    [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Starting scheduled header scan")]
+    private partial void LogHeaderScanStarting();
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "Header scan: {Count} items to process")]
+    private partial void LogHeaderScanItemCount(int count);
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "Header scan complete: {Processed}/{Total} items processed")]
+    private partial void LogHeaderScanComplete(int processed, int total);
 }

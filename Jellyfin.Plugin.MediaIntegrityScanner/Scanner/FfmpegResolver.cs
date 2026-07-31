@@ -27,7 +27,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 /// <summary>
 /// Resolves the FFmpeg and FFprobe binary paths across platforms.
 /// </summary>
-public class FfmpegResolver
+public partial class FfmpegResolver
 {
     private readonly IServerConfigurationManager _config;
     private readonly ILogger<FfmpegResolver> _logger;
@@ -75,10 +75,7 @@ public class FfmpegResolver
                 return userOverride;
             }
 
-            _logger.LogWarning(
-                "Configured {Binary} path not found: {Path}",
-                binaryName,
-                userOverride);
+            LogConfiguredPathNotFound(binaryName, userOverride);
         }
 
         // 2. Jellyfin's own configured ffmpeg path
@@ -163,4 +160,7 @@ public class FfmpegResolver
             .Select(dir => Path.Combine(dir, executable + extension))
             .FirstOrDefault(File.Exists);
     }
+
+    [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "Configured {Binary} path not found: {Path}")]
+    private partial void LogConfiguredPathNotFound(string binary, string path);
 }

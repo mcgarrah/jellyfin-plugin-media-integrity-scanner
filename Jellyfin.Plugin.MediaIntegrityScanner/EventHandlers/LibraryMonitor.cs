@@ -31,7 +31,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.EventHandlers;
 /// Monitors Jellyfin library events to trigger scans on new items
 /// and purge records on removed items.
 /// </summary>
-public class LibraryMonitor : IHostedService, IDisposable
+public partial class LibraryMonitor : IHostedService, IDisposable
 {
     private readonly ILibraryManager _library;
     private readonly IScanEngine _scanner;
@@ -59,17 +59,18 @@ public class LibraryMonitor : IHostedService, IDisposable
     }
 
     /// <summary>
-    /// Registers library event handlers on server startup.
+    /// Initializes the database schema and registers library event handlers on server startup.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A completed task.</returns>
-    public Task StartAsync(CancellationToken cancellationToken)
+    /// <returns>A task representing the async operation.</returns>
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
+        await _db.InitializeAsync().ConfigureAwait(false);
+
         _library.ItemAdded += OnItemAdded;
         _library.ItemRemoved += OnItemRemoved;
 
-        _logger.LogInformation("Library event monitor registered");
-        return Task.CompletedTask;
+        LogMonitorRegistered();
     }
 
     /// <summary>
@@ -82,7 +83,7 @@ public class LibraryMonitor : IHostedService, IDisposable
         _library.ItemAdded -= OnItemAdded;
         _library.ItemRemoved -= OnItemRemoved;
 
-        _logger.LogInformation("Library event monitor unregistered");
+        LogMonitorUnregistered();
         return Task.CompletedTask;
     }
 
@@ -100,7 +101,7 @@ public class LibraryMonitor : IHostedService, IDisposable
             return;
         }
 
-        _logger.LogDebug("Item added: {Name} ({Path}), queuing for scan", item.Name, item.Path);
+        LogItemQueuedForScan(item.Name, item.Path);
 
         // Fire-and-forget with error logging
         _ = Task.Run(async () =>
@@ -112,7 +113,7 @@ public class LibraryMonitor : IHostedService, IDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error scanning newly added item: {Path}", item.Path);
+                LogScanNewItemError(ex, item.Path);
             }
         });
     }
@@ -131,7 +132,7 @@ public class LibraryMonitor : IHostedService, IDisposable
             return;
         }
 
-        _logger.LogDebug("Item removed: {Name}, purging scan records", item.Name);
+        LogItemPurgeQueued(item.Name);
 
         _ = Task.Run(async () =>
         {
@@ -141,7 +142,7 @@ public class LibraryMonitor : IHostedService, IDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error purging scan records for removed item: {Id}", item.Id);
+                LogPurgeError(ex, item.Id);
             }
         });
     }
@@ -167,4 +168,22 @@ public class LibraryMonitor : IHostedService, IDisposable
             GC.SuppressFinalize(this);
         }
     }
+
+    [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Library event monitor registered")]
+    private partial void LogMonitorRegistered();
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "Library event monitor unregistered")]
+    private partial void LogMonitorUnregistered();
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Debug, Message = "Item added: {Name} ({Path}), queuing for scan")]
+    private partial void LogItemQueuedForScan(string? name, string? path);
+
+    [LoggerMessage(EventId = 4, Level = LogLevel.Error, Message = "Error scanning newly added item: {Path}")]
+    private partial void LogScanNewItemError(Exception ex, string? path);
+
+    [LoggerMessage(EventId = 5, Level = LogLevel.Debug, Message = "Item removed: {Name}, purging scan records")]
+    private partial void LogItemPurgeQueued(string? name);
+
+    [LoggerMessage(EventId = 6, Level = LogLevel.Error, Message = "Error purging scan records for removed item: {Id}")]
+    private partial void LogPurgeError(Exception ex, Guid id);
 }

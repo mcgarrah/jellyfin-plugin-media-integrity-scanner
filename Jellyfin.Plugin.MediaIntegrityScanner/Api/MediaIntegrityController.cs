@@ -33,7 +33,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Api;
 [ApiController]
 [Route("MediaIntegrity")]
 [Authorize(Policy = "RequiresElevation")]
-public class MediaIntegrityController : ControllerBase
+public partial class MediaIntegrityController : ControllerBase
 {
     private readonly SqliteDatabaseManager _db;
     private readonly IScanEngine _scanner;
@@ -179,7 +179,7 @@ public class MediaIntegrityController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error during manually triggered scan");
+                LogManualScanError(ex);
             }
         });
 
@@ -197,6 +197,9 @@ public class MediaIntegrityController : ControllerBase
         _scanner.Cancel();
         return Ok(new { message = "Scan cancellation requested." });
     }
+
+    [LoggerMessage(EventId = 1, Level = LogLevel.Error, Message = "Error during manually triggered scan")]
+    private partial void LogManualScanError(Exception ex);
 }
 
 /// <summary>

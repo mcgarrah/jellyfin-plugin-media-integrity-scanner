@@ -32,7 +32,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.ScheduledTasks;
 /// Scheduled task for Phase 2 full byte-stream decode scanning.
 /// Only runs if deep scanning is enabled in plugin configuration.
 /// </summary>
-public class DeepScanTask : IScheduledTask
+public partial class DeepScanTask : IScheduledTask
 {
     private readonly ILibraryManager _library;
     private readonly IScanEngine _scanner;
@@ -94,13 +94,12 @@ public class DeepScanTask : IScheduledTask
         var config = Plugin.Instance?.Configuration;
         if (config?.EnableDeepScan != true)
         {
-            _logger.LogInformation(
-                "Deep scan is disabled in plugin configuration. Skipping.");
+            LogDeepScanDisabled();
             progress.Report(100);
             return;
         }
 
-        _logger.LogInformation("Starting scheduled deep scan");
+        LogDeepScanStarting();
 
         var items = _library.GetItemList(new InternalItemsQuery
         {
@@ -111,7 +110,7 @@ public class DeepScanTask : IScheduledTask
         var total = items.Count;
         var processed = 0;
 
-        _logger.LogInformation("Deep scan: {Count} items to process", total);
+        LogDeepScanItemCount(total);
 
         foreach (var item in items)
         {
@@ -132,6 +131,18 @@ public class DeepScanTask : IScheduledTask
             progress.Report((double)processed / total * 100);
         }
 
-        _logger.LogInformation("Deep scan complete: {Processed}/{Total} items processed", processed, total);
+        LogDeepScanComplete(processed, total);
     }
+
+    [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Deep scan is disabled in plugin configuration. Skipping.")]
+    private partial void LogDeepScanDisabled();
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "Starting scheduled deep scan")]
+    private partial void LogDeepScanStarting();
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "Deep scan: {Count} items to process")]
+    private partial void LogDeepScanItemCount(int count);
+
+    [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "Deep scan complete: {Processed}/{Total} items processed")]
+    private partial void LogDeepScanComplete(int processed, int total);
 }

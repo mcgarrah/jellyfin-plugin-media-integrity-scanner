@@ -25,7 +25,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 /// <summary>
 /// Wraps FFmpeg and FFprobe process execution for media integrity scanning.
 /// </summary>
-public class FfmpegWrapper
+public partial class FfmpegWrapper
 {
     private readonly string _ffmpegPath;
     private readonly string _ffprobePath;
@@ -44,8 +44,8 @@ public class FfmpegWrapper
         _ffprobePath = resolver.ResolveFfprobePath();
         _logger = logger;
 
-        _logger.LogInformation("FFmpeg resolved to: {Path}", _ffmpegPath);
-        _logger.LogInformation("FFprobe resolved to: {Path}", _ffprobePath);
+        LogFfmpegResolved(_ffmpegPath);
+        LogFfprobeResolved(_ffprobePath);
     }
 
     /// <summary>
@@ -70,9 +70,7 @@ public class FfmpegWrapper
         var success = exitCode == 0 && string.IsNullOrWhiteSpace(stderr);
         if (!success)
         {
-            _logger.LogDebug(
-                "Probe failed for {File}: exit={ExitCode}, stderr={Stderr}",
-                filePath, exitCode, stderr);
+            LogProbeFailed(filePath, exitCode, stderr);
         }
 
         return new ScanResult
@@ -103,9 +101,7 @@ public class FfmpegWrapper
         var success = exitCode == 0 && string.IsNullOrWhiteSpace(stderr);
         if (!success)
         {
-            _logger.LogDebug(
-                "Decode failed for {File}: exit={ExitCode}, stderr={Stderr}",
-                filePath, exitCode, stderr);
+            LogDecodeFailed(filePath, exitCode, stderr);
         }
 
         return new ScanResult
@@ -165,4 +161,16 @@ public class FfmpegWrapper
             throw;
         }
     }
+
+    [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "FFmpeg resolved to: {Path}")]
+    private partial void LogFfmpegResolved(string path);
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "FFprobe resolved to: {Path}")]
+    private partial void LogFfprobeResolved(string path);
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Debug, Message = "Probe failed for {File}: exit={ExitCode}, stderr={Stderr}")]
+    private partial void LogProbeFailed(string file, int exitCode, string? stderr);
+
+    [LoggerMessage(EventId = 4, Level = LogLevel.Debug, Message = "Decode failed for {File}: exit={ExitCode}, stderr={Stderr}")]
+    private partial void LogDecodeFailed(string file, int exitCode, string? stderr);
 }

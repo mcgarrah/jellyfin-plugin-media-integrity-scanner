@@ -32,7 +32,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 /// <summary>
 /// Bounded, thread-safe scan engine that processes files with configurable throttling.
 /// </summary>
-public class ScanEngine : IScanEngine, IDisposable
+public partial class ScanEngine : IScanEngine, IDisposable
 {
     private readonly SemaphoreSlim _scanLock;
     private readonly FfmpegWrapper _ffmpeg;
@@ -87,7 +87,7 @@ public class ScanEngine : IScanEngine, IDisposable
             // Check playback pause
             if (ShouldPauseForPlayback())
             {
-                _logger.LogInformation("Pausing scan — active playback detected");
+                LogPausingForPlayback();
                 await WaitForPlaybackEnd(token).ConfigureAwait(false);
             }
 
@@ -100,7 +100,7 @@ public class ScanEngine : IScanEngine, IDisposable
             }
 
             // Execute scan
-            _logger.LogDebug("Scanning {File} (Phase {Phase})", item.Path, (int)phase);
+            LogScanning(item.Path, (int)phase);
 
             var result = phase switch
             {
@@ -130,22 +130,22 @@ public class ScanEngine : IScanEngine, IDisposable
 
             if (result.Success)
             {
-                _logger.LogDebug("Scan passed: {File}", item.Path);
+                LogScanPassed(item.Path);
             }
             else
             {
                 var firstError = GetFirstLine(result.ErrorOutput);
-                _logger.LogWarning("Scan failed: {File} — {Error}", item.Path, firstError);
+                LogScanFailed(item.Path, firstError);
             }
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("Scan cancelled for {File}", item.Path);
+            LogScanCancelled(item.Path);
             throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error scanning {File}", item.Path);
+            LogScanError(ex, item.Path);
 
             // Record the error
             await _db.SaveResultAsync(new ScanRecord
@@ -188,9 +188,7 @@ public class ScanEngine : IScanEngine, IDisposable
             }
 
             var items = _library.GetItemList(query);
-            _logger.LogInformation(
-                "Starting library scan: {Count} items, phase={Phase}",
-                items.Count, phase);
+            LogLibraryScanStarting(items.Count, phase);
 
             foreach (var item in items)
             {
@@ -205,7 +203,7 @@ public class ScanEngine : IScanEngine, IDisposable
                 await ScanItemAsync(item, phase, token).ConfigureAwait(false);
             }
 
-            _logger.LogInformation("Library scan complete");
+            LogLibraryScanComplete();
         }
         finally
         {
@@ -216,7 +214,7 @@ public class ScanEngine : IScanEngine, IDisposable
     /// <inheritdoc />
     public void Cancel()
     {
-        _logger.LogInformation("Scan cancellation requested");
+        LogScanCancellationRequested();
         _cts?.Cancel();
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
@@ -264,4 +262,31 @@ public class ScanEngine : IScanEngine, IDisposable
             GC.SuppressFinalize(this);
         }
     }
+
+    [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Pausing scan — active playback detected")]
+    private partial void LogPausingForPlayback();
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Debug, Message = "Scanning {File} (Phase {Phase})")]
+    private partial void LogScanning(string file, int phase);
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Debug, Message = "Scan passed: {File}")]
+    private partial void LogScanPassed(string file);
+
+    [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "Scan failed: {File} — {Error}")]
+    private partial void LogScanFailed(string file, string? error);
+
+    [LoggerMessage(EventId = 5, Level = LogLevel.Information, Message = "Scan cancelled for {File}")]
+    private partial void LogScanCancelled(string file);
+
+    [LoggerMessage(EventId = 6, Level = LogLevel.Error, Message = "Error scanning {File}")]
+    private partial void LogScanError(Exception ex, string file);
+
+    [LoggerMessage(EventId = 7, Level = LogLevel.Information, Message = "Starting library scan: {Count} items, phase={Phase}")]
+    private partial void LogLibraryScanStarting(int count, ScanPhase phase);
+
+    [LoggerMessage(EventId = 8, Level = LogLevel.Information, Message = "Library scan complete")]
+    private partial void LogLibraryScanComplete();
+
+    [LoggerMessage(EventId = 9, Level = LogLevel.Information, Message = "Scan cancellation requested")]
+    private partial void LogScanCancellationRequested();
 }

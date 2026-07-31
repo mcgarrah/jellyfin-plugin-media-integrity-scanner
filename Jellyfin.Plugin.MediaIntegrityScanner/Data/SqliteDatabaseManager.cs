@@ -27,7 +27,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Data;
 /// <summary>
 /// SQLite implementation of the scan results database manager.
 /// </summary>
-public class SqliteDatabaseManager : IDatabaseManager, IDisposable
+public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 {
     private readonly string _connectionString;
     private readonly ILogger<SqliteDatabaseManager> _logger;
@@ -53,7 +53,7 @@ public class SqliteDatabaseManager : IDatabaseManager, IDisposable
         var dbPath = Path.Combine(dataDir, "media-integrity.db");
         _connectionString = $"Data Source={dbPath}";
 
-        _logger.LogInformation("Database path: {Path}", dbPath);
+        LogDatabasePath(dbPath);
     }
 
     /// <inheritdoc />
@@ -90,7 +90,7 @@ public class SqliteDatabaseManager : IDatabaseManager, IDisposable
         ";
 
         await command.ExecuteNonQueryAsync().ConfigureAwait(false);
-        _logger.LogInformation("Database schema initialized");
+        LogSchemaInitialized();
     }
 
     /// <inheritdoc />
@@ -343,7 +343,7 @@ public class SqliteDatabaseManager : IDatabaseManager, IDisposable
             var deleted = await command.ExecuteNonQueryAsync().ConfigureAwait(false);
             if (deleted > 0)
             {
-                _logger.LogDebug("Purged {Count} scan records for item {ItemId}", deleted, itemId);
+                LogPurged(deleted, itemId);
             }
         }
         finally
@@ -364,6 +364,15 @@ public class SqliteDatabaseManager : IDatabaseManager, IDisposable
             GC.SuppressFinalize(this);
         }
     }
+
+    [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Database path: {Path}")]
+    private partial void LogDatabasePath(string path);
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "Database schema initialized")]
+    private partial void LogSchemaInitialized();
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Debug, Message = "Purged {Count} scan records for item {ItemId}")]
+    private partial void LogPurged(int count, string itemId);
 }
 
 /// <summary>
