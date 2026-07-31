@@ -236,7 +236,8 @@ public class SqliteDatabaseManager : IDatabaseManager, IDisposable
         }
 
         var totalCount = Convert.ToInt32(
-            await countCmd.ExecuteScalarAsync().ConfigureAwait(false));
+            await countCmd.ExecuteScalarAsync().ConfigureAwait(false),
+            System.Globalization.CultureInfo.InvariantCulture);
 
         // Get page of results
         await using var queryCmd = connection.CreateCommand();
@@ -360,6 +361,7 @@ public class SqliteDatabaseManager : IDatabaseManager, IDisposable
         {
             _writeLock.Dispose();
             _disposed = true;
+            GC.SuppressFinalize(this);
         }
     }
 }

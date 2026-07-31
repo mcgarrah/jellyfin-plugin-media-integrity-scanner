@@ -18,6 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using MediaBrowser.Controller.Entities;
@@ -76,7 +77,7 @@ public class HeaderScanTask : IScheduledTask
         {
             new TaskTriggerInfo
             {
-                Type = TaskTriggerInfo.TriggerDaily,
+                Type = TaskTriggerInfoType.DailyTrigger,
                 TimeOfDayTicks = TimeSpan.FromHours(3).Ticks
             }
         };

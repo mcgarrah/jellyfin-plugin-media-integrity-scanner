@@ -19,6 +19,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using MediaBrowser.Controller.Entities;
@@ -40,6 +41,8 @@ public class ScanEngine : IScanEngine, IDisposable
     private readonly ILibraryManager _library;
     private readonly ILogger<ScanEngine> _logger;
     private CancellationTokenSource? _cts;
+    private int _activeScanCount;
+    private int _isLibraryScanning;
     private bool _disposed;
 
     /// <summary>
@@ -68,7 +71,7 @@ public class ScanEngine : IScanEngine, IDisposable
     }
 
     /// <inheritdoc />
-    public bool IsScanning { get; private set; }
+    public bool IsScanning => Volatile.Read(ref _activeScanCount) > 0 || Volatile.Read(ref _isLibraryScanning) > 0;
 
     /// <inheritdoc />
     public async Task ScanItemAsync(BaseItem item, ScanPhase phase, CancellationToken cancellationToken)
@@ -78,10 +81,9 @@ public class ScanEngine : IScanEngine, IDisposable
         var token = linkedCts.Token;
 
         await _scanLock.WaitAsync(token).ConfigureAwait(false);
+        Interlocked.Increment(ref _activeScanCount);
         try
         {
-            IsScanning = true;
-
             // Check playback pause
             if (ShouldPauseForPlayback())
             {
@@ -132,10 +134,8 @@ public class ScanEngine : IScanEngine, IDisposable
             }
             else
             {
-                _logger.LogWarning(
-                    "Scan failed: {File} — {Error}",
-                    item.Path,
-                    result.ErrorOutput?.Split('\n').FirstOrDefault());
+                var firstError = GetFirstLine(result.ErrorOutput);
+                _logger.LogWarning("Scan failed: {File} — {Error}", item.Path, firstError);
             }
         }
         catch (OperationCanceledException)
@@ -160,8 +160,8 @@ public class ScanEngine : IScanEngine, IDisposable
         }
         finally
         {
+            Interlocked.Decrement(ref _activeScanCount);
             _scanLock.Release();
-            IsScanning = _scanLock.CurrentCount < (_scanLock.CurrentCount + 1);
         }
     }
 
@@ -172,7 +172,7 @@ public class ScanEngine : IScanEngine, IDisposable
             cancellationToken, (_cts ??= new CancellationTokenSource()).Token);
         var token = linkedCts.Token;
 
-        IsScanning = true;
+        Interlocked.Exchange(ref _isLibraryScanning, 1);
 
         try
         {
@@ -209,7 +209,7 @@ public class ScanEngine : IScanEngine, IDisposable
         }
         finally
         {
-            IsScanning = false;
+            Interlocked.Exchange(ref _isLibraryScanning, 0);
         }
     }
 
@@ -220,7 +220,7 @@ public class ScanEngine : IScanEngine, IDisposable
         _cts?.Cancel();
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
-        IsScanning = false;
+        Interlocked.Exchange(ref _isLibraryScanning, 0);
     }
 
     private bool ShouldPauseForPlayback()
@@ -242,6 +242,17 @@ public class ScanEngine : IScanEngine, IDisposable
         }
     }
 
+    private static string? GetFirstLine(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+
+        var idx = text.IndexOf('\n');
+        return idx >= 0 ? text.Substring(0, idx).TrimEnd('\r') : text;
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -250,6 +261,7 @@ public class ScanEngine : IScanEngine, IDisposable
             _scanLock.Dispose();
             _cts?.Dispose();
             _disposed = true;
+            GC.SuppressFinalize(this);
         }
     }
 }

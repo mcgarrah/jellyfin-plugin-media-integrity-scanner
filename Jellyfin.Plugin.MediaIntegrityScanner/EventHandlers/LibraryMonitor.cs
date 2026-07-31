@@ -17,6 +17,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using MediaBrowser.Controller.Entities;
@@ -163,6 +164,7 @@ public class LibraryMonitor : IHostedService, IDisposable
             _library.ItemAdded -= OnItemAdded;
             _library.ItemRemoved -= OnItemRemoved;
             _disposed = true;
+            GC.SuppressFinalize(this);
         }
     }
 }
