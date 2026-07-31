@@ -84,6 +84,13 @@ public partial class ScanEngine : IScanEngine, IDisposable
         Interlocked.Increment(ref _activeScanCount);
         try
         {
+            // Check quiet-hours window
+            if (IsOutsideQuietHours())
+            {
+                LogWaitingForQuietHours();
+                await WaitForQuietHours(token).ConfigureAwait(false);
+            }
+
             // Check playback pause
             if (ShouldPauseForPlayback())
             {
@@ -109,8 +116,19 @@ public partial class ScanEngine : IScanEngine, IDisposable
                 _ => throw new ArgumentException($"Unknown scan phase: {phase}", nameof(phase))
             };
 
-            // Persist result
+            // Pace the average read rate for this file before moving on
             var fileInfo = new FileInfo(item.Path);
+            if (fileInfo.Exists)
+            {
+                var readRateDelay = ScanThrottle.ComputeReadRateDelay(
+                    fileInfo.Length, config?.MaxReadRateMbPerSec ?? 0, result.DurationMs);
+                if (readRateDelay > TimeSpan.Zero)
+                {
+                    await Task.Delay(readRateDelay, token).ConfigureAwait(false);
+                }
+            }
+
+            // Persist result
             await _db.SaveResultAsync(new ScanRecord
             {
                 ItemId = item.Id.ToString(),
@@ -221,6 +239,25 @@ public partial class ScanEngine : IScanEngine, IDisposable
         Interlocked.Exchange(ref _isLibraryScanning, 0);
     }
 
+    private static bool IsOutsideQuietHours()
+    {
+        var config = Plugin.Instance?.Configuration;
+        if (config?.UseQuietHoursOnly != true)
+        {
+            return false;
+        }
+
+        return !ScanThrottle.IsWithinQuietHours(config.QuietHoursStart, config.QuietHoursEnd, DateTime.Now.TimeOfDay);
+    }
+
+    private static async Task WaitForQuietHours(CancellationToken cancellationToken)
+    {
+        while (IsOutsideQuietHours() && !cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(5), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private bool ShouldPauseForPlayback()
     {
         var config = Plugin.Instance?.Configuration;
@@ -265,6 +302,9 @@ public partial class ScanEngine : IScanEngine, IDisposable
 
     [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Pausing scan — active playback detected")]
     private partial void LogPausingForPlayback();
+
+    [LoggerMessage(EventId = 10, Level = LogLevel.Information, Message = "Pausing scan — outside configured quiet-hours window")]
+    private partial void LogWaitingForQuietHours();
 
     [LoggerMessage(EventId = 2, Level = LogLevel.Debug, Message = "Scanning {File} (Phase {Phase})")]
     private partial void LogScanning(string file, int phase);

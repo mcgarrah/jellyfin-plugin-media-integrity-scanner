@@ -15,10 +15,14 @@
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -68,19 +72,44 @@ public partial class MediaIntegrityController : ControllerBase
     public async Task<ActionResult<ScanStatusResponse>> GetStatus()
     {
         var stats = await _db.GetStatisticsAsync().ConfigureAwait(false);
+        var totalFiles = GetLibraryMediaItems(null).Count;
+        var pendingFiles = Math.Max(0, totalFiles - stats.ScannedFiles);
+
         return Ok(new ScanStatusResponse
         {
             IsScanning = _scanner.IsScanning,
-            TotalFiles = stats.ScannedFiles + stats.PendingFiles,
+            TotalFiles = totalFiles,
             ScannedFiles = stats.ScannedFiles,
             PassedFiles = stats.PassedFiles,
             FailedFiles = stats.FailedFiles,
-            PendingFiles = stats.PendingFiles,
+            ErroredFiles = stats.ErroredFiles,
+            PendingFiles = pendingFiles,
             LastScanTimestamp = stats.LastScanTimestamp,
             HealthPercentage = stats.ScannedFiles > 0
                 ? Math.Round((double)stats.PassedFiles / stats.ScannedFiles * 100, 1)
                 : 0
         });
+    }
+
+    /// <summary>
+    /// Gets real media items in the library (or a specific library, when
+    /// <paramref name="parentId"/> is supplied), matching the same query
+    /// shape used by <c>ScanEngine</c> and the scheduled tasks.
+    /// </summary>
+    private IReadOnlyList<BaseItem> GetLibraryMediaItems(Guid? parentId)
+    {
+        var query = new InternalItemsQuery
+        {
+            MediaTypes = new[] { MediaType.Video, MediaType.Audio },
+            IsVirtualItem = false
+        };
+
+        if (parentId.HasValue)
+        {
+            query.ParentId = parentId.Value;
+        }
+
+        return _library.GetItemList(query);
     }
 
     /// <summary>
@@ -109,7 +138,15 @@ public partial class MediaIntegrityController : ControllerBase
             pageSize = 50;
         }
 
-        var results = await _db.GetResultsAsync(status, page, pageSize, libraryId)
+        IReadOnlyCollection<string>? itemIds = null;
+        if (!string.IsNullOrEmpty(libraryId))
+        {
+            itemIds = Guid.TryParse(libraryId, out var parentId)
+                ? GetLibraryMediaItems(parentId).Select(item => item.Id.ToString()).ToArray()
+                : Array.Empty<string>();
+        }
+
+        var results = await _db.GetResultsAsync(status, page, pageSize, itemIds)
             .ConfigureAwait(false);
 
         return Ok(new PagedResultResponse
@@ -221,6 +258,9 @@ public class ScanStatusResponse
 
     /// <summary>Gets or sets the number of files that failed.</summary>
     public int FailedFiles { get; set; }
+
+    /// <summary>Gets or sets the number of files whose most recent scan ended in an error.</summary>
+    public int ErroredFiles { get; set; }
 
     /// <summary>Gets or sets the number of files pending scan.</summary>
     public int PendingFiles { get; set; }

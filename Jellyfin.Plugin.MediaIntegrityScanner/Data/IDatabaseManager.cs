@@ -60,34 +60,34 @@ public interface IDatabaseManager
 }
 
 /// <summary>
-/// Summary statistics for scan results.
+/// Summary statistics for scan results. Reflects only items that have at least
+/// one scan record — the database has no notion of a library's total item
+/// count or truly "pending" (never-scanned) items; callers with access to
+/// <c>ILibraryManager</c> should derive those from the real library count.
+/// Each distinct item is counted once, using its most authoritative (highest
+/// scan phase) result, even if it was scanned in both phases.
 /// </summary>
 public class ScanStatistics
 {
     /// <summary>
-    /// Gets or sets the total number of media files in the library.
-    /// </summary>
-    public int TotalFiles { get; set; }
-
-    /// <summary>
-    /// Gets or sets the number of files that have been scanned.
+    /// Gets or sets the number of distinct items that have at least one scan result.
     /// </summary>
     public int ScannedFiles { get; set; }
 
     /// <summary>
-    /// Gets or sets the number of files that passed the scan.
+    /// Gets or sets the number of items whose most recent scan passed.
     /// </summary>
     public int PassedFiles { get; set; }
 
     /// <summary>
-    /// Gets or sets the number of files that failed the scan.
+    /// Gets or sets the number of items whose most recent scan failed.
     /// </summary>
     public int FailedFiles { get; set; }
 
     /// <summary>
-    /// Gets or sets the number of files pending scan.
+    /// Gets or sets the number of items whose most recent scan ended in an error.
     /// </summary>
-    public int PendingFiles { get; set; }
+    public int ErroredFiles { get; set; }
 
     /// <summary>
     /// Gets or sets the timestamp of the last completed scan.

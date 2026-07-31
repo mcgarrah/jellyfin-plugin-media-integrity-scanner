@@ -15,7 +15,9 @@
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using MediaBrowser.Common.Configuration;
@@ -189,13 +191,19 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 
         await using var command = connection.CreateCommand();
         command.CommandText = @"
+            WITH latest AS (
+                SELECT item_id, scan_status,
+                       ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY scan_phase DESC) AS rn
+                FROM scan_results
+            )
             SELECT
                 COUNT(*) AS total,
                 SUM(CASE WHEN scan_status = 1 THEN 1 ELSE 0 END) AS passed,
                 SUM(CASE WHEN scan_status = 2 THEN 1 ELSE 0 END) AS failed,
-                SUM(CASE WHEN scan_status = 0 THEN 1 ELSE 0 END) AS pending,
-                MAX(scan_timestamp) AS last_scan
-            FROM scan_results;
+                SUM(CASE WHEN scan_status = 3 THEN 1 ELSE 0 END) AS errored,
+                (SELECT MAX(scan_timestamp) FROM scan_results) AS last_scan
+            FROM latest
+            WHERE rn = 1;
         ";
 
         await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
@@ -204,7 +212,7 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
             stats.ScannedFiles = reader.IsDBNull(0) ? 0 : reader.GetInt32(0);
             stats.PassedFiles = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
             stats.FailedFiles = reader.IsDBNull(2) ? 0 : reader.GetInt32(2);
-            stats.PendingFiles = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
+            stats.ErroredFiles = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
             stats.LastScanTimestamp = reader.IsDBNull(4) ? null : reader.GetString(4);
         }
 
@@ -212,28 +220,30 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
     }
 
     /// <summary>
-    /// Gets paginated scan results with optional status filter.
+    /// Gets paginated scan results with optional status and item-id filters.
     /// </summary>
     /// <param name="status">Optional status filter.</param>
     /// <param name="page">Page number (1-based).</param>
     /// <param name="pageSize">Number of results per page.</param>
-    /// <param name="libraryId">Optional library ID filter (not yet implemented).</param>
+    /// <param name="itemIds">Optional set of item IDs to restrict results to (e.g., all items in a library). An empty (non-null) collection matches nothing.</param>
     /// <returns>Paged result set.</returns>
     public async Task<PagedScanResults> GetResultsAsync(
-        int? status, int page, int pageSize, string? libraryId)
+        int? status, int page, int pageSize, IReadOnlyCollection<string>? itemIds)
     {
+        if (itemIds != null && itemIds.Count == 0)
+        {
+            return new PagedScanResults { Items = new List<ScanRecord>(), TotalCount = 0 };
+        }
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync().ConfigureAwait(false);
 
+        var whereClause = BuildWhereClause(status, itemIds, out var itemIdList);
+
         // Get total count
         await using var countCmd = connection.CreateCommand();
-        countCmd.CommandText = status.HasValue
-            ? "SELECT COUNT(*) FROM scan_results WHERE scan_status = @status"
-            : "SELECT COUNT(*) FROM scan_results";
-        if (status.HasValue)
-        {
-            countCmd.Parameters.AddWithValue("@status", status.Value);
-        }
+        countCmd.CommandText = $"SELECT COUNT(*) FROM scan_results {whereClause}";
+        AddFilterParameters(countCmd, status, itemIdList);
 
         var totalCount = Convert.ToInt32(
             await countCmd.ExecuteScalarAsync().ConfigureAwait(false),
@@ -241,7 +251,6 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 
         // Get page of results
         await using var queryCmd = connection.CreateCommand();
-        var whereClause = status.HasValue ? "WHERE scan_status = @status" : string.Empty;
         queryCmd.CommandText = $@"
             SELECT item_id, file_path, file_size, last_modified,
                    scan_phase, scan_status, scan_timestamp,
@@ -251,11 +260,7 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
             ORDER BY scan_timestamp DESC
             LIMIT @limit OFFSET @offset;
         ";
-
-        if (status.HasValue)
-        {
-            queryCmd.Parameters.AddWithValue("@status", status.Value);
-        }
+        AddFilterParameters(queryCmd, status, itemIdList);
 
         queryCmd.Parameters.AddWithValue("@limit", pageSize);
         queryCmd.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
@@ -283,6 +288,45 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
             Items = items,
             TotalCount = totalCount
         };
+    }
+
+    /// <summary>
+    /// Builds a parameterized WHERE clause for the optional status and item-id
+    /// filters shared by the count and page queries in <see cref="GetResultsAsync"/>.
+    /// </summary>
+    private static string BuildWhereClause(int? status, IReadOnlyCollection<string>? itemIds, out IReadOnlyList<string> itemIdList)
+    {
+        itemIdList = itemIds is null ? Array.Empty<string>() : itemIds.ToArray();
+
+        var clauses = new List<string>();
+        if (status.HasValue)
+        {
+            clauses.Add("scan_status = @status");
+        }
+
+        if (itemIdList.Count > 0)
+        {
+            var placeholders = string.Join(", ", Enumerable.Range(0, itemIdList.Count).Select(i => $"@item{i}"));
+            clauses.Add($"item_id IN ({placeholders})");
+        }
+
+        return clauses.Count > 0 ? "WHERE " + string.Join(" AND ", clauses) : string.Empty;
+    }
+
+    /// <summary>
+    /// Adds the parameter values matching the clause built by <see cref="BuildWhereClause"/>.
+    /// </summary>
+    private static void AddFilterParameters(SqliteCommand command, int? status, IReadOnlyList<string> itemIdList)
+    {
+        if (status.HasValue)
+        {
+            command.Parameters.AddWithValue("@status", status.Value);
+        }
+
+        for (var i = 0; i < itemIdList.Count; i++)
+        {
+            command.Parameters.AddWithValue($"@item{i}", itemIdList[i]);
+        }
     }
 
     /// <summary>

@@ -25,12 +25,11 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release --no-restore --verbosity normal
 
-      # Tests will be added once test project exists
-      # - name: Test
-      #   run: dotnet test --no-restore --verbosity normal
+      - name: Test
+        run: dotnet test --configuration Release --no-restore --no-build --verbosity normal
 
       - name: Publish
-        run: dotnet publish --configuration Release --output ./artifacts --no-build
+        run: dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./artifacts --no-build
 
       - name: List artifacts
         run: ls -la ./artifacts/
