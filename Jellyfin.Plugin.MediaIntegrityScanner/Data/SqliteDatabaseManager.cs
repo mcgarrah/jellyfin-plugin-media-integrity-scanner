@@ -143,7 +143,7 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task<bool> IsCurrentAsync(string itemId, string filePath)
+    public async Task<bool> IsCurrentAsync(string itemId, string filePath, int minPhase)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync().ConfigureAwait(false);
@@ -151,11 +151,12 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         await using var command = connection.CreateCommand();
         command.CommandText = @"
             SELECT last_modified FROM scan_results
-            WHERE item_id = @itemId AND scan_status = 1
+            WHERE item_id = @itemId AND scan_status = 1 AND scan_phase >= @minPhase
             ORDER BY scan_phase DESC
             LIMIT 1;
         ";
         command.Parameters.AddWithValue("@itemId", itemId);
+        command.Parameters.AddWithValue("@minPhase", minPhase);
 
         var result = await command.ExecuteScalarAsync().ConfigureAwait(false);
         if (result is not string lastModified)

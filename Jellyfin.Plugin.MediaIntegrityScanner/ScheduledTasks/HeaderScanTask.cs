@@ -105,7 +105,7 @@ public partial class HeaderScanTask : IScheduledTask
             new ParallelOptions { MaxDegreeOfParallelism = maxConcurrent, CancellationToken = cancellationToken },
             async (item, ct) =>
             {
-                if (!await _db.IsCurrentAsync(item.Id.ToString(), item.Path).ConfigureAwait(false))
+                if (!await _db.IsCurrentAsync(item.Id.ToString(), item.Path, (int)ScanPhase.Header).ConfigureAwait(false))
                 {
                     await _scanner.ScanItemAsync(item, ScanPhase.Header, ct).ConfigureAwait(false);
                 }

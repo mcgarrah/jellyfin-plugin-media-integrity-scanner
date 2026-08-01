@@ -214,8 +214,8 @@ public partial class ScanEngine : IScanEngine, IDisposable
                 new ParallelOptions { MaxDegreeOfParallelism = maxConcurrent, CancellationToken = token },
                 async (item, ct) =>
                 {
-                    // Skip if already scanned and file unchanged
-                    if (await _db.IsCurrentAsync(item.Id.ToString(), item.Path).ConfigureAwait(false))
+                    // Skip if already scanned at this phase (or higher) and file unchanged
+                    if (await _db.IsCurrentAsync(item.Id.ToString(), item.Path, (int)phase).ConfigureAwait(false))
                     {
                         return;
                     }

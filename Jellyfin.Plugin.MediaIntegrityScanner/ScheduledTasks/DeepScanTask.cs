@@ -119,7 +119,7 @@ public partial class DeepScanTask : IScheduledTask
             async (item, ct) =>
             {
                 // Skip if already deep-scanned and file unchanged
-                if (!await _db.IsCurrentAsync(item.Id.ToString(), item.Path).ConfigureAwait(false))
+                if (!await _db.IsCurrentAsync(item.Id.ToString(), item.Path, (int)ScanPhase.FullDecode).ConfigureAwait(false))
                 {
                     await _scanner.ScanItemAsync(item, ScanPhase.FullDecode, ct).ConfigureAwait(false);
                 }
