@@ -4,9 +4,7 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 
 ## Status
 
-✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, and library event hooks are all implemented and covered by 112 unit tests plus a Docker-based integration test suite. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
-
-Known gap: there is currently no in-app settings page — all `PluginConfiguration` options must be edited via the plugin's XML config file on disk (see [Configuration](#configuration) below) until a settings UI ships.
+✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, the in-app settings page, and library event hooks are all implemented and covered by 112 unit tests plus a Docker-based integration test suite. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
 
 ## Features
 
@@ -15,6 +13,7 @@ Known gap: there is currently no in-app settings page — all `PluginConfigurati
 - **Persistent state** — SQLite database tracks scan history so rescans are incremental
 - **Event-driven** — Hooks into Jellyfin library events to scan new files and purge records on delete
 - **Admin dashboard** — HTML dashboard showing library health (total/passed/failed/errored/pending) at a glance
+- **In-app settings page** — Every setting below is editable from **Dashboard → Plugins → Media Integrity Scanner → Settings**, no config-file editing required
 - **REST API** — Query scan results (with status and per-library filtering), trigger scans, and check status programmatically
 - **Cross-platform** — Runs on Linux, Windows, and macOS wherever Jellyfin and FFmpeg are available
 
@@ -89,7 +88,7 @@ Restart Jellyfin after installation.
 
 ## Configuration
 
-There is no settings page in the Jellyfin UI yet (tracked as a known gap — see [Status](#status)). Until it ships, edit the plugin's config XML directly (typically `plugins/configurations/Jellyfin.Plugin.MediaIntegrityScanner.xml` under your Jellyfin data directory) and restart Jellyfin to apply changes:
+Configure via **Dashboard → Plugins → Media Integrity Scanner**, then the **Settings »** link (or directly at **Dashboard → Plugins → Media Integrity Scanner Settings**):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -135,7 +134,8 @@ jellyfin-plugin-media-integrity-scanner/
 │   ├── Api/
 │   │   └── MediaIntegrityController.cs  # REST API
 │   └── Web/
-│       └── integrity_dashboard.html     # Admin UI
+│       ├── integrity_dashboard.html     # Admin dashboard
+│       └── integrity_settings.html      # Settings page
 ├── tests/
 │   ├── Jellyfin.Plugin.MediaIntegrityScanner.Tests/  # xUnit unit tests (112 tests)
 │   ├── docker-compose.integration.yml   # Integration test Jellyfin instance

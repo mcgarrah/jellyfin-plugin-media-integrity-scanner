@@ -66,6 +66,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             {
                 Name = "Media Integrity Scanner",
                 EmbeddedResourcePath = GetType().Namespace + ".Web.integrity_dashboard.html"
+            },
+            new PluginPageInfo
+            {
+                Name = "Media Integrity Scanner Settings",
+                EmbeddedResourcePath = GetType().Namespace + ".Web.integrity_settings.html"
             }
         };
     }
