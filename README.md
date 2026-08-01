@@ -4,7 +4,7 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 
 ## Status
 
-✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, the in-app settings page, and library event hooks are all implemented and covered by 129 unit tests plus a Docker-based integration test suite. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
+✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, the in-app settings page, and library event hooks are all implemented and covered by 141 unit tests plus a Docker-based integration test suite. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
 
 ## Features
 
@@ -139,7 +139,7 @@ jellyfin-plugin-media-integrity-scanner/
 │       ├── integrity_dashboard.html     # Admin dashboard
 │       └── integrity_settings.html      # Settings page
 ├── tests/
-│   ├── Jellyfin.Plugin.MediaIntegrityScanner.Tests/  # xUnit unit tests (129 tests)
+│   ├── Jellyfin.Plugin.MediaIntegrityScanner.Tests/  # xUnit unit tests (141 tests)
 │   ├── docker-compose.integration.yml   # Integration test Jellyfin instance
 │   └── run-integration-tests.sh         # Integration test runner
 ├── scripts/
@@ -170,7 +170,7 @@ CI runs on GitHub-hosted Ubuntu runners. A dedicated Proxmox LXC container (Debi
 dotnet test
 ```
 
-129 unit tests cover the scan engine, database layer, REST API, config throttling logic, and FFmpeg process handling — see [CODE_REVIEW.md](CODE_REVIEW.md) for what's covered and the deliberate scope boundaries (e.g., actual ffmpeg/ffprobe argument behavior is left to the integration suite below).
+141 unit tests cover the scan engine, database layer, REST API, config throttling logic, and FFmpeg process handling — see [CODE_REVIEW.md](CODE_REVIEW.md) for what's covered and the deliberate scope boundaries (e.g., actual ffmpeg/ffprobe argument behavior is left to the integration suite below).
 
 ### Local Development Workflow
 
