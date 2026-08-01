@@ -54,7 +54,7 @@ public partial class FfmpegWrapper
     /// <param name="filePath">Path to the media file.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Scan result indicating pass/fail.</returns>
-    public async Task<ScanResult> ProbeAsync(string filePath, CancellationToken cancellationToken)
+    public virtual async Task<ScanResult> ProbeAsync(string filePath, CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
 
@@ -87,7 +87,7 @@ public partial class FfmpegWrapper
     /// <param name="filePath">Path to the media file.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Scan result indicating pass/fail.</returns>
-    public async Task<ScanResult> DecodeAsync(string filePath, CancellationToken cancellationToken)
+    public virtual async Task<ScanResult> DecodeAsync(string filePath, CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
 
@@ -112,7 +112,7 @@ public partial class FfmpegWrapper
         };
     }
 
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+    internal static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
         string exe, string[] args, CancellationToken cancellationToken)
     {
         using var process = new Process();

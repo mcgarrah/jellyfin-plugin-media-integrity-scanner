@@ -96,4 +96,53 @@ public class ScanThrottleTests
         Assert.Equal(TimeSpan.Zero, ScanThrottle.ComputeReadRateDelay(0, 5, 100));
         Assert.Equal(TimeSpan.Zero, ScanThrottle.ComputeReadRateDelay(-1, 5, 100));
     }
+
+    [Fact]
+    public void ComputeReadRateDelay_ReturnsZero_WhenMaxRateIsNegative()
+    {
+        var delay = ScanThrottle.ComputeReadRateDelay(fileSizeBytes: 1024 * 1024, maxReadRateMbPerSec: -1, actualDurationMs: 10);
+        Assert.Equal(TimeSpan.Zero, delay);
+    }
+
+    [Fact]
+    public void ComputeReadRateDelay_ExactBoundary_ReturnsZero()
+    {
+        // 10 MB at 10 MB/s should take exactly 1000ms; scan took exactly 1000ms — no padding needed.
+        var fileSizeBytes = 10L * 1024 * 1024;
+        var delay = ScanThrottle.ComputeReadRateDelay(fileSizeBytes, maxReadRateMbPerSec: 10, actualDurationMs: 1000);
+
+        Assert.Equal(TimeSpan.Zero, delay);
+    }
+
+    [Fact]
+    public void ComputeReadRateDelay_VerySmallFile_ComputesProportionalDelay()
+    {
+        // 100 bytes at a 1 MB/s cap needs ~0.095ms minimum; scan took 0ms, so a tiny positive delay is expected.
+        var delay = ScanThrottle.ComputeReadRateDelay(fileSizeBytes: 100, maxReadRateMbPerSec: 1, actualDurationMs: 0);
+
+        Assert.True(delay > TimeSpan.Zero);
+        Assert.True(delay < TimeSpan.FromMilliseconds(1));
+    }
+
+    [Fact]
+    public void ComputeReadRateDelay_VeryLargeFile_ComputesWithoutOverflowOrNegativeResult()
+    {
+        // 100 GB file at 5 MB/s: ~20,480s minimum; scan finished instantly, so a large positive delay is expected.
+        var fileSizeBytes = 100L * 1024 * 1024 * 1024;
+        var delay = ScanThrottle.ComputeReadRateDelay(fileSizeBytes, maxReadRateMbPerSec: 5, actualDurationMs: 0);
+
+        Assert.True(delay > TimeSpan.FromHours(5));
+        Assert.True(delay < TimeSpan.FromHours(7));
+    }
+
+    [Theory]
+    [InlineData("00:00", "06:00", "00:00:00", true)]
+    [InlineData("00:00", "06:00", "23:59:59", false)]
+    [InlineData("22:00", "00:00", "23:00:00", true)]
+    [InlineData("22:00", "00:00", "00:00:00", false)]
+    public void IsWithinQuietHours_MidnightBoundaries(string start, string end, string now, bool expected)
+    {
+        var result = ScanThrottle.IsWithinQuietHours(start, end, TimeSpan.Parse(now));
+        Assert.Equal(expected, result);
+    }
 }
