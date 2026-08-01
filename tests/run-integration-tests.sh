@@ -312,14 +312,45 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
+# Adding the library triggers Jellyfin's own scan, which fires ItemAdded
+# events. Since ScanOnItemAdded defaults to true, the plugin's LibraryMonitor
+# kicks off its own fire-and-forget header scan of the new item. Wait for
+# that background scan to settle so it doesn't race with (and 409) the
+# scan we trigger manually below.
+info "Waiting for automatic scan-on-add to settle..."
+for i in $(seq 1 30); do
+    AUTO_STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+    AUTO_SCANNING=$(echo "$AUTO_STATUS" | jq -r '.IsScanning')
+    if [ "$AUTO_SCANNING" = "false" ]; then
+        pass "No automatic scan in progress (after ${i}s)"
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        info "Automatic scan-on-add still in progress after 30s, proceeding anyway"
+    fi
+    sleep 1
+done
+
 # --- Test: Full Scan-and-Verify Flow ---
 
 info "Triggering a header scan of the library..."
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/MediaIntegrity/Scan" \
-    -H "X-Emby-Token: $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"deepScan": false}')
+# Retry on 409 (a lingering automatic scan-on-add can still be finishing up
+# even after the settle-check above) instead of failing outright.
+HTTP_CODE=""
+for i in $(seq 1 10); do
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/MediaIntegrity/Scan" \
+        -H "X-Emby-Token: $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"deepScan": false}')
+    if [ "$HTTP_CODE" = "202" ]; then
+        break
+    fi
+    if [ "$HTTP_CODE" != "409" ]; then
+        break
+    fi
+    sleep 1
+done
 if [ "$HTTP_CODE" != "202" ]; then
     fail "Triggering scan failed with HTTP $HTTP_CODE (expected 202 Accepted)"
 fi

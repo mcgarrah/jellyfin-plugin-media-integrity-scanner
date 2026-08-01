@@ -366,16 +366,49 @@ jobs:
             sleep 1
           done
 
+          # Adding the library triggers Jellyfin's own scan, which fires
+          # ItemAdded events. Since ScanOnItemAdded defaults to true, the
+          # plugin's LibraryMonitor kicks off its own fire-and-forget header
+          # scan of the new item. Wait for that background scan to settle
+          # so it doesn't race with (and 409) the scan triggered manually
+          # in the next step.
+          echo "Waiting for automatic scan-on-add to settle..."
+          for i in $(seq 1 30); do
+            AUTO_STATUS=$(curl -sf "http://localhost:8096/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+            AUTO_SCANNING=$(echo "$AUTO_STATUS" | jq -r '.IsScanning')
+            if [ "$AUTO_SCANNING" = "false" ]; then
+              echo "No automatic scan in progress (after ${i} seconds)"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "WARNING: automatic scan-on-add still in progress after 30 seconds, proceeding anyway"
+            fi
+            sleep 1
+          done
+
       - name: Trigger scan and verify results
         run: |
           set -euo pipefail
           TOKEN="${{ steps.auth.outputs.api_token }}"
 
           echo "Triggering a header scan of the library..."
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8096/MediaIntegrity/Scan" \
-            -H "X-Emby-Token: $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"deepScan": false}')
+          # Retry on 409 (a lingering automatic scan-on-add can still be
+          # finishing up even after the settle-check above) instead of
+          # failing outright.
+          HTTP_CODE=""
+          for i in $(seq 1 10); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8096/MediaIntegrity/Scan" \
+              -H "X-Emby-Token: $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"deepScan": false}')
+            if [ "$HTTP_CODE" = "202" ]; then
+              break
+            fi
+            if [ "$HTTP_CODE" != "409" ]; then
+              break
+            fi
+            sleep 1
+          done
           if [ "$HTTP_CODE" != "202" ]; then
             echo "ERROR: triggering scan failed with HTTP $HTTP_CODE (expected 202 Accepted)"
             exit 1
