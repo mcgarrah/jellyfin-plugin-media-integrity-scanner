@@ -50,7 +50,7 @@ public partial class FfmpegResolver
     /// </summary>
     /// <returns>The full path to ffmpeg.</returns>
     /// <exception cref="InvalidOperationException">Thrown when ffmpeg cannot be found.</exception>
-    public string ResolveFfmpegPath()
+    public virtual string ResolveFfmpegPath()
     {
         return ResolveBinary("ffmpeg", Plugin.Instance?.Configuration?.FfmpegPathOverride);
     }
@@ -60,7 +60,7 @@ public partial class FfmpegResolver
     /// </summary>
     /// <returns>The full path to ffprobe.</returns>
     /// <exception cref="InvalidOperationException">Thrown when ffprobe cannot be found.</exception>
-    public string ResolveFfprobePath()
+    public virtual string ResolveFfprobePath()
     {
         return ResolveBinary("ffprobe", Plugin.Instance?.Configuration?.FfprobePathOverride);
     }
@@ -115,14 +115,14 @@ public partial class FfmpegResolver
             "in Media Integrity Scanner settings.");
     }
 
-    private static string DeriveProbeFromFfmpeg(string ffmpegPath)
+    internal static string DeriveProbeFromFfmpeg(string ffmpegPath)
     {
         var dir = Path.GetDirectoryName(ffmpegPath) ?? string.Empty;
         var ext = Path.GetExtension(ffmpegPath);
         return Path.Combine(dir, "ffprobe" + ext);
     }
 
-    private static IEnumerable<string> GetPlatformCandidates(string binaryName)
+    internal static IEnumerable<string> GetPlatformCandidates(string binaryName)
     {
         if (OperatingSystem.IsLinux())
         {
@@ -145,7 +145,7 @@ public partial class FfmpegResolver
         }
     }
 
-    private static string? FindInPath(string executable)
+    internal static string? FindInPath(string executable)
     {
         var pathVar = Environment.GetEnvironmentVariable("PATH");
         if (string.IsNullOrEmpty(pathVar))
