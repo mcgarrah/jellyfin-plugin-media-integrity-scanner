@@ -394,6 +394,96 @@ fi
 pass "GET /MediaIntegrity/Results?status=1 returns $RESULT_COUNT passed result(s)"
 echo "$RESULTS" | jq '.Items[0] | {FilePath, ScanStatus, ScanPhase, ScanDurationMs}'
 
+ITEM_ID=$(echo "$RESULTS" | jq -r '.Items[0].ItemId')
+
+# --- Test: Item Detail Endpoint ---
+
+info "Checking GET /MediaIntegrity/Results/{itemId}..."
+
+DETAIL_CODE=$(curl -s -o /tmp/item_detail.json -w "%{http_code}" \
+    "$JELLYFIN_URL/MediaIntegrity/Results/$ITEM_ID" -H "X-Emby-Token: $TOKEN")
+if [ "$DETAIL_CODE" != "200" ]; then
+    fail "GET /MediaIntegrity/Results/{itemId} failed with HTTP $DETAIL_CODE"
+fi
+DETAIL_PHASE=$(jq '.ScanPhase' /tmp/item_detail.json)
+if [ "$DETAIL_PHASE" != "1" ]; then
+    fail "Expected item detail ScanPhase 1 (Header) after the header scan, got $DETAIL_PHASE"
+fi
+pass "Item detail endpoint returns the item's Header scan record"
+
+NOT_FOUND_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    "$JELLYFIN_URL/MediaIntegrity/Results/00000000-0000-0000-0000-000000000000" -H "X-Emby-Token: $TOKEN")
+if [ "$NOT_FOUND_CODE" != "404" ]; then
+    fail "Expected HTTP 404 for an unknown item ID, got $NOT_FOUND_CODE"
+fi
+pass "Item detail endpoint returns 404 for an unknown item ID"
+rm -f /tmp/item_detail.json
+
+# --- Test: Item-Scoped Deep Scan ---
+
+# The library-wide scan trigger (and the scheduled tasks) skip files that
+# already have a passing scan at or above the requested phase (IsCurrentAsync).
+# Since this item just passed a Header scan, a library-wide deep scan would
+# skip it. Scanning it directly by ItemId bypasses that currency check and
+# forces the FullDecode pass to actually run -- this is also the only way to
+# exercise the ItemId-scoped branch of TriggerScan at all.
+info "Triggering a deep (FullDecode) scan of the test item..."
+
+HTTP_CODE=""
+for i in $(seq 1 10); do
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/MediaIntegrity/Scan" \
+        -H "X-Emby-Token: $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"itemId\": \"$ITEM_ID\", \"deepScan\": true}")
+    if [ "$HTTP_CODE" = "202" ]; then
+        break
+    fi
+    if [ "$HTTP_CODE" != "409" ]; then
+        break
+    fi
+    sleep 1
+done
+if [ "$HTTP_CODE" != "202" ]; then
+    fail "Triggering deep scan failed with HTTP $HTTP_CODE (expected 202 Accepted)"
+fi
+pass "Deep scan triggered (HTTP 202)"
+
+for i in $(seq 1 60); do
+    STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+    IS_SCANNING=$(echo "$STATUS" | jq -r '.IsScanning')
+    if [ "$IS_SCANNING" = "false" ]; then
+        pass "Deep scan completed (after ${i}s)"
+        break
+    fi
+    if [ "$i" -eq 60 ]; then
+        fail "Deep scan did not complete within 60 seconds. Last status: $STATUS"
+    fi
+    sleep 1
+done
+
+DEEP_DETAIL=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results/$ITEM_ID" -H "X-Emby-Token: $TOKEN")
+DEEP_PHASE=$(echo "$DEEP_DETAIL" | jq '.ScanPhase')
+if [ "$DEEP_PHASE" != "2" ]; then
+    fail "Expected ScanPhase 2 (FullDecode) after the deep scan, got $DEEP_PHASE. Detail: $DEEP_DETAIL"
+fi
+pass "Item detail now reflects the FullDecode (deep) scan"
+
+# --- Test: Cancel Endpoint ---
+
+info "Checking POST /MediaIntegrity/Cancel..."
+
+CANCEL_CODE=$(curl -s -o /tmp/cancel_response.json -w "%{http_code}" -X POST "$JELLYFIN_URL/MediaIntegrity/Cancel" \
+    -H "X-Emby-Token: $TOKEN")
+if [ "$CANCEL_CODE" != "200" ]; then
+    fail "POST /MediaIntegrity/Cancel failed with HTTP $CANCEL_CODE"
+fi
+CANCEL_MESSAGE=$(jq -r '.message' /tmp/cancel_response.json)
+if [ -z "$CANCEL_MESSAGE" ] || [ "$CANCEL_MESSAGE" = "null" ]; then
+    fail "Expected a message field in the Cancel response, got: $(cat /tmp/cancel_response.json)"
+fi
+pass "Cancel endpoint responds 200 (idempotent -- safe to call with no active scan)"
+rm -f /tmp/cancel_response.json
+
 # --- Summary ---
 
 echo ""

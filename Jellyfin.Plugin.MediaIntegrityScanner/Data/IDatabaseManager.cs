@@ -32,12 +32,14 @@ public interface IDatabaseManager
     Task SaveResultAsync(ScanRecord record);
 
     /// <summary>
-    /// Checks if an item's scan result is current (file hasn't changed since last scan).
+    /// Checks if an item already has a passing scan result at or above the given
+    /// phase, for the file's current contents (file hasn't changed since that scan).
     /// </summary>
     /// <param name="itemId">The Jellyfin item ID.</param>
     /// <param name="filePath">The current file path.</param>
-    /// <returns>True if the existing scan result is still valid.</returns>
-    Task<bool> IsCurrentAsync(string itemId, string filePath);
+    /// <param name="minPhase">The minimum <see cref="Scanner.ScanPhase"/> (as an int) required for the existing result to count.</param>
+    /// <returns>True if an existing scan result at or above <paramref name="minPhase"/> is still valid.</returns>
+    Task<bool> IsCurrentAsync(string itemId, string filePath, int minPhase);
 
     /// <summary>
     /// Gets a summary of scan statistics.

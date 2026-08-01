@@ -326,8 +326,8 @@ public class ScanEngineTests : IDisposable
             .Returns(new List<BaseItem> { current, stale });
 
         var db = new Mock<IDatabaseManager>();
-        db.Setup(d => d.IsCurrentAsync(current.Id.ToString(), current.Path)).ReturnsAsync(true);
-        db.Setup(d => d.IsCurrentAsync(stale.Id.ToString(), stale.Path)).ReturnsAsync(false);
+        db.Setup(d => d.IsCurrentAsync(current.Id.ToString(), current.Path, (int)ScanPhase.Header)).ReturnsAsync(true);
+        db.Setup(d => d.IsCurrentAsync(stale.Id.ToString(), stale.Path, (int)ScanPhase.Header)).ReturnsAsync(false);
         db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
 
         var wrapper = CreateFakeWrapper();
@@ -373,7 +373,7 @@ public class ScanEngineTests : IDisposable
             .Returns(new List<BaseItem> { item });
 
         var db = new Mock<IDatabaseManager>();
-        db.Setup(d => d.IsCurrentAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(false);
+        db.Setup(d => d.IsCurrentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync(false);
         db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
 
         var wrapper = CreateFakeWrapper();

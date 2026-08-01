@@ -165,7 +165,7 @@ public class SqliteDatabaseManagerTests : IDisposable
     [Fact]
     public async Task IsCurrentAsync_ReturnsFalse_WhenNoRecordExists()
     {
-        Assert.False(await _db.IsCurrentAsync("missing-item", "/media/missing.mkv"));
+        Assert.False(await _db.IsCurrentAsync("missing-item", "/media/missing.mkv", (int)ScanPhase.Header));
     }
 
     [Fact]
@@ -176,7 +176,7 @@ public class SqliteDatabaseManagerTests : IDisposable
 
         await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Fail, lastModified: mtime));
 
-        Assert.False(await _db.IsCurrentAsync("item-1", path));
+        Assert.False(await _db.IsCurrentAsync("item-1", path, (int)ScanPhase.Header));
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public class SqliteDatabaseManagerTests : IDisposable
 
         await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Pass, lastModified: mtime));
 
-        Assert.True(await _db.IsCurrentAsync("item-1", path));
+        Assert.True(await _db.IsCurrentAsync("item-1", path, (int)ScanPhase.Header));
     }
 
     [Fact]
@@ -198,7 +198,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord(
             "item-1", status: (int)ScanStatus.Pass, lastModified: "2000-01-01T00:00:00.0000000Z"));
 
-        Assert.False(await _db.IsCurrentAsync("item-1", path));
+        Assert.False(await _db.IsCurrentAsync("item-1", path, (int)ScanPhase.Header));
     }
 
     [Fact]
@@ -209,7 +209,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord(
             "item-1", status: (int)ScanStatus.Pass, lastModified: "2026-01-01T00:00:00.0000000Z"));
 
-        Assert.False(await _db.IsCurrentAsync("item-1", path));
+        Assert.False(await _db.IsCurrentAsync("item-1", path, (int)ScanPhase.Header));
     }
 
     [Fact]
@@ -224,7 +224,26 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord(
             "item-1", phase: (int)ScanPhase.FullDecode, status: (int)ScanStatus.Pass, lastModified: currentMtime));
 
-        Assert.True(await _db.IsCurrentAsync("item-1", path));
+        Assert.True(await _db.IsCurrentAsync("item-1", path, (int)ScanPhase.Header));
+    }
+
+    [Fact]
+    public async Task IsCurrentAsync_ReturnsFalse_WhenOnlyHeaderPassed_ButFullDecodeRequired()
+    {
+        // Regression test: a file that only ever passed a Header (phase 1) scan
+        // must NOT be treated as current when a FullDecode (phase 2) scan is
+        // requested, even though the file itself hasn't changed. Before this fix,
+        // IsCurrentAsync ignored scan_phase entirely, so DeepScanTask would skip
+        // any file that had already passed a header check -- silently defeating
+        // the deep scan's purpose of catching mid-file corruption header checks miss.
+        var path = CreateTempFile();
+        var mtime = File.GetLastWriteTimeUtc(path).ToString("O");
+
+        await _db.SaveResultAsync(MakeRecord(
+            "item-1", phase: (int)ScanPhase.Header, status: (int)ScanStatus.Pass, lastModified: mtime));
+
+        Assert.True(await _db.IsCurrentAsync("item-1", path, (int)ScanPhase.Header));
+        Assert.False(await _db.IsCurrentAsync("item-1", path, (int)ScanPhase.FullDecode));
     }
 
     // --- GetStatisticsAsync ---
