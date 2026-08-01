@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License along
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
@@ -40,13 +41,15 @@ public interface IScanEngine
     Task ScanItemAsync(BaseItem item, ScanPhase phase, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Scans all items in a library.
+    /// Scans all items in a library, skipping any item that already has a
+    /// passing scan result at or above the requested phase.
     /// </summary>
     /// <param name="libraryId">Optional library ID to scope the scan.</param>
     /// <param name="phase">The scan phase to execute.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="progress">Optional progress reporter, updated after each item (scanned or skipped).</param>
     /// <returns>A task representing the async operation.</returns>
-    Task ScanLibraryAsync(string? libraryId, ScanPhase phase, CancellationToken cancellationToken);
+    Task ScanLibraryAsync(string? libraryId, ScanPhase phase, CancellationToken cancellationToken, IProgress<double>? progress = null);
 
     /// <summary>
     /// Cancels the currently running scan.

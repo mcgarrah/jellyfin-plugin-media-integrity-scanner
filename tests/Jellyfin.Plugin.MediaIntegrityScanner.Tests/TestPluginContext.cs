@@ -17,8 +17,20 @@
 using System;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using Xunit;
 
 namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
+
+/// <summary>
+/// Groups every test class that touches <see cref="Plugin.Instance"/> (via
+/// <see cref="TestPluginContext"/>) into one xUnit collection, so they run
+/// sequentially against each other instead of racing on the shared static.
+/// xUnit still parallelizes this collection against unrelated ones.
+/// </summary>
+[CollectionDefinition("PluginInstance")]
+public class PluginInstanceCollection
+{
+}
 
 /// <summary>
 /// Sets <see cref="Plugin.Instance"/> and its <c>Configuration</c> for tests that
@@ -27,11 +39,10 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
 /// Both members have non-public setters by design, so this uses reflection —
 /// test-only plumbing, never referenced from production code.
 ///
-/// <c>Plugin.Instance</c> is a process-wide static singleton. Tests that use this
-/// helper must not run in parallel with each other; ScanEngineTests relies on
-/// xUnit's default "one collection per test class" behavior, which runs all
-/// tests within this class sequentially (collections run in parallel with each
-/// other, not with themselves), so no other test class may use this helper.
+/// <c>Plugin.Instance</c> is a process-wide static singleton — every test class
+/// that uses this helper must be decorated with <c>[Collection("PluginInstance")]</c>
+/// (see <see cref="PluginInstanceCollection"/>) so xUnit runs them sequentially
+/// against each other rather than in parallel.
 /// </summary>
 internal static class TestPluginContext
 {

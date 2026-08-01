@@ -239,7 +239,7 @@ public class MediaIntegrityControllerTests : IDisposable
 
         Assert.IsType<ConflictObjectResult>(result);
         _scanner.Verify(
-            s => s.ScanLibraryAsync(It.IsAny<string>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>()),
+            s => s.ScanLibraryAsync(It.IsAny<string>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()),
             Times.Never);
     }
 
@@ -247,7 +247,7 @@ public class MediaIntegrityControllerTests : IDisposable
     public async Task TriggerScan_ReturnsAccepted_AndStartsLibraryScan_WhenNotScanning()
     {
         var tcs = new TaskCompletionSource();
-        _scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>()))
+        _scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()))
             .Returns(Task.CompletedTask)
             .Callback(() => tcs.TrySetResult());
 
@@ -257,14 +257,14 @@ public class MediaIntegrityControllerTests : IDisposable
         Assert.IsType<AcceptedResult>(result);
 
         await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        _scanner.Verify(s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>()), Times.Once);
+        _scanner.Verify(s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()), Times.Once);
     }
 
     [Fact]
     public async Task TriggerScan_DeepScanRequest_UsesFullDecodePhase()
     {
         var tcs = new TaskCompletionSource();
-        _scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.FullDecode, It.IsAny<CancellationToken>()))
+        _scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.FullDecode, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()))
             .Returns(Task.CompletedTask)
             .Callback(() => tcs.TrySetResult());
 
@@ -272,7 +272,7 @@ public class MediaIntegrityControllerTests : IDisposable
         controller.TriggerScan(new ScanRequest { DeepScan = true });
 
         await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        _scanner.Verify(s => s.ScanLibraryAsync(null, ScanPhase.FullDecode, It.IsAny<CancellationToken>()), Times.Once);
+        _scanner.Verify(s => s.ScanLibraryAsync(null, ScanPhase.FullDecode, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()), Times.Once);
     }
 
     [Fact]
@@ -293,7 +293,7 @@ public class MediaIntegrityControllerTests : IDisposable
         await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
         _scanner.Verify(s => s.ScanItemAsync(item, ScanPhase.Header, It.IsAny<CancellationToken>()), Times.Once);
         _scanner.Verify(
-            s => s.ScanLibraryAsync(It.IsAny<string>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>()),
+            s => s.ScanLibraryAsync(It.IsAny<string>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()),
             Times.Never);
     }
 
