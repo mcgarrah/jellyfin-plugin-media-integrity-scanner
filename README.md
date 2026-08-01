@@ -46,6 +46,8 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
   └─────────────┘            └──────────────┘
 ```
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full event-flow diagrams — every Jellyfin event, scheduled task, and API call that can trigger a scan, the gate pipeline each scan runs through, and two worked scenarios.
+
 ## Requirements
 
 - Jellyfin 10.11+
