@@ -4,16 +4,18 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 
 ## Status
 
-🚧 **Early Development** — This plugin is not yet functional. The project structure and architecture are being established. A dedicated .NET 9 build environment (Proxmox LXC) is being provisioned for development and CI.
+✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, and library event hooks are all implemented and covered by 112 unit tests plus a Docker-based integration test suite. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
 
-## Features (Planned)
+Known gap: there is currently no in-app settings page — all `PluginConfiguration` options must be edited via the plugin's XML config file on disk (see [Configuration](#configuration) below) until a settings UI ships.
+
+## Features
 
 - **Two-phase scanning** — Fast header/metadata checks via `ffprobe`, with opt-in deep byte-stream decode via `ffmpeg`
-- **Production-safe throttling** — Configurable I/O limits, inter-file delays, and automatic pause during active playback
+- **Production-safe throttling** — Configurable read-rate cap, inter-file delays, automatic pause during active playback, and an optional quiet-hours window
 - **Persistent state** — SQLite database tracks scan history so rescans are incremental
-- **Event-driven** — Hooks into Jellyfin library events to scan new files and clean up on delete
-- **Admin dashboard** — HTML dashboard showing library health at a glance
-- **REST API** — Query scan results, trigger scans, and check status programmatically
+- **Event-driven** — Hooks into Jellyfin library events to scan new files and purge records on delete
+- **Admin dashboard** — HTML dashboard showing library health (total/passed/failed/errored/pending) at a glance
+- **REST API** — Query scan results (with status and per-library filtering), trigger scans, and check status programmatically
 - **Cross-platform** — Runs on Linux, Windows, and macOS wherever Jellyfin and FFmpeg are available
 
 ## Architecture
@@ -27,13 +29,12 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 │  ├───────────────────────────────────────────┤  │
 │  │  Library Event Monitor                     │  │
 │  │    ├── OnItemAdded → Queue for scan       │  │
-│  │    ├── OnItemUpdated → Re-queue           │  │
-│  │    └── OnItemRemoved → Purge cache        │  │
+│  │    └── OnItemRemoved → Purge records      │  │
 │  ├───────────────────────────────────────────┤  │
 │  │  Scan Engine (Bounded, Thread-Safe)        │  │
 │  │    ├── Phase 1: Header/metadata check     │  │
 │  │    ├── Phase 2: Full stream decode        │  │
-│  │    └── I/O Throttle (configurable)        │  │
+│  │    └── Read-rate / quiet-hours throttle   │  │
 │  ├───────────────────────────────────────────┤  │
 │  │  SQLite Cache + REST API + Dashboard      │  │
 │  └───────────────────────────────────────────┘  │
@@ -54,15 +55,15 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 
 ## Installation
 
-> ⚠️ Not yet available — the plugin is in early development.
-
-Once released, installation will be via custom plugin repository:
+Via custom plugin repository:
 
 1. **Dashboard → Plugins → Repositories → Add**
 2. **Name:** `mcgarrah-plugins`
 3. **URL:** `https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/manifest.json`
 4. **Save** → **Catalog** → Install **Media Integrity Scanner**
 5. **Restart Jellyfin**
+
+See [INSTALL.md](INSTALL.md) for manual installation methods, Proxmox LXC notes, uninstall steps, and troubleshooting.
 
 ## Building from Source
 
@@ -76,7 +77,7 @@ cd jellyfin-plugin-media-integrity-scanner
 
 dotnet restore
 dotnet build --configuration Release
-dotnet publish --configuration Release --output ./artifacts
+dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./artifacts
 ```
 
 Copy the contents of `./artifacts` to your Jellyfin plugins directory:
@@ -88,19 +89,22 @@ Restart Jellyfin after installation.
 
 ## Configuration
 
-After installation, configure via **Dashboard → Plugins → Media Integrity Scanner**:
+There is no settings page in the Jellyfin UI yet (tracked as a known gap — see [Status](#status)). Until it ships, edit the plugin's config XML directly (typically `plugins/configurations/Jellyfin.Plugin.MediaIntegrityScanner.xml` under your Jellyfin data directory) and restart Jellyfin to apply changes:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Max Concurrent Scans | 1 | Number of files scanned simultaneously |
-| Delay Between Files | 5000ms | Pause between scanning each file |
-| Max Read Rate | 10 MB/s | I/O bandwidth limit for scanning |
-| Pause During Playback | true | Stop scanning when users are streaming |
-| Enable Deep Scan | false | Enable Phase 2 full byte-stream decode |
-| Quiet Hours Only | false | Restrict scanning to off-peak hours |
-| Quiet Hours Start | 02:00 | Beginning of scan window |
-| Quiet Hours End | 06:00 | End of scan window |
-| Scan on Item Added | true | Auto-scan newly imported files |
+| MaxConcurrentScans | 1 | Number of files scanned simultaneously |
+| DelayBetweenFilesMs | 5000 | Pause (ms) between scanning each file |
+| MaxReadRateMbPerSec | 10 | Average I/O rate cap for scanning, in MB/s |
+| PauseDuringPlayback | true | Stop scanning when users are streaming |
+| EnableDeepScan | false | Enable Phase 2 full byte-stream decode |
+| UseQuietHoursOnly | false | Restrict scanning to the quiet-hours window below |
+| QuietHoursStart | 02:00 | Beginning of the scan window (HH:mm) |
+| QuietHoursEnd | 06:00 | End of the scan window (HH:mm) |
+| FfmpegPathOverride | *(none)* | Explicit path to the `ffmpeg` binary, if auto-detection picks the wrong one |
+| FfprobePathOverride | *(none)* | Explicit path to the `ffprobe` binary, if auto-detection picks the wrong one |
+| ScanOnItemAdded | true | Auto-scan newly imported files |
+| PurgeOnItemRemoved | true | Delete scan records when the corresponding library item is removed |
 
 ## Project Structure
 
@@ -109,9 +113,12 @@ jellyfin-plugin-media-integrity-scanner/
 ├── Jellyfin.Plugin.MediaIntegrityScanner/
 │   ├── Plugin.cs                        # Plugin entry point
 │   ├── PluginConfiguration.cs           # Settings model
+│   ├── PluginServiceRegistrator.cs      # DI registration
+│   ├── AssemblyInfo.cs                  # InternalsVisibleTo (test assembly)
 │   ├── Scanner/
 │   │   ├── IScanEngine.cs               # Scanner interface
 │   │   ├── ScanEngine.cs                # Bounded scan orchestrator
+│   │   ├── ScanThrottle.cs              # Quiet-hours + read-rate pacing (pure logic)
 │   │   ├── FfmpegWrapper.cs             # FFmpeg process management
 │   │   ├── FfmpegResolver.cs            # Cross-platform binary finder
 │   │   └── ScanResult.cs                # Result model
@@ -129,11 +136,20 @@ jellyfin-plugin-media-integrity-scanner/
 │   │   └── MediaIntegrityController.cs  # REST API
 │   └── Web/
 │       └── integrity_dashboard.html     # Admin UI
+├── tests/
+│   ├── Jellyfin.Plugin.MediaIntegrityScanner.Tests/  # xUnit unit tests (112 tests)
+│   ├── docker-compose.integration.yml   # Integration test Jellyfin instance
+│   └── run-integration-tests.sh         # Integration test runner
+├── scripts/
+│   └── update-manifest.py               # Bumps manifest.json on tagged release
 ├── Jellyfin.Plugin.MediaIntegrityScanner.csproj
 ├── Jellyfin.Plugin.MediaIntegrityScanner.sln
 ├── Directory.Build.props
 ├── manifest.json
-├── .github/workflows/build.yml
+├── .github/workflows/
+│   ├── build.yml                        # Build + unit tests on every push/PR
+│   ├── integration-test.yml             # Docker-based integration test
+│   └── release.yml                      # Tagged release + manifest.json automation
 ├── .editorconfig
 ├── .gitignore
 ├── LICENSE
@@ -144,12 +160,7 @@ jellyfin-plugin-media-integrity-scanner/
 
 ### Build Environment
 
-The development and CI build environment runs in a Proxmox LXC container with:
-- .NET 9 SDK
-- `jellyfin-ffmpeg` for integration testing
-- GitHub Actions self-hosted runner (planned)
-
-Until the dedicated build LXC is provisioned, builds run locally or via GitHub-hosted runners.
+CI runs on GitHub-hosted Ubuntu runners. A dedicated Proxmox LXC container (Debian, .NET 9 SDK, `jellyfin-ffmpeg`, and a test Jellyfin instance) is also available for local build/integration verification.
 
 ### Running Tests
 
@@ -157,9 +168,11 @@ Until the dedicated build LXC is provisioned, builds run locally or via GitHub-h
 dotnet test
 ```
 
+112 unit tests cover the scan engine, database layer, REST API, config throttling logic, and FFmpeg process handling — see [CODE_REVIEW.md](CODE_REVIEW.md) for what's covered and the deliberate scope boundaries (e.g., actual ffmpeg/ffprobe argument behavior is left to the integration suite below).
+
 ### Local Development Workflow
 
-1. Build the plugin: `dotnet publish -c Debug -o ./publish`
+1. Build the plugin: `dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj -c Debug -o ./publish`
 2. Copy to Jellyfin plugins directory
 3. Restart Jellyfin
 4. Check **Dashboard → Plugins** for the plugin
@@ -173,7 +186,7 @@ A Docker-based integration test setup validates that the plugin loads correctly 
 
 ```bash
 # 1. Build the plugin
-dotnet publish --configuration Release --output ./publish
+dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
 
 # 2. Start Jellyfin with the plugin loaded
 docker compose -f tests/docker-compose.integration.yml up -d
@@ -209,7 +222,7 @@ This project is documented in a series of articles at [mcgarrah.github.io](https
 
 ## Contributing
 
-Contributions welcome once the initial architecture stabilizes. Please open an issue to discuss before submitting PRs.
+Contributions welcome. Please open an issue to discuss before submitting PRs.
 
 ## License
 
