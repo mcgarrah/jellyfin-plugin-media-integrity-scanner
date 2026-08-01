@@ -48,12 +48,13 @@ jobs:
 
       - name: Create test media file
         run: |
-          # Generate a small valid test video using ffmpeg
+          # Generates the full good/bad corruption matrix (see
+          # tests/generate-test-media.sh's header comment for the verified
+          # pass/fail table per file). Falls back to apt's vanilla ffmpeg
+          # since /usr/lib/jellyfin-ffmpeg isn't present on the runner itself
+          # (only inside the Jellyfin container started below).
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          ffmpeg -f lavfi -i testsrc=duration=5:size=320x240:rate=25 \
-                 -f lavfi -i sine=frequency=440:duration=5 \
-                 -c:v libx264 -c:a aac -shortest \
-                 test-media/test-video.mp4
+          bash tests/generate-test-media.sh test-media
           echo "Test media created:"
           ls -la test-media/
 
@@ -351,17 +352,25 @@ jobs:
 
           echo "Test library created, waiting for scan..."
 
-          # Poll for library items instead of fixed sleep
-          for i in $(seq 1 30); do
+          # Poll for all 7 test-media items (not just "any"): the matrix
+          # includes deliberately unreadable files (bad-empty, bad-garbage)
+          # whose own metadata probing takes Jellyfin's indexer longer than
+          # a single well-formed file -- breaking on the first item visible
+          # left the library only partially indexed for later exact-count
+          # assertions, since the plugin's own file count depends on
+          # Jellyfin having finished classifying every item as Video/Audio
+          # media first.
+          for i in $(seq 1 60); do
             ITEMS=$(curl -sf "http://localhost:8096/Items?Recursive=true" \
               -H "X-Emby-Token: $TOKEN")
-            ITEM_COUNT=$(echo "$ITEMS" | jq '.TotalRecordCount')
-            if [ "$ITEM_COUNT" -gt 0 ]; then
+            ITEM_COUNT=$(echo "$ITEMS" | jq '[.Items[] | select(.MediaType == "Video" or .MediaType == "Audio")] | length')
+            if [ "$ITEM_COUNT" -ge 7 ]; then
               echo "Library items found: $ITEM_COUNT (after ${i} seconds)"
               break
             fi
-            if [ "$i" -eq 30 ]; then
-              echo "WARNING: No library items detected after 30 seconds (metadata fetch may be slow)"
+            if [ "$i" -eq 60 ]; then
+              echo "ERROR: expected 7 media items after 60 seconds, only found $ITEM_COUNT"
+              exit 1
             fi
             sleep 1
           done
@@ -371,17 +380,19 @@ jobs:
           # plugin's LibraryMonitor kicks off its own fire-and-forget header
           # scan of the new item. Wait for that background scan to settle
           # so it doesn't race with (and 409) the scan triggered manually
-          # in the next step.
+          # in the next step. 7 files at the default DelayBetweenFilesMs
+          # (5000ms) and MaxConcurrentScans (1) can take longer than 30s to
+          # fully drain -- verified end-to-end at 60s.
           echo "Waiting for automatic scan-on-add to settle..."
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             AUTO_STATUS=$(curl -sf "http://localhost:8096/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
             AUTO_SCANNING=$(echo "$AUTO_STATUS" | jq -r '.IsScanning')
             if [ "$AUTO_SCANNING" = "false" ]; then
               echo "No automatic scan in progress (after ${i} seconds)"
               break
             fi
-            if [ "$i" -eq 30 ]; then
-              echo "WARNING: automatic scan-on-add still in progress after 30 seconds, proceeding anyway"
+            if [ "$i" -eq 60 ]; then
+              echo "WARNING: automatic scan-on-add still in progress after 60 seconds, proceeding anyway"
             fi
             sleep 1
           done
@@ -434,15 +445,30 @@ jobs:
           done
 
           echo "Verifying scan results..."
+          # Expected counts after a Header scan of the 7-file good/bad
+          # matrix, verified by hand against the real jellyfin-ffmpeg
+          # binaries in this image (see generate-test-media.sh's header
+          # comment for the full pass/fail table):
+          #   good-header, good-alt-codec, bad-truncated, bad-middecode -> Pass (4)
+          #   bad-empty, bad-garbage, bad-header-corrupt                -> Fail (3)
+          # (bad-truncated/bad-middecode only fail once deep-scanned in the
+          # next step -- ffprobe's header-only read never touches the
+          # corrupted frame data.)
           FINAL_STATUS=$(curl -sf "http://localhost:8096/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+          TOTAL_FILES=$(echo "$FINAL_STATUS" | jq '.TotalFiles')
           SCANNED_FILES=$(echo "$FINAL_STATUS" | jq '.ScannedFiles')
           PASSED_FILES=$(echo "$FINAL_STATUS" | jq '.PassedFiles')
+          FAILED_FILES=$(echo "$FINAL_STATUS" | jq '.FailedFiles')
 
-          if [ "$SCANNED_FILES" -lt 1 ]; then
-            echo "ERROR: expected at least 1 scanned file, got $SCANNED_FILES. Status: $FINAL_STATUS"
+          if [ "$TOTAL_FILES" != "7" ] || [ "$SCANNED_FILES" != "7" ]; then
+            echo "ERROR: expected 7 total/scanned files, got total=$TOTAL_FILES scanned=$SCANNED_FILES. Status: $FINAL_STATUS"
             exit 1
           fi
-          echo "SUCCESS: library health reflects the scan: $SCANNED_FILES scanned, $PASSED_FILES passed"
+          if [ "$PASSED_FILES" != "4" ] || [ "$FAILED_FILES" != "3" ]; then
+            echo "ERROR: expected 4 passed / 3 failed after the Header scan, got passed=$PASSED_FILES failed=$FAILED_FILES. Status: $FINAL_STATUS"
+            exit 1
+          fi
+          echo "SUCCESS: library health reflects the scan: $SCANNED_FILES scanned, $PASSED_FILES passed, $FAILED_FILES failed"
 
           RESULTS=$(curl -sf "http://localhost:8096/MediaIntegrity/Results?status=1" -H "X-Emby-Token: $TOKEN")
           RESULT_COUNT=$(echo "$RESULTS" | jq '.TotalCount')
@@ -485,20 +511,36 @@ jobs:
           fi
           echo "SUCCESS: item detail endpoint returns 404 for an unknown item ID"
 
-          # The library-wide scan trigger (and the scheduled tasks) skip files
-          # that already have a passing scan at or above the requested phase
-          # (IsCurrentAsync). Since this item just passed a Header scan, a
-          # library-wide deep scan would skip it. Scanning it directly by
-          # ItemId bypasses that currency check and forces the FullDecode pass
-          # to actually run -- this is also the only way to exercise the
-          # ItemId-scoped branch of TriggerScan at all.
-          echo "Triggering a deep (FullDecode) scan of the test item..."
+          # The library-wide scan trigger (and the scheduled tasks) skip
+          # files that already have a passing scan at or above the requested
+          # phase (IsCurrentAsync). bad-truncated.mp4 already passed its
+          # Header scan (ffprobe never reads past the intact moov atom), so
+          # a library-wide deep scan would skip it entirely. Scanning it
+          # directly by ItemId bypasses that currency check and forces the
+          # FullDecode pass to actually run against it -- this is also the
+          # only way to exercise the ItemId-scoped branch of TriggerScan at
+          # all.
+          #
+          # Look up its ItemId via the plugin's own Results endpoint, not
+          # Jellyfin's /Items -- Jellyfin's own API returns item IDs in
+          # dashless ("N") format, while this plugin stores/expects the
+          # standard dashed Guid.ToString(), so an ID lifted from /Items
+          # would 404 against /MediaIntegrity/Results/{itemId} without
+          # reformatting. Results?status=1 is already in the right format.
+          PASSED_RESULTS=$(curl -sf "http://localhost:8096/MediaIntegrity/Results?status=1&pageSize=50" -H "X-Emby-Token: $TOKEN")
+          TRUNCATED_ITEM_ID=$(echo "$PASSED_RESULTS" | jq -r '.Items[] | select(.FilePath | endswith("bad-truncated.mp4")) | .ItemId')
+          if [ -z "$TRUNCATED_ITEM_ID" ] || [ "$TRUNCATED_ITEM_ID" = "null" ]; then
+            echo "ERROR: could not find a passed Header scan result for bad-truncated.mp4. Results: $PASSED_RESULTS"
+            exit 1
+          fi
+
+          echo "Triggering a deep (FullDecode) scan of bad-truncated.mp4 (currently Pass at Header)..."
           HTTP_CODE=""
           for i in $(seq 1 10); do
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8096/MediaIntegrity/Scan" \
               -H "X-Emby-Token: $TOKEN" \
               -H "Content-Type: application/json" \
-              -d "{\"itemId\": \"$ITEM_ID\", \"deepScan\": true}")
+              -d "{\"itemId\": \"$TRUNCATED_ITEM_ID\", \"deepScan\": true}")
             if [ "$HTTP_CODE" = "202" ]; then
               break
             fi
@@ -527,13 +569,15 @@ jobs:
             sleep 1
           done
 
-          DEEP_DETAIL=$(curl -sf "http://localhost:8096/MediaIntegrity/Results/$ITEM_ID" -H "X-Emby-Token: $TOKEN")
+          DEEP_DETAIL=$(curl -sf "http://localhost:8096/MediaIntegrity/Results/$TRUNCATED_ITEM_ID" -H "X-Emby-Token: $TOKEN")
           DEEP_PHASE=$(echo "$DEEP_DETAIL" | jq '.ScanPhase')
-          if [ "$DEEP_PHASE" != "2" ]; then
-            echo "ERROR: expected ScanPhase 2 (FullDecode) after the deep scan, got $DEEP_PHASE. Detail: $DEEP_DETAIL"
+          DEEP_STATUS=$(echo "$DEEP_DETAIL" | jq '.ScanStatus')
+          if [ "$DEEP_PHASE" != "2" ] || [ "$DEEP_STATUS" != "2" ]; then
+            echo "ERROR: expected ScanPhase 2 (FullDecode) / ScanStatus 2 (Fail) after the deep scan, got phase=$DEEP_PHASE status=$DEEP_STATUS. Detail: $DEEP_DETAIL"
             exit 1
           fi
-          echo "SUCCESS: item detail now reflects the FullDecode (deep) scan"
+          echo "SUCCESS: bad-truncated.mp4 flipped from Pass (Header) to Fail (FullDecode) -- the two-phase split works"
+          echo "$DEEP_DETAIL" | jq '.ErrorOutput'
 
           echo "Checking POST /MediaIntegrity/Cancel..."
           CANCEL_CODE=$(curl -s -o /tmp/cancel_response.json -w "%{http_code}" -X POST "http://localhost:8096/MediaIntegrity/Cancel" \

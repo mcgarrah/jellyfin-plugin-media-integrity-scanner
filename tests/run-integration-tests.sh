@@ -45,13 +45,10 @@ cp "$PROJECT_ROOT/publish/Microsoft.Data.Sqlite.dll" \
 cp "$PROJECT_ROOT"/publish/SQLitePCLRaw.*.dll \
    "$SCRIPT_DIR/jellyfin-config/plugins/MediaIntegrityScanner/" 2>/dev/null || true
 
-# Create test media if not present
-if [ ! -f "$SCRIPT_DIR/test-media/test-video.mp4" ]; then
-    info "Creating test media file..."
-    ffmpeg -f lavfi -i testsrc=duration=5:size=320x240:rate=25 \
-           -f lavfi -i sine=frequency=440:duration=5 \
-           -c:v libx264 -c:a aac -shortest \
-           "$SCRIPT_DIR/test-media/test-video.mp4" -y 2>/dev/null
+# Create the good/bad test media matrix if not present
+if [ ! -f "$SCRIPT_DIR/test-media/good-header.mp4" ]; then
+    info "Generating test media matrix (good + corrupted variants)..."
+    bash "$SCRIPT_DIR/generate-test-media.sh" "$SCRIPT_DIR/test-media"
 fi
 
 # --- Wait for Jellyfin health check ---
@@ -298,16 +295,23 @@ curl -sf -X POST "$JELLYFIN_URL/Library/VirtualFolders?name=TestMovies&collectio
         }
     }' > /dev/null
 
-# Poll for library items instead of fixed sleep
-for i in $(seq 1 30); do
+# Poll for all 7 test-media items (not just "any"): the matrix includes
+# deliberately unreadable files (bad-empty, bad-garbage) whose own metadata
+# probing takes Jellyfin's indexer longer than the single well-formed file
+# this loop used to wait for -- breaking on the first item visible left the
+# library only partially indexed when later steps asserted exact pass/fail
+# counts, since the plugin's own file count depends on Jellyfin having
+# finished classifying every item as Video/Audio media first.
+EXPECTED_MEDIA_COUNT=7
+for i in $(seq 1 60); do
     ITEMS=$(curl -sf "$JELLYFIN_URL/Items?Recursive=true" -H "X-Emby-Token: $TOKEN")
-    ITEM_COUNT=$(echo "$ITEMS" | jq '.TotalRecordCount')
-    if [ "$ITEM_COUNT" -gt 0 ]; then
-        pass "Media library created with $ITEM_COUNT item(s) (after ${i}s)"
+    ITEM_COUNT=$(echo "$ITEMS" | jq '[.Items[] | select(.MediaType == "Video" or .MediaType == "Audio")] | length')
+    if [ "$ITEM_COUNT" -ge "$EXPECTED_MEDIA_COUNT" ]; then
+        pass "Media library created with $ITEM_COUNT media item(s) (after ${i}s)"
         break
     fi
-    if [ "$i" -eq 30 ]; then
-        info "Library created but no items detected after 30s (metadata fetch may be slow)"
+    if [ "$i" -eq 60 ]; then
+        fail "Expected $EXPECTED_MEDIA_COUNT media items after 60s, only found $ITEM_COUNT"
     fi
     sleep 1
 done
@@ -318,15 +322,18 @@ done
 # that background scan to settle so it doesn't race with (and 409) the
 # scan we trigger manually below.
 info "Waiting for automatic scan-on-add to settle..."
-for i in $(seq 1 30); do
+# 7 files at the default DelayBetweenFilesMs (5000ms) and MaxConcurrentScans
+# (1) can take longer than the old 30s budget to fully drain -- bumped to 60s
+# to match "Waiting for scan to complete" below, verified end-to-end.
+for i in $(seq 1 60); do
     AUTO_STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
     AUTO_SCANNING=$(echo "$AUTO_STATUS" | jq -r '.IsScanning')
     if [ "$AUTO_SCANNING" = "false" ]; then
         pass "No automatic scan in progress (after ${i}s)"
         break
     fi
-    if [ "$i" -eq 30 ]; then
-        info "Automatic scan-on-add still in progress after 30s, proceeding anyway"
+    if [ "$i" -eq 60 ]; then
+        info "Automatic scan-on-add still in progress after 60s, proceeding anyway"
     fi
     sleep 1
 done
@@ -376,14 +383,26 @@ done
 
 info "Verifying scan results..."
 
+# Expected counts after a Header scan of the 7-file good/bad matrix, verified
+# by hand against the real jellyfin-ffmpeg binaries in this image (see
+# generate-test-media.sh's header comment for the full pass/fail table):
+#   good-header, good-alt-codec, bad-truncated, bad-middecode  -> Pass (4)
+#   bad-empty, bad-garbage, bad-header-corrupt                 -> Fail (3)
+# (bad-truncated and bad-middecode only fail once deep-scanned below --
+# ffprobe's header-only read doesn't touch the corrupted frame data.)
 FINAL_STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+TOTAL_FILES=$(echo "$FINAL_STATUS" | jq '.TotalFiles')
 SCANNED_FILES=$(echo "$FINAL_STATUS" | jq '.ScannedFiles')
 PASSED_FILES=$(echo "$FINAL_STATUS" | jq '.PassedFiles')
+FAILED_FILES=$(echo "$FINAL_STATUS" | jq '.FailedFiles')
 
-if [ "$SCANNED_FILES" -lt 1 ]; then
-    fail "Expected at least 1 scanned file, got $SCANNED_FILES. Status: $FINAL_STATUS"
+if [ "$TOTAL_FILES" != "7" ] || [ "$SCANNED_FILES" != "7" ]; then
+    fail "Expected 7 total/scanned files, got total=$TOTAL_FILES scanned=$SCANNED_FILES. Status: $FINAL_STATUS"
 fi
-pass "Library health reflects the scan: $SCANNED_FILES scanned, $PASSED_FILES passed"
+if [ "$PASSED_FILES" != "4" ] || [ "$FAILED_FILES" != "3" ]; then
+    fail "Expected 4 passed / 3 failed after the Header scan, got passed=$PASSED_FILES failed=$FAILED_FILES. Status: $FINAL_STATUS"
+fi
+pass "Library health reflects the scan: $SCANNED_FILES scanned, $PASSED_FILES passed, $FAILED_FILES failed"
 
 RESULTS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results?status=1" -H "X-Emby-Token: $TOKEN")
 RESULT_COUNT=$(echo "$RESULTS" | jq '.TotalCount')
@@ -419,22 +438,35 @@ fi
 pass "Item detail endpoint returns 404 for an unknown item ID"
 rm -f /tmp/item_detail.json
 
-# --- Test: Item-Scoped Deep Scan ---
+# --- Test: Item-Scoped Deep Scan Proves the Two-Phase Split ---
 
 # The library-wide scan trigger (and the scheduled tasks) skip files that
 # already have a passing scan at or above the requested phase (IsCurrentAsync).
-# Since this item just passed a Header scan, a library-wide deep scan would
-# skip it. Scanning it directly by ItemId bypasses that currency check and
-# forces the FullDecode pass to actually run -- this is also the only way to
+# bad-truncated.mp4 already passed its Header scan (ffprobe never reads past
+# the intact moov atom), so a library-wide deep scan would skip it entirely.
+# Scanning it directly by ItemId bypasses that currency check and forces the
+# FullDecode pass to actually run against it -- this is also the only way to
 # exercise the ItemId-scoped branch of TriggerScan at all.
-info "Triggering a deep (FullDecode) scan of the test item..."
+#
+# Look up its ItemId via the plugin's own Results endpoint, not Jellyfin's
+# /Items -- Jellyfin's own API returns item IDs in dashless ("N") format,
+# while this plugin stores/expects the standard dashed Guid.ToString(), so
+# an ID lifted from /Items would 404 against /MediaIntegrity/Results/{itemId}
+# without reformatting. Results?status=1 is already in the right format.
+PASSED_RESULTS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results?status=1&pageSize=50" -H "X-Emby-Token: $TOKEN")
+TRUNCATED_ITEM_ID=$(echo "$PASSED_RESULTS" | jq -r '.Items[] | select(.FilePath | endswith("bad-truncated.mp4")) | .ItemId')
+if [ -z "$TRUNCATED_ITEM_ID" ] || [ "$TRUNCATED_ITEM_ID" = "null" ]; then
+    fail "Could not find a passed Header scan result for bad-truncated.mp4. Results: $PASSED_RESULTS"
+fi
+
+info "Triggering a deep (FullDecode) scan of bad-truncated.mp4 (currently Pass at Header)..."
 
 HTTP_CODE=""
 for i in $(seq 1 10); do
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/MediaIntegrity/Scan" \
         -H "X-Emby-Token: $TOKEN" \
         -H "Content-Type: application/json" \
-        -d "{\"itemId\": \"$ITEM_ID\", \"deepScan\": true}")
+        -d "{\"itemId\": \"$TRUNCATED_ITEM_ID\", \"deepScan\": true}")
     if [ "$HTTP_CODE" = "202" ]; then
         break
     fi
@@ -461,12 +493,14 @@ for i in $(seq 1 60); do
     sleep 1
 done
 
-DEEP_DETAIL=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results/$ITEM_ID" -H "X-Emby-Token: $TOKEN")
+DEEP_DETAIL=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results/$TRUNCATED_ITEM_ID" -H "X-Emby-Token: $TOKEN")
 DEEP_PHASE=$(echo "$DEEP_DETAIL" | jq '.ScanPhase')
-if [ "$DEEP_PHASE" != "2" ]; then
-    fail "Expected ScanPhase 2 (FullDecode) after the deep scan, got $DEEP_PHASE. Detail: $DEEP_DETAIL"
+DEEP_STATUS=$(echo "$DEEP_DETAIL" | jq '.ScanStatus')
+if [ "$DEEP_PHASE" != "2" ] || [ "$DEEP_STATUS" != "2" ]; then
+    fail "Expected ScanPhase 2 (FullDecode) / ScanStatus 2 (Fail) after the deep scan, got phase=$DEEP_PHASE status=$DEEP_STATUS. Detail: $DEEP_DETAIL"
 fi
-pass "Item detail now reflects the FullDecode (deep) scan"
+pass "bad-truncated.mp4 flipped from Pass (Header) to Fail (FullDecode) -- the two-phase split works"
+echo "$DEEP_DETAIL" | jq '.ErrorOutput'
 
 # --- Test: Cancel Endpoint ---
 
