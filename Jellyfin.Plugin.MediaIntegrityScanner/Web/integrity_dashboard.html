@@ -194,32 +194,32 @@
         function loadStatus() {
             apiFetch('Status').then(function(data) {
                 document.getElementById('health-pct').textContent =
-                    data.healthPercentage + '%';
+                    data.HealthPercentage + '%';
                 document.getElementById('total-files').textContent =
-                    data.totalFiles;
+                    data.TotalFiles;
                 document.getElementById('passed-files').textContent =
-                    data.passedFiles;
+                    data.PassedFiles;
                 document.getElementById('failed-files').textContent =
-                    data.failedFiles;
+                    data.FailedFiles;
                 document.getElementById('errored-files').textContent =
-                    data.erroredFiles;
+                    data.ErroredFiles;
                 document.getElementById('pending-files').textContent =
-                    data.pendingFiles;
+                    data.PendingFiles;
                 document.getElementById('scan-status').textContent =
-                    data.isScanning ? 'Scanning...' : 'Idle';
+                    data.IsScanning ? 'Scanning...' : 'Idle';
                 document.getElementById('health-bar').style.width =
-                    data.healthPercentage + '%';
+                    data.HealthPercentage + '%';
 
                 // Update button states
-                document.getElementById('btn-cancel').disabled = !data.isScanning;
-                document.getElementById('btn-scan-headers').disabled = data.isScanning;
-                document.getElementById('btn-scan-deep').disabled = data.isScanning;
+                document.getElementById('btn-cancel').disabled = !data.IsScanning;
+                document.getElementById('btn-scan-headers').disabled = data.IsScanning;
+                document.getElementById('btn-scan-deep').disabled = data.IsScanning;
 
                 // Color the health bar based on percentage
                 var bar = document.getElementById('health-bar');
-                if (data.healthPercentage >= 95) {
+                if (data.HealthPercentage >= 95) {
                     bar.style.background = '#4caf50';
-                } else if (data.healthPercentage >= 80) {
+                } else if (data.HealthPercentage >= 80) {
                     bar.style.background = '#ff9800';
                 } else {
                     bar.style.background = '#f44336';
@@ -247,26 +247,26 @@
 
         function renderResults(data) {
             var tbody = document.getElementById('results-body');
-            if (!data.items || data.items.length === 0) {
+            if (!data.Items || data.Items.length === 0) {
                 tbody.innerHTML =
                     '<tr><td colspan="6">No results yet. Run a scan to begin.</td></tr>';
                 return;
             }
 
-            tbody.innerHTML = data.items.map(function(item) {
-                var filename = item.filePath ? item.filePath.split('/').pop().split('\\').pop() : '—';
-                var statusClass = getStatusClass(item.scanStatus);
-                var statusLabel = getStatusLabel(item.scanStatus);
-                var phaseLabel = item.scanPhase === 1 ? 'Header' : 'Full Decode';
-                var timestamp = formatDate(item.scanTimestamp);
-                var duration = item.scanDurationMs ? (item.scanDurationMs / 1000).toFixed(1) + 's' : '—';
-                var error = item.errorOutput
-                    ? '<span title="' + escapeHtml(item.errorOutput) + '">' +
-                      escapeHtml(item.errorOutput.substring(0, 50)) + '...</span>'
+            tbody.innerHTML = data.Items.map(function(item) {
+                var filename = item.FilePath ? item.FilePath.split('/').pop().split('\\').pop() : '—';
+                var statusClass = getStatusClass(item.ScanStatus);
+                var statusLabel = getStatusLabel(item.ScanStatus);
+                var phaseLabel = item.ScanPhase === 1 ? 'Header' : 'Full Decode';
+                var timestamp = formatDate(item.ScanTimestamp);
+                var duration = item.ScanDurationMs ? (item.ScanDurationMs / 1000).toFixed(1) + 's' : '—';
+                var error = item.ErrorOutput
+                    ? '<span title="' + escapeHtml(item.ErrorOutput) + '">' +
+                      escapeHtml(item.ErrorOutput.substring(0, 50)) + '...</span>'
                     : '—';
 
                 return '<tr>' +
-                    '<td title="' + escapeHtml(item.filePath || '') + '">' + escapeHtml(filename) + '</td>' +
+                    '<td title="' + escapeHtml(item.FilePath || '') + '">' + escapeHtml(filename) + '</td>' +
                     '<td class="status-' + statusClass + '">' + statusLabel + '</td>' +
                     '<td>' + phaseLabel + '</td>' +
                     '<td>' + timestamp + '</td>' +
@@ -277,7 +277,7 @@
         }
 
         function renderPagination(data) {
-            var totalPages = Math.ceil(data.totalCount / pageSize);
+            var totalPages = Math.ceil(data.TotalCount / pageSize);
             var container = document.getElementById('pagination');
 
             if (totalPages <= 1) {
@@ -290,7 +290,7 @@
                 html += '<button class="btn btn-primary" onclick="goToPage(' + (currentPage - 1) + ')">&laquo; Prev</button>';
             }
             html += '<span>Page ' + currentPage + ' of ' + totalPages +
-                    ' (' + data.totalCount + ' total)</span>';
+                    ' (' + data.TotalCount + ' total)</span>';
             if (currentPage < totalPages) {
                 html += '<button class="btn btn-primary" onclick="goToPage(' + (currentPage + 1) + ')">Next &raquo;</button>';
             }
