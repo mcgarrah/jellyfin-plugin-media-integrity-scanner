@@ -1,0 +1,31 @@
+name: Dependency audit
+
+# Separate from build.yml's own vulnerability check (which only re-checks a
+# PR's exact dependency set at the moment it's opened): a CVE disclosed
+# against an already-merged, already-pinned dependency needs no code change
+# here to appear, so nothing would ever trigger that check to notice it.
+# This runs on a schedule instead, against whatever is on main right now.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # every Monday, 06:00 UTC
+  workflow_dispatch: {} # manual trigger, e.g. right after a new CVE lands
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore --verbosity normal
+
+      - name: Check for vulnerable NuGet packages
+        run: ./scripts/check-vulnerable-packages.sh
