@@ -21,24 +21,14 @@ The git tag and the internal version must stay in sync. The only differences are
    <FileVersion>X.Y.Z.0</FileVersion>
    ```
 
-2. **`manifest.json`** — add a new entry to the `versions` array (keep old entries for history):
-   ```json
-   {
-     "version": "X.Y.Z.0",
-     "changelog": "Description of changes",
-     "targetAbi": "10.11.0.0",
-     "sourceUrl": "https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/releases/download/vX.Y.Z/media-integrity-scanner-vX.Y.Z.zip",
-     "checksum": "<md5 of the zip>",
-     "timestamp": "2026-MM-DDT00:00:00Z"
-   }
-   ```
+2. **`manifest.json`** — no manual edit needed. `release.yml` runs `scripts/update-manifest.py` after every tagged release, which prepends a new `versions` entry (version, changelog, `targetAbi`, download URL, MD5 checksum, timestamp) and commits it back to `main` automatically. Re-running for the same tag is idempotent (it replaces rather than duplicates that version's entry).
 
 ## Release Steps
 
-1. **Bump version** in `Directory.Build.props` and `manifest.json`
+1. **Bump version** in `Directory.Build.props`
 2. **Commit** the version bump:
    ```bash
-   git add Directory.Build.props manifest.json
+   git add Directory.Build.props
    git commit -m "Bump version to X.Y.Z"
    ```
 3. **Push** to main (or merge a PR):
@@ -55,21 +45,13 @@ The git tag and the internal version must stay in sync. The only differences are
    - Packages it as `media-integrity-scanner-vX.Y.Z.zip`
    - Creates a GitHub Release with the zip attached
    - Generates release notes from commit history
+   - Runs `scripts/update-manifest.py` to bump `manifest.json` (version, checksum, `targetAbi`, download URL) and pushes that commit to `main` — this assumes the tag was created from the current tip of `main`
 
-6. **Update manifest.json** with the download URL and checksum from the release:
-   - Download URL: `https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/releases/download/vX.Y.Z/media-integrity-scanner-vX.Y.Z.zip`
-   - Checksum: `md5sum media-integrity-scanner-vX.Y.Z.zip`
-   - Commit and push this update to main
+No further manual steps are required — verify the GitHub Release and the `manifest.json` commit landed, then confirm the plugin repository picks up the new version in Jellyfin's Catalog.
 
 ## Checksum
 
-Jellyfin uses MD5 checksums in the manifest to verify plugin downloads. After the release zip is built:
-
-```bash
-md5sum media-integrity-scanner-vX.Y.Z.zip
-```
-
-Put the hash in the `checksum` field of `manifest.json`.
+`scripts/update-manifest.py` computes the MD5 checksum of the release zip automatically; no manual `md5sum` step is needed. Jellyfin uses this checksum to verify plugin downloads.
 
 ## When to Bump Which Number
 
@@ -79,6 +61,6 @@ Put the hash in the `checksum` field of `manifest.json`.
 
 ## Notes
 
-- The manifest.json `targetAbi` field specifies the minimum Jellyfin version required. Update this if the plugin starts using APIs from a newer Jellyfin release.
-- Keep old version entries in manifest.json — Jellyfin uses them to show available versions and allow downgrades.
+- The manifest.json `targetAbi` field specifies the minimum Jellyfin version required. `scripts/update-manifest.py` derives it from the `Jellyfin.Controller` package reference in the `.csproj`, so bumping that package reference is enough to change it — no separate manual edit needed.
+- Keep old version entries in manifest.json — Jellyfin uses them to show available versions and allow downgrades. The automation only replaces the entry matching the tag being released; older entries are untouched.
 - The fourth number (`.0`) can be used for build increments but we keep it at `0` for simplicity.
