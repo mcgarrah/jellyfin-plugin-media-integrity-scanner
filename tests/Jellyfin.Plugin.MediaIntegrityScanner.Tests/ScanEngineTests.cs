@@ -36,8 +36,8 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
 /// Tests for ScanEngine's orchestration logic: concurrency bounding, IsScanning
 /// tracking, DB persistence, cancellation, and library-scan skip/filter behavior.
 /// Uses Plugin.Instance reflection plumbing (see TestPluginContext) to control
-/// config, so it must not run in parallel with any other test class that also
-/// touches Plugin.Instance — none currently do.
+/// config; decorated with [Collection("PluginInstance")] so it doesn't race
+/// other test classes that touch the same static (see PluginInstanceCollection).
 ///
 /// Quiet-hours and playback-pause *window/session logic itself* is not
 /// re-verified here (ScanThrottleTests already covers the pure time-window
@@ -45,6 +45,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
 /// via a quick cancel-while-waiting probe, since neither DateTime.Now nor the
 /// 30-second playback poll interval are injectable/mockable.
 /// </summary>
+[Collection("PluginInstance")]
 public class ScanEngineTests : IDisposable
 {
     public ScanEngineTests()

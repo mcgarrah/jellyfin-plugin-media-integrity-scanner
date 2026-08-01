@@ -18,11 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Jellyfin.Data.Enums;
-using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
-using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -33,27 +29,17 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.ScheduledTasks;
 /// </summary>
 public partial class HeaderScanTask : IScheduledTask
 {
-    private readonly ILibraryManager _library;
     private readonly IScanEngine _scanner;
-    private readonly IDatabaseManager _db;
     private readonly ILogger<HeaderScanTask> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HeaderScanTask"/> class.
     /// </summary>
-    /// <param name="library">Library manager.</param>
     /// <param name="scanner">Scan engine.</param>
-    /// <param name="db">Database manager.</param>
     /// <param name="logger">Logger instance.</param>
-    public HeaderScanTask(
-        ILibraryManager library,
-        IScanEngine scanner,
-        IDatabaseManager db,
-        ILogger<HeaderScanTask> logger)
+    public HeaderScanTask(IScanEngine scanner, ILogger<HeaderScanTask> logger)
     {
-        _library = library;
         _scanner = scanner;
-        _db = db;
         _logger = logger;
     }
 
@@ -84,45 +70,12 @@ public partial class HeaderScanTask : IScheduledTask
     }
 
     /// <inheritdoc />
-    public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
+    public Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
         LogHeaderScanStarting();
-
-        var items = _library.GetItemList(new InternalItemsQuery
-        {
-            MediaTypes = new[] { MediaType.Video, MediaType.Audio },
-            IsVirtualItem = false
-        });
-
-        var total = items.Count;
-        var processed = 0;
-
-        LogHeaderScanItemCount(total);
-
-        var maxConcurrent = Math.Max(1, Plugin.Instance?.Configuration?.MaxConcurrentScans ?? 1);
-        await Parallel.ForEachAsync(
-            items,
-            new ParallelOptions { MaxDegreeOfParallelism = maxConcurrent, CancellationToken = cancellationToken },
-            async (item, ct) =>
-            {
-                if (!await _db.IsCurrentAsync(item.Id.ToString(), item.Path, (int)ScanPhase.Header).ConfigureAwait(false))
-                {
-                    await _scanner.ScanItemAsync(item, ScanPhase.Header, ct).ConfigureAwait(false);
-                }
-
-                var done = Interlocked.Increment(ref processed);
-                progress.Report((double)done / total * 100);
-            }).ConfigureAwait(false);
-
-        LogHeaderScanComplete(processed, total);
+        return _scanner.ScanLibraryAsync(null, ScanPhase.Header, cancellationToken, progress);
     }
 
     [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Starting scheduled header scan")]
     private partial void LogHeaderScanStarting();
-
-    [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "Header scan: {Count} items to process")]
-    private partial void LogHeaderScanItemCount(int count);
-
-    [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "Header scan complete: {Processed}/{Total} items processed")]
-    private partial void LogHeaderScanComplete(int processed, int total);
 }

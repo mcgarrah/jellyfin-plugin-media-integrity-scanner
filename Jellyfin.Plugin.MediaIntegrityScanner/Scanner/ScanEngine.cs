@@ -184,7 +184,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task ScanLibraryAsync(string? libraryId, ScanPhase phase, CancellationToken cancellationToken)
+    public async Task ScanLibraryAsync(string? libraryId, ScanPhase phase, CancellationToken cancellationToken, IProgress<double>? progress = null)
     {
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, (_cts ??= new CancellationTokenSource()).Token);
@@ -206,7 +206,9 @@ public partial class ScanEngine : IScanEngine, IDisposable
             }
 
             var items = _library.GetItemList(query);
-            LogLibraryScanStarting(items.Count, phase);
+            var total = items.Count;
+            var processed = 0;
+            LogLibraryScanStarting(total, phase);
 
             var maxConcurrent = Math.Max(1, Plugin.Instance?.Configuration?.MaxConcurrentScans ?? 1);
             await Parallel.ForEachAsync(
@@ -215,15 +217,16 @@ public partial class ScanEngine : IScanEngine, IDisposable
                 async (item, ct) =>
                 {
                     // Skip if already scanned at this phase (or higher) and file unchanged
-                    if (await _db.IsCurrentAsync(item.Id.ToString(), item.Path, (int)phase).ConfigureAwait(false))
+                    if (!await _db.IsCurrentAsync(item.Id.ToString(), item.Path, (int)phase).ConfigureAwait(false))
                     {
-                        return;
+                        await ScanItemAsync(item, phase, ct).ConfigureAwait(false);
                     }
 
-                    await ScanItemAsync(item, phase, ct).ConfigureAwait(false);
+                    var done = Interlocked.Increment(ref processed);
+                    progress?.Report(total == 0 ? 100 : (double)done / total * 100);
                 }).ConfigureAwait(false);
 
-            LogLibraryScanComplete();
+            LogLibraryScanComplete(processed, total);
         }
         finally
         {
@@ -326,8 +329,8 @@ public partial class ScanEngine : IScanEngine, IDisposable
     [LoggerMessage(EventId = 7, Level = LogLevel.Information, Message = "Starting library scan: {Count} items, phase={Phase}")]
     private partial void LogLibraryScanStarting(int count, ScanPhase phase);
 
-    [LoggerMessage(EventId = 8, Level = LogLevel.Information, Message = "Library scan complete")]
-    private partial void LogLibraryScanComplete();
+    [LoggerMessage(EventId = 8, Level = LogLevel.Information, Message = "Library scan complete: {Processed}/{Total} items processed")]
+    private partial void LogLibraryScanComplete(int processed, int total);
 
     [LoggerMessage(EventId = 9, Level = LogLevel.Information, Message = "Scan cancellation requested")]
     private partial void LogScanCancellationRequested();
