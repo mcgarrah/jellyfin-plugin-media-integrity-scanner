@@ -203,11 +203,86 @@ fi
 info "Checking FFmpeg in container..."
 
 CONTAINER_NAME="jellyfin-integration-test"
-if docker exec "$CONTAINER_NAME" ffmpeg -version > /dev/null 2>&1; then
-    pass "FFmpeg is available in container"
+# jellyfin-ffmpeg is not symlinked onto PATH in the jellyfin/jellyfin image,
+# so a bare `ffmpeg`/`ffprobe` exec always fails — check the real path instead.
+if docker exec "$CONTAINER_NAME" /usr/lib/jellyfin-ffmpeg/ffmpeg -version > /dev/null 2>&1 \
+    && docker exec "$CONTAINER_NAME" /usr/lib/jellyfin-ffmpeg/ffprobe -version > /dev/null 2>&1; then
+    pass "FFmpeg and ffprobe are available in container"
 else
-    fail "FFmpeg not found in Jellyfin container"
+    fail "FFmpeg/ffprobe not found at /usr/lib/jellyfin-ffmpeg/ in Jellyfin container"
 fi
+
+# --- Test: Plugin Settings Page Configuration Round-Trip ---
+
+info "Verifying settings page configuration round-trip..."
+
+ORIGINAL_CONFIG=$(curl -sf "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" -H "X-Emby-Token: $TOKEN")
+
+UPDATED_CONFIG='{
+    "MaxConcurrentScans": 3,
+    "DelayBetweenFilesMs": 1234,
+    "PauseDuringPlayback": false,
+    "EnableDeepScan": true,
+    "MaxReadRateMbPerSec": 7,
+    "UseQuietHoursOnly": true,
+    "QuietHoursStart": "23:00",
+    "QuietHoursEnd": "05:30",
+    "FfmpegPathOverride": "/custom/ffmpeg",
+    "FfprobePathOverride": "/custom/ffprobe",
+    "ScanOnItemAdded": false,
+    "PurgeOnItemRemoved": false
+}'
+
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" \
+    -H "X-Emby-Token: $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$UPDATED_CONFIG")
+if [ "$HTTP_CODE" -ge 300 ]; then
+    fail "Settings save (POST Configuration) failed with HTTP $HTTP_CODE"
+fi
+
+SAVED_CONFIG=$(curl -sf "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" -H "X-Emby-Token: $TOKEN")
+SAVED_MAX_CONCURRENT=$(echo "$SAVED_CONFIG" | jq '.MaxConcurrentScans')
+SAVED_QUIET_START=$(echo "$SAVED_CONFIG" | jq -r '.QuietHoursStart')
+SAVED_FFMPEG_OVERRIDE=$(echo "$SAVED_CONFIG" | jq -r '.FfmpegPathOverride')
+
+if [ "$SAVED_MAX_CONCURRENT" = "3" ] && [ "$SAVED_QUIET_START" = "23:00" ] && [ "$SAVED_FFMPEG_OVERRIDE" = "/custom/ffmpeg" ]; then
+    pass "Settings page configuration saved and persisted correctly (this is the exact request the Save button issues)"
+else
+    fail "Saved configuration did not round-trip correctly: $SAVED_CONFIG"
+fi
+
+# Restore the original configuration so this script is safe to re-run locally
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" \
+    -H "X-Emby-Token: $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$ORIGINAL_CONFIG")
+if [ "$HTTP_CODE" -ge 300 ]; then
+    fail "Failed to restore original configuration after round-trip test (HTTP $HTTP_CODE)"
+fi
+pass "Original configuration restored"
+
+# --- Test: Plugin Web Pages Served ---
+
+info "Checking plugin web pages are served..."
+
+DASHBOARD_CODE=$(curl -s -o /tmp/dashboard_page.html -w "%{http_code}" \
+    "$JELLYFIN_URL/web/configurationpage?name=Media+Integrity+Scanner" -H "X-Emby-Token: $TOKEN")
+SETTINGS_CODE=$(curl -s -o /tmp/settings_page.html -w "%{http_code}" \
+    "$JELLYFIN_URL/web/configurationpage?name=Media+Integrity+Scanner+Settings" -H "X-Emby-Token: $TOKEN")
+
+if [ "$DASHBOARD_CODE" = "200" ] && grep -q "getPluginConfiguration\|MediaIntegrity" /tmp/dashboard_page.html 2>/dev/null; then
+    pass "Dashboard page served (HTTP $DASHBOARD_CODE)"
+else
+    fail "Dashboard page not served correctly (HTTP $DASHBOARD_CODE)"
+fi
+
+if [ "$SETTINGS_CODE" = "200" ] && grep -q "getPluginConfiguration" /tmp/settings_page.html 2>/dev/null; then
+    pass "Settings page served (HTTP $SETTINGS_CODE)"
+else
+    fail "Settings page not served correctly (HTTP $SETTINGS_CODE)"
+fi
+rm -f /tmp/dashboard_page.html /tmp/settings_page.html
 
 # --- Test: Add Library ---
 
@@ -236,6 +311,57 @@ for i in $(seq 1 30); do
     fi
     sleep 1
 done
+
+# --- Test: Full Scan-and-Verify Flow ---
+
+info "Triggering a header scan of the library..."
+
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/MediaIntegrity/Scan" \
+    -H "X-Emby-Token: $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"deepScan": false}')
+if [ "$HTTP_CODE" != "202" ]; then
+    fail "Triggering scan failed with HTTP $HTTP_CODE (expected 202 Accepted)"
+fi
+pass "Scan triggered (HTTP 202)"
+
+info "Waiting for scan to complete..."
+for i in $(seq 1 60); do
+    STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+    # Note: Jellyfin's host serializes controller responses in PascalCase
+    # (not the ASP.NET Core camelCase default) -- confirmed by hand while
+    # writing this test, which is also why the dashboard's JS needed the
+    # same fix (see CODE_REVIEW.md).
+    IS_SCANNING=$(echo "$STATUS" | jq -r '.IsScanning')
+    if [ "$IS_SCANNING" = "false" ]; then
+        pass "Scan completed (after ${i}s)"
+        break
+    fi
+    if [ "$i" -eq 60 ]; then
+        fail "Scan did not complete within 60 seconds. Last status: $STATUS"
+    fi
+    sleep 1
+done
+
+info "Verifying scan results..."
+
+FINAL_STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+SCANNED_FILES=$(echo "$FINAL_STATUS" | jq '.ScannedFiles')
+PASSED_FILES=$(echo "$FINAL_STATUS" | jq '.PassedFiles')
+
+if [ "$SCANNED_FILES" -lt 1 ]; then
+    fail "Expected at least 1 scanned file, got $SCANNED_FILES. Status: $FINAL_STATUS"
+fi
+pass "Library health reflects the scan: $SCANNED_FILES scanned, $PASSED_FILES passed"
+
+RESULTS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results?status=1" -H "X-Emby-Token: $TOKEN")
+RESULT_COUNT=$(echo "$RESULTS" | jq '.TotalCount')
+
+if [ "$RESULT_COUNT" -lt 1 ]; then
+    fail "Expected at least 1 passed scan result via GET /MediaIntegrity/Results?status=1, got $RESULT_COUNT"
+fi
+pass "GET /MediaIntegrity/Results?status=1 returns $RESULT_COUNT passed result(s)"
+echo "$RESULTS" | jq '.Items[0] | {FilePath, ScanStatus, ScanPhase, ScanDurationMs}'
 
 # --- Summary ---
 
