@@ -45,7 +45,7 @@ flowchart TD
     API --> BUSY{"IsScanning?"}:::gate
     BUSY -->|"yes &rarr; 409"| REJECT["request refused,<br/>nothing changes"]:::stop
     BUSY -->|"no &rarr; 202"| SCOPE{"itemId given?"}:::gate
-    SCOPE -->|"yes &mdash; skips the<br/>currency check"| SIA3["ScanItemAsync<br/>forced phase · one file"]:::act
+    SCOPE -->|"yes — skips the<br/>currency check"| SIA3["ScanItemAsync<br/>forced phase · one file"]:::act
     SCOPE -->|"no"| SLA["ScanLibraryAsync<br/>checks IsCurrentAsync per item"]:::act
 
     CAN -.->|"cancellation token"| SIA1
@@ -53,7 +53,7 @@ flowchart TD
     CAN -.-> SIA3
     CAN -.-> SLA
 
-    SIA1 --> GATES(["gate pipeline &mdash; below"]):::pipe
+    SIA1 --> GATES(["gate pipeline — below"]):::pipe
     SIA2 --> GATES
     SIA3 --> GATES
     SLA --> GATES
@@ -92,7 +92,7 @@ flowchart TD
     START(["ScanItemAsync called<br/>from any trigger"]):::pipe
     SEM["wait for a free slot<br/>MaxConcurrentScans (1)"]:::act
     QH{"UseQuietHoursOnly (false)<br/>and outside window?"}:::gate
-    WAITQH["poll every 5 min<br/>until inside 02:00&ndash;06:00"]:::wait
+    WAITQH["poll every 5 min<br/>until inside 02:00–06:00"]:::wait
     PP{"PauseDuringPlayback (true)<br/>and any session playing?"}:::gate
     WAITPP["poll every 30 sec<br/>until playback ends"]:::wait
     DELAY["fixed pause<br/>DelayBetweenFilesMs (5000)"]:::act
@@ -231,17 +231,17 @@ sequenceDiagram
     activate DST
     DST->>DST: EnableDeepScan == true?
     DST->>DB: IsCurrentAsync(item, minPhase=FullDecode)
-    Note over DB: file already has a passing<br/>Header (phase 1) record &mdash;<br/>phase 1 is less than FullDecode (phase 2)
+    Note over DB: file already has a passing<br/>Header (phase 1) record —<br/>phase 1 is less than FullDecode (phase 2)
     DB-->>DST: false, not current at this phase
     DST->>SE: ScanItemAsync(item, FullDecode)
     SE->>DB: SaveResultAsync(Pass, FullDecode)
     deactivate DST
 
-    Note over DB,SE: before the phase-aware fix, that check<br/>returned true for ANY passing record &mdash;<br/>this file would have been skipped forever
+    Note over DB,SE: before the phase-aware fix, that check<br/>returned true for ANY passing record —<br/>this file would have been skipped forever
 
     AD->>SE: POST /MediaIntegrity/Scan<br/>itemId + deepScan: true
     activate SE
-    Note over SE: the itemId-scoped path calls<br/>ScanItemAsync directly &mdash;<br/>no currency check at all
+    Note over SE: the itemId-scoped path calls<br/>ScanItemAsync directly —<br/>no currency check at all
     SE->>DB: SaveResultAsync(Pass, FullDecode)
     deactivate SE
 ```
