@@ -20,6 +20,8 @@ test.describe('Media Integrity Scanner settings', () => {
     await expect(page.locator('#PauseDuringPlayback')).toBeChecked();
     await expect(page.locator('#EnableDeepScan')).not.toBeChecked();
     await expect(page.locator('#ScanOnItemAdded')).toBeChecked();
+    await expect(page.locator('#EnableAutoUpdate')).not.toBeChecked();
+    await expect(page.locator('#AutoRestartAfterUpdate')).not.toBeChecked();
     await expect(page.locator('#QuietHoursStart')).toHaveValue('02:00');
     await expect(page.locator('#QuietHoursEnd')).toHaveValue('06:00');
     await expect(page.locator('#error-msg')).toBeHidden();

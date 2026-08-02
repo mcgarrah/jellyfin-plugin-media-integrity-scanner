@@ -112,6 +112,8 @@ Configure via **Dashboard → Plugins → Media Integrity Scanner**, then the **
 | UpdateChannel | Stable | Which release channel to check for updates against (`Stable` or `Development`) |
 | StableManifestUrl | *(this repo's `manifest.json`)* | Used to classify a discovered version as stable — see [Checking for Updates](#checking-for-updates) |
 | DevManifestUrl | *(this repo's `manifest-unstable.json`)* | Used to classify a discovered version as a development build |
+| EnableAutoUpdate | false | Automatically install a newer version for your configured channel weekly, instead of only via the dashboard's manual **Update Now** button |
+| AutoRestartAfterUpdate | false | After an automatic install, also restart Jellyfin once no one is watching. Has no effect unless EnableAutoUpdate is also on |
 
 ## Checking for Updates
 
@@ -126,7 +128,13 @@ The dashboard shows the currently running version and, when a newer one is avail
 
 Then set **Update Channel** on the settings page to `Stable` or `Development`. Development builds are cut automatically from the tip of `main` on every push (see `release-dev.yml`) and are not guaranteed stable.
 
-Installing an update stages the new version on disk; Jellyfin needs a restart to actually load it (the dashboard's banner tells you this after a successful install).
+Installing an update stages the new version on disk; Jellyfin needs a restart to actually load it (the dashboard's banner tells you this after a successful install) — this is a hard requirement of how Jellyfin loads plugins, not a limitation of this plugin's update checker.
+
+### Automatic Weekly Updates
+
+If you'd rather not check the dashboard yourself, turn on **EnableAutoUpdate** and a weekly scheduled task (Sundays at 4 AM, visible under **Dashboard → Scheduled Tasks**) will install the latest version for your configured channel automatically. This only stages the update — Jellyfin still needs a restart to load it, same as installing manually.
+
+If you also want that restart handled for you, turn on **AutoRestartAfterUpdate**. Once an update installs, the task waits until nobody has anything playing, then restarts Jellyfin itself. Both settings default to off; conservative installs can leave them disabled and keep updating manually via the dashboard's **Update Now** button whenever it's convenient.
 
 ## Project Structure
 
@@ -152,7 +160,8 @@ jellyfin-plugin-media-integrity-scanner/
 │   ├── ScheduledTasks/
 │   │   ├── HeaderScanTask.cs            # Phase 1 scheduled task
 │   │   ├── DeepScanTask.cs              # Phase 2 scheduled task
-│   │   └── CheckForUpdatesTask.cs       # Daily update-status refresh
+│   │   ├── CheckForUpdatesTask.cs       # Daily update-status refresh
+│   │   └── AutoUpdateTask.cs            # Weekly opt-in auto-install/restart
 │   ├── EventHandlers/
 │   │   └── LibraryMonitor.cs            # Library event hooks
 │   ├── Updates/

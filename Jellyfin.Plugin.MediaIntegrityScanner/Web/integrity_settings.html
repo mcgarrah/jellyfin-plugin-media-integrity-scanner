@@ -154,6 +154,19 @@
                         <input type="text" id="DevManifestUrl">
                         <div class="field-hint">Only used if the Development channel is selected above.</div>
                     </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="EnableAutoUpdate">
+                        <label for="EnableAutoUpdate">Automatically install updates weekly</label>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="AutoRestartAfterUpdate">
+                        <label for="AutoRestartAfterUpdate">Restart Jellyfin automatically once installed (waits until nothing is playing)</label>
+                    </div>
+                    <div class="field-hint">
+                        Off by default. Installing an update never takes effect until Jellyfin restarts --
+                        with automatic restart left off, an installed update just waits for you to restart
+                        manually whenever's convenient, same as clicking "Update Now" on the dashboard yourself.
+                    </div>
                 </div>
 
                 <button type="submit" class="btn btn-primary" id="btn-save">Save</button>
@@ -183,6 +196,8 @@
                     document.getElementById('UpdateChannel').value = config.UpdateChannel || 'Stable';
                     document.getElementById('StableManifestUrl').value = config.StableManifestUrl || '';
                     document.getElementById('DevManifestUrl').value = config.DevManifestUrl || '';
+                    document.getElementById('EnableAutoUpdate').checked = !!config.EnableAutoUpdate;
+                    document.getElementById('AutoRestartAfterUpdate').checked = !!config.AutoRestartAfterUpdate;
                     hideMessages();
                 }).catch(function (err) {
                     showError('Failed to load configuration: ' + err.message);
@@ -212,6 +227,8 @@
                     config.UpdateChannel = document.getElementById('UpdateChannel').value || 'Stable';
                     config.StableManifestUrl = document.getElementById('StableManifestUrl').value || '';
                     config.DevManifestUrl = document.getElementById('DevManifestUrl').value || '';
+                    config.EnableAutoUpdate = document.getElementById('EnableAutoUpdate').checked;
+                    config.AutoRestartAfterUpdate = document.getElementById('AutoRestartAfterUpdate').checked;
 
                     return ApiClient.updatePluginConfiguration(PLUGIN_ID, config);
                 }).then(function (result) {
