@@ -107,4 +107,24 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public string DevManifestUrl { get; set; } =
         "https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/manifest-unstable.json";
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a weekly scheduled task should
+    /// automatically install (stage) a newer version for the configured
+    /// <see cref="UpdateChannel"/>, if one is available. Off by default --
+    /// conservative installs can leave this disabled and only ever update via
+    /// the dashboard's manual "Update Now" button. Installing a new version
+    /// this way does not by itself apply it; Jellyfin still needs a restart
+    /// to load it (see <see cref="AutoRestartAfterUpdate"/>).
+    /// </summary>
+    public bool EnableAutoUpdate { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether, after a successful automatic
+    /// install, the plugin should also restart Jellyfin itself once no one
+    /// has an active playback session -- rather than leaving the update
+    /// staged until an admin restarts manually. Off by default, and has no
+    /// effect unless <see cref="EnableAutoUpdate"/> is also on.
+    /// </summary>
+    public bool AutoRestartAfterUpdate { get; set; }
 }
