@@ -1,0 +1,11 @@
+{
+  "name": "media-integrity-scanner-e2e",
+  "private": true,
+  "description": "Playwright suite driving the real Jellyfin admin web UI for this plugin's dashboard and settings pages -- a genuinely different layer than the curl+grep checks in run-integration-tests.sh, since it executes the pages' own JS and the real ApiClient-backed auth flow through an actual browser.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}
