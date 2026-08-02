@@ -4,7 +4,7 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 
 ## Status
 
-✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, the in-app settings page, and library event hooks are all implemented and covered by 141 unit tests, a Docker-based integration test suite (including a good/bad video corruption matrix), and a Playwright suite that drives the admin dashboard and settings pages through a real browser session. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
+✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, the in-app settings page, update checking, and library event hooks are all implemented and covered by 154 unit tests, a Docker-based integration test suite (including a good/bad video corruption matrix), and a Playwright suite that drives the admin dashboard and settings pages through a real browser session. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
 
 ## Features
 
@@ -15,7 +15,8 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 - **Admin dashboard** — HTML dashboard showing library health (total/passed/failed/errored/pending) at a glance
 - **In-app settings page** — Every setting below is editable from **Dashboard → Plugins → Media Integrity Scanner → Settings**, no config-file editing required
 - **REST API** — Query scan results (with status and per-library filtering), trigger scans, and check status programmatically
-- **Cross-platform** — Runs on Linux, Windows, and macOS wherever Jellyfin and FFmpeg are available
+- **Update checking** — Detects newer stable or development-channel releases via Jellyfin's own plugin installation mechanism, with a one-click install from the dashboard
+- **Cross-platform** — A single release package works on Linux (including musl-based containers/NAS), Windows, and macOS, on both x64 and ARM — wherever Jellyfin and FFmpeg are available
 
 ## Architecture
 
@@ -88,6 +89,8 @@ Copy the contents of `./artifacts` to your Jellyfin plugins directory:
 
 Restart Jellyfin after installation.
 
+**Why the build output includes a `meta.json` and a `runtimes/` folder for every real Jellyfin server platform:** Jellyfin's plugin loader recursively loads every `.dll` it finds under a plugin's folder as a managed assembly by default, which breaks on the native SQLite binaries this plugin depends on (see [CODE_REVIEW.md](CODE_REVIEW.md#sixteenth-pass-a-real-packaging-bug-found-only-by-actually-installing-a-release) for the full story). Shipping a `meta.json` with an explicit `assemblies` whitelist tells Jellyfin to load only the real managed DLLs, so the native binaries for every platform (Windows/Linux/macOS, x64/ARM) can safely ship in one package — Jellyfin's own `.NET` runtime resolves the correct one for whatever platform it's actually running on. Android/iOS/browser-wasm native binaries are trimmed post-build since Jellyfin's server never runs on those.
+
 ## Configuration
 
 Configure via **Dashboard → Plugins → Media Integrity Scanner**, then the **Settings »** link (or directly at **Dashboard → Plugins → Media Integrity Scanner Settings**):
@@ -106,6 +109,24 @@ Configure via **Dashboard → Plugins → Media Integrity Scanner**, then the **
 | FfprobePathOverride | *(none)* | Explicit path to the `ffprobe` binary, if auto-detection picks the wrong one |
 | ScanOnItemAdded | true | Auto-scan newly imported files |
 | PurgeOnItemRemoved | true | Delete scan records when the corresponding library item is removed |
+| UpdateChannel | Stable | Which release channel to check for updates against (`Stable` or `Development`) |
+| StableManifestUrl | *(this repo's `manifest.json`)* | Used to classify a discovered version as stable — see [Checking for Updates](#checking-for-updates) |
+| DevManifestUrl | *(this repo's `manifest-unstable.json`)* | Used to classify a discovered version as a development build |
+
+## Checking for Updates
+
+The dashboard shows the currently running version and, when a newer one is available for your configured channel, an "Update Available" banner with a one-click **Update Now** button. This works by calling Jellyfin's own plugin installation API — the same mechanism Dashboard > Plugins > Catalog uses — rather than reimplementing download/install logic.
+
+**One-time setup required**: Jellyfin can only discover plugin versions from repositories you've registered yourself under **Dashboard → Plugins → Repositories**. Add whichever channel(s) you want:
+
+| Channel | Repository URL |
+|---------|----------------|
+| Stable | `https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/manifest.json` |
+| Development | `https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/manifest-unstable.json` |
+
+Then set **Update Channel** on the settings page to `Stable` or `Development`. Development builds are cut automatically from the tip of `main` on every push (see `release-dev.yml`) and are not guaranteed stable.
+
+Installing an update stages the new version on disk; Jellyfin needs a restart to actually load it (the dashboard's banner tells you this after a successful install).
 
 ## Project Structure
 
@@ -130,32 +151,41 @@ jellyfin-plugin-media-integrity-scanner/
 │   │       └── ScanRecord.cs            # DB entity
 │   ├── ScheduledTasks/
 │   │   ├── HeaderScanTask.cs            # Phase 1 scheduled task
-│   │   └── DeepScanTask.cs              # Phase 2 scheduled task
+│   │   ├── DeepScanTask.cs              # Phase 2 scheduled task
+│   │   └── CheckForUpdatesTask.cs       # Daily update-status refresh
 │   ├── EventHandlers/
 │   │   └── LibraryMonitor.cs            # Library event hooks
+│   ├── Updates/
+│   │   ├── IUpdateChecker.cs            # Update-checker interface
+│   │   ├── UpdateChecker.cs             # Wraps Jellyfin's IInstallationManager
+│   │   ├── UpdateChannel.cs             # Stable/Development enum
+│   │   └── UpdateStatus.cs              # Update-status response model
 │   ├── Api/
 │   │   └── MediaIntegrityController.cs  # REST API
-│   └── Web/
-│       ├── integrity_dashboard.html     # Admin dashboard
-│       └── integrity_settings.html      # Settings page
+│   ├── Web/
+│   │   ├── integrity_dashboard.html     # Admin dashboard
+│   │   └── integrity_settings.html      # Settings page
+│   └── meta.json                        # Bundled plugin manifest (assemblies whitelist -- see below)
 ├── tests/
-│   ├── Jellyfin.Plugin.MediaIntegrityScanner.Tests/  # xUnit unit tests (141 tests)
+│   ├── Jellyfin.Plugin.MediaIntegrityScanner.Tests/  # xUnit unit tests (154 tests)
 │   ├── docker-compose.integration.yml   # Integration test Jellyfin instance
 │   ├── generate-test-media.sh           # Good/bad video corruption matrix generator
 │   ├── setup-jellyfin.sh                # Shared Jellyfin bring-up (sourced by the below + Playwright)
 │   ├── run-integration-tests.sh         # Integration test runner (curl-based)
 │   └── playwright/                      # Real-browser E2E suite (dashboard + settings pages)
 ├── scripts/
-│   └── update-manifest.py               # Bumps manifest.json on tagged release
+│   └── update-manifest.py               # Bumps a manifest.json on a tagged/dev release
 ├── Jellyfin.Plugin.MediaIntegrityScanner.csproj
 ├── Jellyfin.Plugin.MediaIntegrityScanner.sln
 ├── Directory.Build.props
-├── manifest.json
+├── manifest.json                        # Stable-channel repository manifest
+├── manifest-unstable.json               # Development-channel repository manifest
 ├── .github/workflows/
 │   ├── build.yml                        # Build + unit tests on every push/PR
 │   ├── integration-test.yml             # Docker-based integration test
 │   ├── playwright-e2e.yml               # Real-browser E2E suite (separate, non-blocking)
-│   └── release.yml                      # Tagged release + manifest.json automation
+│   ├── release.yml                      # Tagged release + manifest.json automation
+│   └── release-dev.yml                  # Dev-channel pre-release on every push to main
 ├── .editorconfig
 ├── .gitignore
 ├── LICENSE
@@ -174,7 +204,7 @@ CI runs on GitHub-hosted Ubuntu runners. A dedicated Proxmox LXC container (Debi
 dotnet test
 ```
 
-141 unit tests cover the scan engine, database layer, REST API, config throttling logic, and FFmpeg process handling — see [CODE_REVIEW.md](CODE_REVIEW.md) for what's covered and the deliberate scope boundaries (e.g., actual ffmpeg/ffprobe argument behavior is left to the integration suite below).
+154 unit tests cover the scan engine, database layer, REST API, config throttling logic, update-checker channel classification, and FFmpeg process handling — see [CODE_REVIEW.md](CODE_REVIEW.md) for what's covered and the deliberate scope boundaries (e.g., actual ffmpeg/ffprobe argument behavior is left to the integration suite below).
 
 ### Local Development Workflow
 
