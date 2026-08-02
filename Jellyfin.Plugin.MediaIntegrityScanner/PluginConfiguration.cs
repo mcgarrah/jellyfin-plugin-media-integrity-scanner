@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License along
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
+using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.MediaIntegrityScanner;
@@ -82,4 +83,28 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets a value indicating whether scan records are purged when items are removed.
     /// </summary>
     public bool PurgeOnItemRemoved { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets which release channel to check for updates against.
+    /// </summary>
+    public UpdateChannel UpdateChannel { get; set; } = UpdateChannel.Stable;
+
+    /// <summary>
+    /// Gets or sets the manifest URL used to classify a discovered version as a
+    /// stable release. Only versions Jellyfin already knows about (i.e. from a
+    /// repository the admin has registered under Dashboard &gt; Plugins &gt;
+    /// Repositories) can ever be found -- this URL is used purely to label
+    /// which of those already-discovered versions counts as "stable", not to
+    /// fetch anything directly.
+    /// </summary>
+    public string StableManifestUrl { get; set; } =
+        "https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/manifest.json";
+
+    /// <summary>
+    /// Gets or sets the manifest URL used to classify a discovered version as a
+    /// development/pre-release build. See <see cref="StableManifestUrl"/> for
+    /// how this is used.
+    /// </summary>
+    public string DevManifestUrl { get; set; } =
+        "https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/manifest-unstable.json";
 }

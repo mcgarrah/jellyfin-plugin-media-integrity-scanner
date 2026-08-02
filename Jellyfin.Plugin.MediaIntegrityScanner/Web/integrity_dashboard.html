@@ -78,11 +78,29 @@
             .error-msg { color: #f44336; font-style: italic; margin: 1em 0; }
             .loading { opacity: 0.5; font-style: italic; }
             .nav-link { float: right; }
+            .version-line { opacity: 0.6; font-size: 0.85em; margin: 0.2em 0 1em; }
+            .update-banner {
+                display: none;
+                align-items: center;
+                justify-content: space-between;
+                gap: 1em;
+                background: rgba(0,164,220,0.12);
+                border: 1px solid rgba(0,164,220,0.4);
+                border-radius: 8px;
+                padding: 0.8em 1.2em;
+                margin: 1em 0;
+            }
         </style>
 
         <div class="integrity-dashboard">
             <a class="nav-link" href="#/configurationpage?name=Media+Integrity+Scanner+Settings">Settings &raquo;</a>
             <h1>Media Integrity Scanner</h1>
+            <div class="version-line">Version <span id="current-version">&mdash;</span></div>
+
+            <div id="update-banner" class="update-banner">
+                <span id="update-banner-text"></span>
+                <button class="btn btn-primary" id="btn-update-now" onclick="installUpdate()">Update Now</button>
+            </div>
 
             <!-- Status Overview -->
             <div class="stats-grid">
@@ -368,9 +386,59 @@
                 document.getElementById('error-msg').style.display = 'none';
             }
 
+            var lastUpdateStatus = null;
+
+            function loadUpdateStatus() {
+                apiFetch('UpdateStatus').then(function(data) {
+                    lastUpdateStatus = data;
+                    document.getElementById('current-version').textContent = data.CurrentVersion;
+
+                    var banner = document.getElementById('update-banner');
+                    if (data.UpdateAvailable) {
+                        document.getElementById('update-banner-text').textContent =
+                            'Update available: v' + data.AvailableVersion + ' (' + data.Channel + ')';
+                        document.getElementById('btn-update-now').style.display = '';
+                        document.getElementById('btn-update-now').disabled = false;
+                        banner.style.display = 'flex';
+                    } else {
+                        banner.style.display = 'none';
+                    }
+                }).catch(function(err) {
+                    // Non-fatal: don't clobber the scan-operation error banner
+                    // over an update check failing (e.g. no repository registered yet).
+                    console.error('Failed to load update status: ' + err.message);
+                });
+            }
+
+            function installUpdate() {
+                if (!lastUpdateStatus) {
+                    return;
+                }
+
+                var btn = document.getElementById('btn-update-now');
+                btn.disabled = true;
+
+                apiFetch('UpdateStatus/Install', {
+                    method: 'POST',
+                    headers: {
+                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ channel: lastUpdateStatus.Channel })
+                }).then(function() {
+                    document.getElementById('update-banner-text').textContent =
+                        'Update installed — restart Jellyfin to finish applying it.';
+                    btn.style.display = 'none';
+                }).catch(function(err) {
+                    btn.disabled = false;
+                    showError('Failed to install update: ' + err.message);
+                });
+            }
+
             // Initial load
             loadStatus();
             loadResults();
+            loadUpdateStatus();
 
             // Auto-refresh status every 10 seconds
             refreshInterval = setInterval(loadStatus, 10000);
