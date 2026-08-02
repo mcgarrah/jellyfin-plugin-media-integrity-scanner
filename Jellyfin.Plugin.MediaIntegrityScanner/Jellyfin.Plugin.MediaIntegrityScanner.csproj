@@ -10,8 +10,16 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.*" />
-    <PackageReference Include="Jellyfin.Model" Version="10.11.*" />
+    <!-- ExcludeAssets="runtime" on these two: Jellyfin's own host process
+         already has MediaBrowser.Controller/MediaBrowser.Model (and their
+         whole transitive dependency tree, e.g. EF Core, ICU4N, Polly)
+         loaded. Without this, `dotnet publish` copies a second copy of all
+         of it into the plugin's own output folder alongside the plugin DLL:
+         pure bloat, not something a plugin should ship. Reference
+         assemblies are still available at compile time; only the
+         runtime/copy-to-output behavior is suppressed. -->
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.*" ExcludeAssets="runtime" />
+    <PackageReference Include="Jellyfin.Model" Version="10.11.*" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.*" />
     <!-- Pin SQLitePCLRaw to 3.0+ to resolve CVE in SQLitePCLRaw.lib.e_sqlite3 <= 2.1.11.
          Version 3.0 replaces the vulnerable native lib with SourceGear.sqlite3 (SQLite 3.50.3+). -->
@@ -22,5 +30,33 @@
     <EmbeddedResource Include="Web\integrity_dashboard.html" />
     <EmbeddedResource Include="Web\integrity_settings.html" />
   </ItemGroup>
+
+  <!-- SQLitePCLRaw.bundle_e_sqlite3 ships a native SQLite binary for every
+       OS/architecture under runtimes/[rid]/native/. Jellyfin's plugin loader
+       (Emby.Server.Implementations.Plugins.PluginManager.LoadAssemblies)
+       recursively tries to load every .dll it finds under a plugin's folder
+       as a managed .NET assembly; it does not do RID-aware filtering the
+       way a normal .NET app host does via its own .deps.json. Any bundled
+       Windows-named "*.dll" native binary (there are several: win-x86,
+       win-x64, win-arm64) crashes that loader with a BadImageFormatException
+       and disables the whole plugin. Confirmed for real: installing an
+       actual tagged release via Jellyfin's own Catalog/repository mechanism
+       (not a hand-picked local DLL copy, which is how this had gone
+       unnoticed) reproduced exactly this crash. Trimming to just the one
+       RID this project actually supports (linux-x64, matching the official
+       jellyfin/jellyfin Docker image used throughout this project's own
+       integration tests) removes every problematic file, since SQLitePCLRaw
+       itself resolves the native library relative to the loading assembly's
+       own directory regardless of how Jellyfin discovered that assembly. -->
+  <Target Name="RemoveUnnecessaryNativeRuntimes" AfterTargets="Publish">
+    <!-- MSBuild's own directory-only wildcard globbing (Include="...\*\")
+         didn't reliably match here across a couple of attempts (empty item
+         list even once the separator/trailing-slash issue was fixed). A
+         plain shell find/rm is simpler to verify correctly and matches how
+         this project's other tooling already assumes a Linux/bash
+         environment (scripts/update-manifest.py, tests/*.sh). -->
+    <Exec Command="find &quot;$(PublishDir)runtimes&quot; -mindepth 1 -maxdepth 1 -type d ! -name linux-x64 -exec rm -rf {} +"
+          Condition="Exists('$(PublishDir)runtimes')" />
+  </Target>
 
 </Project>
