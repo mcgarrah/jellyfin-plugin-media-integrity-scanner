@@ -1,0 +1,90 @@
+name: Release Dev Build
+
+# Cuts an automated GitHub pre-release on every push to main, so the
+# plugin's Development update channel always reflects the tip of the tree
+# -- this repo has no active `dev` branch (some other workflows reference
+# one defensively, but main is the only integration branch in practice).
+#
+# Unlike release.yml (triggered by a human-pushed tag), there is no
+# pre-existing git tag here; softprops/action-gh-release creates one from
+# `tag_name` pointing at the current commit.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  release-dev:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Compute dev version and bump Directory.Build.props (build-only, not committed)
+        id: version
+        run: |
+          # Jellyfin manifest versions must be a clean 4-part numeric
+          # System.Version (no semver "-dev" suffix -- confirmed via
+          # reflection against the real VersionInfo type while building the
+          # update-checker feature). Keep Major.Minor.Build from the current
+          # stable base and bump only the Revision component using this
+          # run's unique, monotonically increasing run_number, so every dev
+          # build gets a distinct, always-newer-than-the-last version.
+          CURRENT=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props)
+          IFS='.' read -ra PARTS <<< "$CURRENT"
+          RUN_NUMBER="${{ github.run_number }}"
+          MANIFEST_VERSION="${PARTS[0]}.${PARTS[1]}.${PARTS[2]}.$RUN_NUMBER"
+          TAG="v${PARTS[0]}.${PARTS[1]}.${PARTS[2]}-dev.$RUN_NUMBER"
+
+          echo "manifest_version=$MANIFEST_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # Bumped here only to embed the real version into this build's
+          # compiled DLL -- deliberately not committed back to main (that
+          # would spam a version-bump commit on every push and fight with
+          # the stable release workflow's own commits to the same file).
+          sed -i "s#<Version>[^<]*</Version>#<Version>$MANIFEST_VERSION</Version>#" Directory.Build.props
+          sed -i "s#<AssemblyVersion>[^<]*</AssemblyVersion>#<AssemblyVersion>$MANIFEST_VERSION</AssemblyVersion>#" Directory.Build.props
+          sed -i "s#<FileVersion>[^<]*</FileVersion>#<FileVersion>$MANIFEST_VERSION</FileVersion>#" Directory.Build.props
+          grep -E "Version>" Directory.Build.props
+
+      - name: Restore dependencies
+        run: dotnet restore Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj
+
+      - name: Build Release
+        run: dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
+
+      - name: Package
+        run: |
+          cd publish
+          zip -r "../media-integrity-scanner-${{ steps.version.outputs.tag }}.zip" .
+
+      - name: Create GitHub pre-release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }} (development build)
+          prerelease: true
+          files: media-integrity-scanner-${{ steps.version.outputs.tag }}.zip
+          generate_release_notes: true
+
+      - name: Update manifest-unstable.json
+        run: |
+          python3 scripts/update-manifest.py "${{ steps.version.outputs.tag }}" "media-integrity-scanner-${{ steps.version.outputs.tag }}.zip" \
+            --manifest manifest-unstable.json \
+            --manifest-version "${{ steps.version.outputs.manifest_version }}" \
+            --prerelease
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifest-unstable.json
+          git commit -m "chore: dev release ${{ steps.version.outputs.tag }} (manifest-unstable.json)"
+          git push origin HEAD:main

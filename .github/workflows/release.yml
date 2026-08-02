@@ -19,6 +19,29 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
+      - name: Compute plugin version and bump Directory.Build.props
+        id: version
+        run: |
+          # Normalize e.g. v0.2.0 -> 0.2.0.0 (same logic as
+          # scripts/update-manifest.py's normalize_version, kept in sync
+          # manually since this needs to run before the build, not after).
+          # Bumping Directory.Build.props here (not just manifest.json) is
+          # required: Plugin.Instance.Version reads the built assembly's own
+          # version, and skipping this step means every tagged release
+          # keeps shipping 0.1.0.0 regardless of the tag, which would make
+          # the plugin's own update-checker perpetually report "update
+          # available" even right after installing one.
+          TAG="${{ github.ref_name }}"
+          IFS='.' read -ra PARTS <<< "${TAG#v}"
+          while [ "${#PARTS[@]}" -lt 4 ]; do PARTS+=("0"); done
+          VERSION="${PARTS[0]}.${PARTS[1]}.${PARTS[2]}.${PARTS[3]}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          sed -i "s#<Version>[^<]*</Version>#<Version>$VERSION</Version>#" Directory.Build.props
+          sed -i "s#<AssemblyVersion>[^<]*</AssemblyVersion>#<AssemblyVersion>$VERSION</AssemblyVersion>#" Directory.Build.props
+          sed -i "s#<FileVersion>[^<]*</FileVersion>#<FileVersion>$VERSION</FileVersion>#" Directory.Build.props
+          grep -E "Version>" Directory.Build.props
+
       - name: Restore dependencies
         run: dotnet restore Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj
 
@@ -38,10 +61,11 @@ jobs:
 
       - name: Update manifest.json
         run: |
-          python3 scripts/update-manifest.py "${{ github.ref_name }}" "media-integrity-scanner-${{ github.ref_name }}.zip"
+          python3 scripts/update-manifest.py "${{ github.ref_name }}" "media-integrity-scanner-${{ github.ref_name }}.zip" \
+            --manifest-version "${{ steps.version.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifest.json
-          git commit -m "chore: update manifest.json for ${{ github.ref_name }}"
+          git add manifest.json Directory.Build.props
+          git commit -m "chore: release ${{ github.ref_name }} (manifest.json + Directory.Build.props)"
           # Assumes the tag was created from the current tip of main.
           git push origin HEAD:main

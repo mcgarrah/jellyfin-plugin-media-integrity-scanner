@@ -1,0 +1,11 @@
+[
+  {
+    "guid": "c8f4a3b2-1d5e-4f6a-9b7c-2e8d0f1a3b5c",
+    "name": "Media Integrity Scanner",
+    "description": "Validates media file integrity using FFmpeg. Detects corrupt, truncated, and damaged files without impacting playback.",
+    "overview": "Production-safe media integrity scanning with two-phase validation, I/O throttling, and admin dashboard. This is the development/pre-release channel -- builds here are cut automatically from the tip of main and are not guaranteed stable.",
+    "owner": "Michael McGarrah",
+    "category": "General",
+    "versions": []
+  }
+]
