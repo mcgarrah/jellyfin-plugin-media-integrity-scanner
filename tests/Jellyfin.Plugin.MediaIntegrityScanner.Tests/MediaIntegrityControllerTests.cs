@@ -21,6 +21,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Api;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
+using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
@@ -36,6 +37,7 @@ public class MediaIntegrityControllerTests : IDisposable
     private readonly TestDatabaseFactory _dbFactory = new();
     private readonly Mock<ILibraryManager> _library = new();
     private readonly Mock<IScanEngine> _scanner = new();
+    private readonly Mock<IUpdateChecker> _updateChecker = new();
 
     public void Dispose() => _dbFactory.Dispose();
 
@@ -45,6 +47,7 @@ public class MediaIntegrityControllerTests : IDisposable
             _dbFactory.Database,
             _scanner.Object,
             _library.Object,
+            _updateChecker.Object,
             NullLogger<MediaIntegrityController>.Instance);
     }
 

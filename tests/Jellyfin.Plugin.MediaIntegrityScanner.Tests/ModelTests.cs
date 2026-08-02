@@ -18,6 +18,7 @@ using Jellyfin.Plugin.MediaIntegrityScanner.Api;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
+using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
 using Xunit;
 
 namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
@@ -163,6 +164,37 @@ public class ModelTests
         Assert.Null(request.ItemId);
         Assert.Null(request.LibraryId);
         Assert.False(request.DeepScan);
+    }
+
+    [Theory]
+    [InlineData(UpdateChannel.Stable, 0)]
+    [InlineData(UpdateChannel.Development, 1)]
+    public void UpdateChannel_HasExpectedNumericValues(UpdateChannel channel, int expected)
+    {
+        // The dashboard/settings pages read and send this as a plain number
+        // (no JsonStringEnumConverter is configured for this plugin's API),
+        // so the numeric value is a real serialization contract, not an
+        // implementation detail.
+        Assert.Equal(expected, (int)channel);
+    }
+
+    [Fact]
+    public void PluginConfiguration_UpdateFieldsDefaultToStableChannel()
+    {
+        var config = new PluginConfiguration();
+
+        Assert.Equal(UpdateChannel.Stable, config.UpdateChannel);
+        Assert.False(string.IsNullOrEmpty(config.StableManifestUrl));
+        Assert.False(string.IsNullOrEmpty(config.DevManifestUrl));
+        Assert.NotEqual(config.StableManifestUrl, config.DevManifestUrl);
+    }
+
+    [Fact]
+    public void InstallUpdateRequest_PropertyRoundTrips()
+    {
+        var request = new InstallUpdateRequest { Channel = UpdateChannel.Development };
+
+        Assert.Equal(UpdateChannel.Development, request.Channel);
     }
 
     [Fact]

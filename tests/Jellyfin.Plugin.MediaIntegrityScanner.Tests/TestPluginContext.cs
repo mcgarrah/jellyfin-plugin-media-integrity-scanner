@@ -33,11 +33,15 @@ public class PluginInstanceCollection
 }
 
 /// <summary>
-/// Sets <see cref="Plugin.Instance"/> and its <c>Configuration</c> for tests that
-/// need <c>ScanEngine</c>/<c>FfmpegResolver</c> to read plugin config, without
-/// invoking Plugin's real constructor (which requires a live Jellyfin host).
-/// Both members have non-public setters by design, so this uses reflection —
-/// test-only plumbing, never referenced from production code.
+/// Sets <see cref="Plugin.Instance"/> and its <c>Configuration</c>/<c>Version</c>
+/// for tests that need <c>ScanEngine</c>/<c>FfmpegResolver</c>/<c>UpdateChecker</c>
+/// to read plugin state, without invoking Plugin's real constructor (which
+/// requires a live Jellyfin host). All three members have non-public setters
+/// by design, so this uses reflection -- test-only plumbing, never referenced
+/// from production code. <c>Version</c> is declared on the non-generic
+/// <c>BasePlugin</c> base class (not <c>BasePlugin&lt;T&gt;</c>), and is left
+/// unset (null) unless a version is explicitly passed in -- calling
+/// <c>.ToString()</c> on it without doing so is a test bug, not a production one.
 ///
 /// <c>Plugin.Instance</c> is a process-wide static singleton — every test class
 /// that uses this helper must be decorated with <c>[Collection("PluginInstance")]</c>
@@ -52,10 +56,19 @@ internal static class TestPluginContext
     private static readonly PropertyInfo ConfigurationProperty =
         typeof(Plugin).GetProperty(nameof(Plugin.Configuration), BindingFlags.Public | BindingFlags.Instance)!;
 
-    public static void SetConfiguration(PluginConfiguration config)
+    private static readonly PropertyInfo VersionProperty =
+        typeof(MediaBrowser.Common.Plugins.BasePlugin).GetProperty(
+            nameof(MediaBrowser.Common.Plugins.BasePlugin.Version), BindingFlags.Public | BindingFlags.Instance)!;
+
+    public static void SetConfiguration(PluginConfiguration config, Version? version = null)
     {
         var plugin = (Plugin)RuntimeHelpers.GetUninitializedObject(typeof(Plugin));
         ConfigurationProperty.SetValue(plugin, config);
+        if (version != null)
+        {
+            VersionProperty.SetValue(plugin, version);
+        }
+
         InstanceProperty.SetValue(null, plugin);
     }
 

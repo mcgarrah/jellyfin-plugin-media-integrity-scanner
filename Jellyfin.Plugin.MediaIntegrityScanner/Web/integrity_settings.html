@@ -131,6 +131,31 @@
                     </div>
                 </div>
 
+                <div class="settings-section">
+                    <h2>Update Checking</h2>
+                    <div class="field-row">
+                        <label for="UpdateChannel">Update Channel</label>
+                        <select id="UpdateChannel">
+                            <option value="Stable">Stable</option>
+                            <option value="Development">Development (pre-releases)</option>
+                        </select>
+                        <div class="field-hint">
+                            Only versions from a repository you've registered under
+                            Dashboard &gt; Plugins &gt; Repositories can ever be detected --
+                            add the manifest URL below there once to enable update checks.
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="StableManifestUrl">Stable Manifest URL</label>
+                        <input type="text" id="StableManifestUrl">
+                    </div>
+                    <div class="field-row">
+                        <label for="DevManifestUrl">Development Manifest URL</label>
+                        <input type="text" id="DevManifestUrl">
+                        <div class="field-hint">Only used if the Development channel is selected above.</div>
+                    </div>
+                </div>
+
                 <button type="submit" class="btn btn-primary" id="btn-save">Save</button>
             </form>
         </div>
@@ -155,6 +180,9 @@
                     document.getElementById('QuietHoursEnd').value = config.QuietHoursEnd || '06:00';
                     document.getElementById('FfmpegPathOverride').value = config.FfmpegPathOverride || '';
                     document.getElementById('FfprobePathOverride').value = config.FfprobePathOverride || '';
+                    document.getElementById('UpdateChannel').value = config.UpdateChannel || 'Stable';
+                    document.getElementById('StableManifestUrl').value = config.StableManifestUrl || '';
+                    document.getElementById('DevManifestUrl').value = config.DevManifestUrl || '';
                     hideMessages();
                 }).catch(function (err) {
                     showError('Failed to load configuration: ' + err.message);
@@ -181,6 +209,9 @@
                     config.QuietHoursEnd = document.getElementById('QuietHoursEnd').value || '06:00';
                     config.FfmpegPathOverride = document.getElementById('FfmpegPathOverride').value || null;
                     config.FfprobePathOverride = document.getElementById('FfprobePathOverride').value || null;
+                    config.UpdateChannel = document.getElementById('UpdateChannel').value || 'Stable';
+                    config.StableManifestUrl = document.getElementById('StableManifestUrl').value || '';
+                    config.DevManifestUrl = document.getElementById('DevManifestUrl').value || '';
 
                     return ApiClient.updatePluginConfiguration(PLUGIN_ID, config);
                 }).then(function (result) {

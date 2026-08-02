@@ -17,6 +17,7 @@
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.EventHandlers;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
+using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.Extensions.DependencyInjection;
@@ -43,5 +44,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
 
         // Event handlers
         serviceCollection.AddHostedService<LibraryMonitor>();
+
+        // Update checker
+        serviceCollection.AddSingleton<IUpdateChecker, UpdateChecker>();
     }
 }

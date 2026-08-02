@@ -22,6 +22,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
+using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
@@ -42,6 +43,7 @@ public partial class MediaIntegrityController : ControllerBase
     private readonly SqliteDatabaseManager _db;
     private readonly IScanEngine _scanner;
     private readonly ILibraryManager _library;
+    private readonly IUpdateChecker _updateChecker;
     private readonly ILogger<MediaIntegrityController> _logger;
 
     /// <summary>
@@ -50,16 +52,19 @@ public partial class MediaIntegrityController : ControllerBase
     /// <param name="db">Database manager.</param>
     /// <param name="scanner">Scan engine.</param>
     /// <param name="library">Library manager.</param>
+    /// <param name="updateChecker">Plugin update checker.</param>
     /// <param name="logger">Logger instance.</param>
     public MediaIntegrityController(
         SqliteDatabaseManager db,
         IScanEngine scanner,
         ILibraryManager library,
+        IUpdateChecker updateChecker,
         ILogger<MediaIntegrityController> logger)
     {
         _db = db;
         _scanner = scanner;
         _library = library;
+        _updateChecker = updateChecker;
         _logger = logger;
     }
 
@@ -235,8 +240,60 @@ public partial class MediaIntegrityController : ControllerBase
         return Ok(new { message = "Scan cancellation requested." });
     }
 
+    /// <summary>
+    /// Get the current plugin version against the latest available versions
+    /// on the stable and (if registered) development channels.
+    /// </summary>
+    /// <returns>Update status.</returns>
+    [HttpGet("UpdateStatus")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<UpdateStatus>> GetUpdateStatus()
+    {
+        var status = _updateChecker.CachedStatus
+            ?? await _updateChecker.RefreshAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+        return Ok(status);
+    }
+
+    /// <summary>
+    /// Force a fresh update check, bypassing the cached status.
+    /// </summary>
+    /// <returns>The freshly computed update status.</returns>
+    [HttpPost("UpdateStatus/Refresh")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<UpdateStatus>> RefreshUpdateStatus()
+    {
+        var status = await _updateChecker.RefreshAsync(HttpContext.RequestAborted).ConfigureAwait(false);
+        return Ok(status);
+    }
+
+    /// <summary>
+    /// Install the latest available version for the requested channel via
+    /// Jellyfin's own plugin installation API.
+    /// </summary>
+    /// <param name="request">Which channel to install from.</param>
+    /// <returns>Ok if the install was requested successfully.</returns>
+    [HttpPost("UpdateStatus/Install")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult> InstallUpdate([FromBody] InstallUpdateRequest request)
+    {
+        try
+        {
+            await _updateChecker.InstallAsync(request.Channel, HttpContext.RequestAborted).ConfigureAwait(false);
+            return Ok(new { message = "Update installed. Restart Jellyfin to finish applying it." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            LogInstallUpdateError(ex);
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [LoggerMessage(EventId = 1, Level = LogLevel.Error, Message = "Error during manually triggered scan")]
     private partial void LogManualScanError(Exception ex);
+
+    [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "Error installing plugin update")]
+    private partial void LogInstallUpdateError(Exception ex);
 }
 
 /// <summary>
@@ -285,6 +342,15 @@ public class ScanRequest
 
     /// <summary>Gets or sets a value indicating whether to run a deep (Phase 2) scan.</summary>
     public bool DeepScan { get; set; }
+}
+
+/// <summary>
+/// Request model for installing a plugin update.
+/// </summary>
+public class InstallUpdateRequest
+{
+    /// <summary>Gets or sets which channel to install the latest available version from.</summary>
+    public UpdateChannel Channel { get; set; }
 }
 
 /// <summary>
