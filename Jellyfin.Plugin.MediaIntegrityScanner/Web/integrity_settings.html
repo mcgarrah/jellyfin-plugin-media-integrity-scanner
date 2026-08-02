@@ -1,4 +1,3 @@
-<!DOCTYPE html>
 <!--
   Jellyfin Media Integrity Scanner - validates media file integrity using FFmpeg
   Copyright (C) 2026  Michael McGarrah <mcgarrah@gmail.com>
@@ -16,211 +15,209 @@
   You should have received a copy of the GNU General Public License along
   with this program; if not, see <https://www.gnu.org/licenses/>.
 -->
-<html>
-<head>
-    <title>Media Integrity Scanner Settings</title>
-    <style>
-        .integrity-settings { padding: 1em 2em; font-family: inherit; max-width: 640px; }
-        .settings-section {
-            background: rgba(255,255,255,0.05);
-            border-radius: 8px;
-            padding: 1.2em 1.5em;
-            margin: 1.5em 0;
-        }
-        .settings-section h2 { margin-top: 0; font-size: 1.1em; opacity: 0.85; }
-        .field-row { margin: 1em 0; }
-        .field-row label { display: block; margin-bottom: 0.3em; }
-        .field-row .field-hint { opacity: 0.6; font-size: 0.85em; margin-top: 0.2em; }
-        .field-row input[type="text"],
-        .field-row input[type="number"],
-        .field-row input[type="time"] {
-            width: 100%;
-            max-width: 240px;
-            padding: 0.4em 0.6em;
-            border-radius: 4px;
-            border: 1px solid rgba(255,255,255,0.2);
-            background: rgba(255,255,255,0.05);
-            color: inherit;
-        }
-        .checkbox-row { display: flex; align-items: center; gap: 0.6em; margin: 0.8em 0; }
-        .checkbox-row input[type="checkbox"] { width: 1.1em; height: 1.1em; }
-        .checkbox-row label { margin: 0; }
-        .btn {
-            padding: 0.5em 1.2em;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.9em;
-            margin-right: 0.5em;
-        }
-        .btn-primary { background: #00a4dc; color: white; }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .error-msg { color: #f44336; font-style: italic; margin: 1em 0; }
-        .success-msg { color: #4caf50; font-style: italic; margin: 1em 0; }
-        .nav-link { margin-bottom: 1em; display: inline-block; }
-    </style>
-</head>
-<body>
-    <div class="integrity-settings">
-        <a class="nav-link" href="configurationpage?name=Media+Integrity+Scanner">&laquo; Back to Dashboard</a>
-        <h1>Media Integrity Scanner Settings</h1>
+<div id="MediaIntegrityScannerSettingsPage" data-role="page" class="page type-interior pluginConfigurationPage">
+    <div data-role="content" class="content-primary">
+        <style>
+            .integrity-settings { padding: 4em 2em 1em; font-family: inherit; max-width: 640px; }
+            .settings-section {
+                background: rgba(255,255,255,0.05);
+                border-radius: 8px;
+                padding: 1.2em 1.5em;
+                margin: 1.5em 0;
+            }
+            .settings-section h2 { margin-top: 0; font-size: 1.1em; opacity: 0.85; }
+            .field-row { margin: 1em 0; }
+            .field-row label { display: block; margin-bottom: 0.3em; }
+            .field-row .field-hint { opacity: 0.6; font-size: 0.85em; margin-top: 0.2em; }
+            .field-row input[type="text"],
+            .field-row input[type="number"],
+            .field-row input[type="time"] {
+                width: 100%;
+                max-width: 240px;
+                padding: 0.4em 0.6em;
+                border-radius: 4px;
+                border: 1px solid rgba(255,255,255,0.2);
+                background: rgba(255,255,255,0.05);
+                color: inherit;
+            }
+            .checkbox-row { display: flex; align-items: center; gap: 0.6em; margin: 0.8em 0; }
+            .checkbox-row input[type="checkbox"] { width: 1.1em; height: 1.1em; }
+            .checkbox-row label { margin: 0; }
+            .btn {
+                padding: 0.5em 1.2em;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 0.9em;
+                margin-right: 0.5em;
+            }
+            .btn-primary { background: #00a4dc; color: white; }
+            .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+            .error-msg { color: #f44336; font-style: italic; margin: 1em 0; }
+            .success-msg { color: #4caf50; font-style: italic; margin: 1em 0; }
+            .nav-link { margin-bottom: 1em; display: inline-block; }
+        </style>
 
-        <div id="error-msg" class="error-msg" style="display:none;"></div>
-        <div id="success-msg" class="success-msg" style="display:none;"></div>
+        <div class="integrity-settings">
+            <a class="nav-link" href="#/configurationpage?name=Media+Integrity+Scanner">&laquo; Back to Dashboard</a>
+            <h1>Media Integrity Scanner Settings</h1>
 
-        <form id="settings-form">
-            <div class="settings-section">
-                <h2>Scanning Behavior</h2>
-                <div class="field-row">
-                    <label for="MaxConcurrentScans">Max Concurrent Scans</label>
-                    <input type="number" id="MaxConcurrentScans" min="1" max="16" step="1" required>
-                    <div class="field-hint">Number of files scanned simultaneously.</div>
-                </div>
-                <div class="field-row">
-                    <label for="DelayBetweenFilesMs">Delay Between Files (ms)</label>
-                    <input type="number" id="DelayBetweenFilesMs" min="0" step="100" required>
-                    <div class="field-hint">Minimum pause before each file, regardless of file size.</div>
-                </div>
-                <div class="checkbox-row">
-                    <input type="checkbox" id="PauseDuringPlayback">
-                    <label for="PauseDuringPlayback">Pause scanning during active playback</label>
-                </div>
-                <div class="checkbox-row">
-                    <input type="checkbox" id="EnableDeepScan">
-                    <label for="EnableDeepScan">Enable deep scan (Phase 2 full byte-stream decode)</label>
-                </div>
-                <div class="checkbox-row">
-                    <input type="checkbox" id="ScanOnItemAdded">
-                    <label for="ScanOnItemAdded">Scan newly added items automatically</label>
-                </div>
-                <div class="checkbox-row">
-                    <input type="checkbox" id="PurgeOnItemRemoved">
-                    <label for="PurgeOnItemRemoved">Purge scan records when items are removed</label>
-                </div>
-            </div>
+            <div id="error-msg" class="error-msg" style="display:none;"></div>
+            <div id="success-msg" class="success-msg" style="display:none;"></div>
 
-            <div class="settings-section">
-                <h2>I/O Throttling</h2>
-                <div class="field-row">
-                    <label for="MaxReadRateMbPerSec">Max Read Rate (MB/s)</label>
-                    <input type="number" id="MaxReadRateMbPerSec" min="0" step="1" required>
-                    <div class="field-hint">Average read-rate cap per file; 0 disables throttling.</div>
+            <form id="settings-form">
+                <div class="settings-section">
+                    <h2>Scanning Behavior</h2>
+                    <div class="field-row">
+                        <label for="MaxConcurrentScans">Max Concurrent Scans</label>
+                        <input type="number" id="MaxConcurrentScans" min="1" max="16" step="1" required>
+                        <div class="field-hint">Number of files scanned simultaneously.</div>
+                    </div>
+                    <div class="field-row">
+                        <label for="DelayBetweenFilesMs">Delay Between Files (ms)</label>
+                        <input type="number" id="DelayBetweenFilesMs" min="0" step="100" required>
+                        <div class="field-hint">Minimum pause before each file, regardless of file size.</div>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="PauseDuringPlayback">
+                        <label for="PauseDuringPlayback">Pause scanning during active playback</label>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="EnableDeepScan">
+                        <label for="EnableDeepScan">Enable deep scan (Phase 2 full byte-stream decode)</label>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="ScanOnItemAdded">
+                        <label for="ScanOnItemAdded">Scan newly added items automatically</label>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="PurgeOnItemRemoved">
+                        <label for="PurgeOnItemRemoved">Purge scan records when items are removed</label>
+                    </div>
                 </div>
-                <div class="checkbox-row">
-                    <input type="checkbox" id="UseQuietHoursOnly">
-                    <label for="UseQuietHoursOnly">Restrict scanning to the quiet-hours window</label>
-                </div>
-                <div class="field-row">
-                    <label for="QuietHoursStart">Quiet Hours Start</label>
-                    <input type="time" id="QuietHoursStart" required>
-                </div>
-                <div class="field-row">
-                    <label for="QuietHoursEnd">Quiet Hours End</label>
-                    <input type="time" id="QuietHoursEnd" required>
-                    <div class="field-hint">A start time later than the end time wraps past midnight.</div>
-                </div>
-            </div>
 
-            <div class="settings-section">
-                <h2>FFmpeg Paths</h2>
-                <div class="field-row">
-                    <label for="FfmpegPathOverride">FFmpeg Path Override</label>
-                    <input type="text" id="FfmpegPathOverride" placeholder="Auto-detected if blank">
+                <div class="settings-section">
+                    <h2>I/O Throttling</h2>
+                    <div class="field-row">
+                        <label for="MaxReadRateMbPerSec">Max Read Rate (MB/s)</label>
+                        <input type="number" id="MaxReadRateMbPerSec" min="0" step="1" required>
+                        <div class="field-hint">Average read-rate cap per file; 0 disables throttling.</div>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="UseQuietHoursOnly">
+                        <label for="UseQuietHoursOnly">Restrict scanning to the quiet-hours window</label>
+                    </div>
+                    <div class="field-row">
+                        <label for="QuietHoursStart">Quiet Hours Start</label>
+                        <input type="time" id="QuietHoursStart" required>
+                    </div>
+                    <div class="field-row">
+                        <label for="QuietHoursEnd">Quiet Hours End</label>
+                        <input type="time" id="QuietHoursEnd" required>
+                        <div class="field-hint">A start time later than the end time wraps past midnight.</div>
+                    </div>
                 </div>
-                <div class="field-row">
-                    <label for="FfprobePathOverride">FFprobe Path Override</label>
-                    <input type="text" id="FfprobePathOverride" placeholder="Auto-detected if blank">
-                    <div class="field-hint">Only needed if the plugin picks the wrong ffmpeg/ffprobe binary automatically.</div>
+
+                <div class="settings-section">
+                    <h2>FFmpeg Paths</h2>
+                    <div class="field-row">
+                        <label for="FfmpegPathOverride">FFmpeg Path Override</label>
+                        <input type="text" id="FfmpegPathOverride" placeholder="Auto-detected if blank">
+                    </div>
+                    <div class="field-row">
+                        <label for="FfprobePathOverride">FFprobe Path Override</label>
+                        <input type="text" id="FfprobePathOverride" placeholder="Auto-detected if blank">
+                        <div class="field-hint">Only needed if the plugin picks the wrong ffmpeg/ffprobe binary automatically.</div>
+                    </div>
                 </div>
-            </div>
 
-            <button type="submit" class="btn btn-primary" id="btn-save">Save</button>
-        </form>
-    </div>
+                <button type="submit" class="btn btn-primary" id="btn-save">Save</button>
+            </form>
+        </div>
 
-    <script>
-        // Jellyfin serializes this plugin's GUID without dashes in its 10.11.11
-        // REST responses (c8f4a3b2-1d5e-... -> c8f4a3b21d5e...); the plugin-config
-        // endpoints require the same dashless form.
-        var PLUGIN_ID = 'c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c';
+        <script>
+            // Jellyfin serializes this plugin's GUID without dashes in its 10.11.11
+            // REST responses (c8f4a3b2-1d5e-... -> c8f4a3b21d5e...); the plugin-config
+            // endpoints require the same dashless form.
+            var PLUGIN_ID = 'c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c';
 
-        function loadConfig() {
-            ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
-                document.getElementById('MaxConcurrentScans').value = config.MaxConcurrentScans;
-                document.getElementById('DelayBetweenFilesMs').value = config.DelayBetweenFilesMs;
-                document.getElementById('PauseDuringPlayback').checked = !!config.PauseDuringPlayback;
-                document.getElementById('EnableDeepScan').checked = !!config.EnableDeepScan;
-                document.getElementById('ScanOnItemAdded').checked = !!config.ScanOnItemAdded;
-                document.getElementById('PurgeOnItemRemoved').checked = !!config.PurgeOnItemRemoved;
-                document.getElementById('MaxReadRateMbPerSec').value = config.MaxReadRateMbPerSec;
-                document.getElementById('UseQuietHoursOnly').checked = !!config.UseQuietHoursOnly;
-                document.getElementById('QuietHoursStart').value = config.QuietHoursStart || '02:00';
-                document.getElementById('QuietHoursEnd').value = config.QuietHoursEnd || '06:00';
-                document.getElementById('FfmpegPathOverride').value = config.FfmpegPathOverride || '';
-                document.getElementById('FfprobePathOverride').value = config.FfprobePathOverride || '';
+            function loadConfig() {
+                ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+                    document.getElementById('MaxConcurrentScans').value = config.MaxConcurrentScans;
+                    document.getElementById('DelayBetweenFilesMs').value = config.DelayBetweenFilesMs;
+                    document.getElementById('PauseDuringPlayback').checked = !!config.PauseDuringPlayback;
+                    document.getElementById('EnableDeepScan').checked = !!config.EnableDeepScan;
+                    document.getElementById('ScanOnItemAdded').checked = !!config.ScanOnItemAdded;
+                    document.getElementById('PurgeOnItemRemoved').checked = !!config.PurgeOnItemRemoved;
+                    document.getElementById('MaxReadRateMbPerSec').value = config.MaxReadRateMbPerSec;
+                    document.getElementById('UseQuietHoursOnly').checked = !!config.UseQuietHoursOnly;
+                    document.getElementById('QuietHoursStart').value = config.QuietHoursStart || '02:00';
+                    document.getElementById('QuietHoursEnd').value = config.QuietHoursEnd || '06:00';
+                    document.getElementById('FfmpegPathOverride').value = config.FfmpegPathOverride || '';
+                    document.getElementById('FfprobePathOverride').value = config.FfprobePathOverride || '';
+                    hideMessages();
+                }).catch(function (err) {
+                    showError('Failed to load configuration: ' + err.message);
+                });
+            }
+
+            function saveConfig(e) {
+                e.preventDefault();
                 hideMessages();
-            }).catch(function (err) {
-                showError('Failed to load configuration: ' + err.message);
-            });
-        }
 
-        function saveConfig(e) {
-            e.preventDefault();
-            hideMessages();
+                var saveButton = document.getElementById('btn-save');
+                saveButton.disabled = true;
 
-            var saveButton = document.getElementById('btn-save');
-            saveButton.disabled = true;
+                ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
+                    config.MaxConcurrentScans = parseInt(document.getElementById('MaxConcurrentScans').value, 10) || 1;
+                    config.DelayBetweenFilesMs = parseInt(document.getElementById('DelayBetweenFilesMs').value, 10) || 0;
+                    config.PauseDuringPlayback = document.getElementById('PauseDuringPlayback').checked;
+                    config.EnableDeepScan = document.getElementById('EnableDeepScan').checked;
+                    config.ScanOnItemAdded = document.getElementById('ScanOnItemAdded').checked;
+                    config.PurgeOnItemRemoved = document.getElementById('PurgeOnItemRemoved').checked;
+                    config.MaxReadRateMbPerSec = parseInt(document.getElementById('MaxReadRateMbPerSec').value, 10) || 0;
+                    config.UseQuietHoursOnly = document.getElementById('UseQuietHoursOnly').checked;
+                    config.QuietHoursStart = document.getElementById('QuietHoursStart').value || '02:00';
+                    config.QuietHoursEnd = document.getElementById('QuietHoursEnd').value || '06:00';
+                    config.FfmpegPathOverride = document.getElementById('FfmpegPathOverride').value || null;
+                    config.FfprobePathOverride = document.getElementById('FfprobePathOverride').value || null;
 
-            ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {
-                config.MaxConcurrentScans = parseInt(document.getElementById('MaxConcurrentScans').value, 10) || 1;
-                config.DelayBetweenFilesMs = parseInt(document.getElementById('DelayBetweenFilesMs').value, 10) || 0;
-                config.PauseDuringPlayback = document.getElementById('PauseDuringPlayback').checked;
-                config.EnableDeepScan = document.getElementById('EnableDeepScan').checked;
-                config.ScanOnItemAdded = document.getElementById('ScanOnItemAdded').checked;
-                config.PurgeOnItemRemoved = document.getElementById('PurgeOnItemRemoved').checked;
-                config.MaxReadRateMbPerSec = parseInt(document.getElementById('MaxReadRateMbPerSec').value, 10) || 0;
-                config.UseQuietHoursOnly = document.getElementById('UseQuietHoursOnly').checked;
-                config.QuietHoursStart = document.getElementById('QuietHoursStart').value || '02:00';
-                config.QuietHoursEnd = document.getElementById('QuietHoursEnd').value || '06:00';
-                config.FfmpegPathOverride = document.getElementById('FfmpegPathOverride').value || null;
-                config.FfprobePathOverride = document.getElementById('FfprobePathOverride').value || null;
+                    return ApiClient.updatePluginConfiguration(PLUGIN_ID, config);
+                }).then(function (result) {
+                    saveButton.disabled = false;
+                    if (window.Dashboard && typeof Dashboard.processPluginConfigurationUpdateResult === 'function') {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    } else {
+                        showSuccess('Settings saved.');
+                    }
+                }).catch(function (err) {
+                    saveButton.disabled = false;
+                    showError('Failed to save configuration: ' + err.message);
+                });
 
-                return ApiClient.updatePluginConfiguration(PLUGIN_ID, config);
-            }).then(function (result) {
-                saveButton.disabled = false;
-                if (window.Dashboard && typeof Dashboard.processPluginConfigurationUpdateResult === 'function') {
-                    Dashboard.processPluginConfigurationUpdateResult(result);
-                } else {
-                    showSuccess('Settings saved.');
-                }
-            }).catch(function (err) {
-                saveButton.disabled = false;
-                showError('Failed to save configuration: ' + err.message);
-            });
+                return false;
+            }
 
-            return false;
-        }
+            function showError(msg) {
+                var el = document.getElementById('error-msg');
+                el.textContent = msg;
+                el.style.display = 'block';
+            }
 
-        function showError(msg) {
-            var el = document.getElementById('error-msg');
-            el.textContent = msg;
-            el.style.display = 'block';
-        }
+            function showSuccess(msg) {
+                var el = document.getElementById('success-msg');
+                el.textContent = msg;
+                el.style.display = 'block';
+            }
 
-        function showSuccess(msg) {
-            var el = document.getElementById('success-msg');
-            el.textContent = msg;
-            el.style.display = 'block';
-        }
+            function hideMessages() {
+                document.getElementById('error-msg').style.display = 'none';
+                document.getElementById('success-msg').style.display = 'none';
+            }
 
-        function hideMessages() {
-            document.getElementById('error-msg').style.display = 'none';
-            document.getElementById('success-msg').style.display = 'none';
-        }
+            document.getElementById('settings-form').addEventListener('submit', saveConfig);
 
-        document.getElementById('settings-form').addEventListener('submit', saveConfig);
-
-        loadConfig();
-    </script>
-</body>
-</html>
+            loadConfig();
+        </script>
+    </div>
+</div>

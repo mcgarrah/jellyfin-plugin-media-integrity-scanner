@@ -1,0 +1,103 @@
+name: Playwright E2E
+
+# Deliberately its own workflow file, not a job inside build.yml or
+# integration-test.yml: a real-browser suite is slower and inherently more
+# prone to environmental flakiness (browser downloads, rendering timing)
+# than the curl+grep integration tests, so its pass/fail is kept independent
+# -- a Playwright failure here does not fail the build/integration-test
+# checks. (Whether this workflow shows as a "required" check on PR merge is
+# a GitHub branch-protection setting, not something this file controls.)
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  playwright-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build plugin
+        run: |
+          dotnet restore Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
+
+      - name: Create Jellyfin directories and install plugin
+        run: |
+          # The DLL must land in the bind-mounted config dir BEFORE the
+          # container's first boot: Jellyfin only loads plugins once, early
+          # in its own startup, and copying a DLL in after that point is a
+          # no-op until the container is restarted (this is a real race, not
+          # a hypothetical -- see CODE_REVIEW.md's write-up of hitting this
+          # exact 404 while developing this suite). Prepping files before
+          # `docker compose up` (matching integration-test.yml's proven
+          # order) sidesteps the race entirely rather than adding a sleep.
+          mkdir -p tests/jellyfin-config/plugins/MediaIntegrityScanner
+          mkdir -p tests/jellyfin-cache
+          mkdir -p tests/test-media
+          cp ./publish/Jellyfin.Plugin.MediaIntegrityScanner.dll \
+             tests/jellyfin-config/plugins/MediaIntegrityScanner/
+          cp ./publish/Microsoft.Data.Sqlite.dll \
+             tests/jellyfin-config/plugins/MediaIntegrityScanner/ 2>/dev/null || true
+          cp ./publish/SQLitePCLRaw.*.dll \
+             tests/jellyfin-config/plugins/MediaIntegrityScanner/ 2>/dev/null || true
+
+      - name: Create test media matrix
+        run: |
+          # Generates the full good/bad corruption matrix (see
+          # tests/generate-test-media.sh's header comment for the verified
+          # pass/fail table per file). Falls back to apt's vanilla ffmpeg
+          # since /usr/lib/jellyfin-ffmpeg isn't present on the runner itself
+          # (only inside the Jellyfin container started below).
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          bash tests/generate-test-media.sh tests/test-media
+
+      - name: Start Jellyfin container
+        run: docker compose -f tests/docker-compose.integration.yml up -d
+
+      - name: Complete wizard, authenticate, and populate the test library
+        run: bash tests/setup-jellyfin.sh
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install Playwright
+        working-directory: tests/playwright
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run Playwright suite
+        working-directory: tests/playwright
+        run: npx playwright test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/playwright/playwright-report/
+          retention-days: 7
+
+      - name: Collect Jellyfin logs on failure
+        if: failure()
+        run: |
+          docker logs jellyfin-integration-test 2>&1 | tail -100
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f tests/docker-compose.integration.yml down -v
