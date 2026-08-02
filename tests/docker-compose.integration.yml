@@ -7,11 +7,17 @@
 #   3. Start: docker compose -f tests/docker-compose.integration.yml up -d
 #   4. Run tests: ./tests/run-integration-tests.sh
 #   5. Teardown: docker compose -f tests/docker-compose.integration.yml down -v
+#
+# restart: unless-stopped means a manually-started instance (e.g. a demo box
+# kept running on an LXC to browse the plugin) survives a host reboot as
+# long as Docker itself starts on boot -- it has no effect on CI or the
+# local test scripts' own explicit `down -v` teardown.
 
 services:
   jellyfin:
     image: jellyfin/jellyfin:10.11.11
     container_name: jellyfin-integration-test
+    restart: unless-stopped
     ports:
       - "8096:8096"
     volumes:
