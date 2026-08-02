@@ -6,6 +6,15 @@
     "overview": "Production-safe media integrity scanning with two-phase validation, I/O throttling, and admin dashboard. This is the development/pre-release channel -- builds here are cut automatically from the tip of main and are not guaranteed stable.",
     "owner": "Michael McGarrah",
     "category": "General",
-    "versions": []
+    "versions": [
+      {
+        "version": "0.1.0.1",
+        "changelog": "Automated pre-release build v0.1.0-dev.1. Not guaranteed stable -- see GitHub release notes.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/releases/download/v0.1.0-dev.1/media-integrity-scanner-v0.1.0-dev.1.zip",
+        "checksum": "fa9381bdbc5abd9adce7eb4cba08fbc2",
+        "timestamp": "2026-08-02T04:36:51Z"
+      }
+    ]
   }
 ]
