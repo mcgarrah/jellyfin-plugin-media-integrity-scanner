@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
-"""Updates manifest.json with a new plugin release entry after a tagged build.
+"""Updates a plugin manifest with a new release entry after a build.
 
-Usage: update-manifest.py <tag> <zip-path>
+Usage: update-manifest.py <tag> <zip-path> [--manifest PATH] [--manifest-version VERSION] [--prerelease]
 
 Run from the repository root, after the release zip has been built (see
-.github/workflows/release.yml). Normalizes the git tag (e.g. "v0.2.0") into
-the 4-part version format Jellyfin's plugin manifest expects, computes the
-MD5 checksum of the release archive, derives targetAbi from the
-Jellyfin.Controller package reference in the csproj, and prepends a new
-version entry to manifest.json (replacing any existing entry for the same
-version, so re-running for the same tag is idempotent).
+.github/workflows/release.yml and release-dev.yml). Normalizes the git tag
+(e.g. "v0.2.0") into the 4-part version format Jellyfin's plugin manifest
+expects, computes the MD5 checksum of the release archive, derives
+targetAbi from the Jellyfin.Controller package reference in the csproj, and
+prepends a new version entry to the manifest (replacing any existing entry
+for the same version, so re-running for the same tag is idempotent).
+
+--manifest-version exists because Jellyfin manifest version strings must be
+a clean 4-part numeric System.Version (no semver "-dev"/"-rc" suffixes,
+confirmed via reflection against the real MediaBrowser.Model.Updates.VersionInfo
+type) -- the dev-channel workflow's tag (e.g. "v0.1.0-dev.147", for a
+human-readable GitHub release/changelog) isn't itself a valid manifest
+version, so it computes the real 4-part version separately and passes it
+through this flag rather than this script trying to parse a "-dev.N" suffix
+out of a tag string.
 """
 
+import argparse
 import hashlib
 import json
 import re
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MANIFEST_PATH = REPO_ROOT / "manifest.json"
 CSPROJ_PATH = (
     REPO_ROOT
     / "Jellyfin.Plugin.MediaIntegrityScanner"
@@ -58,26 +66,51 @@ def compute_checksum(zip_path: Path) -> str:
     return md5.hexdigest()
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("tag", help="Git tag / GitHub release tag (e.g. v0.2.0 or v0.1.0-dev.147)")
+    parser.add_argument("zip_path", help="Path to the built release archive")
+    parser.add_argument(
+        "--manifest",
+        default=str(REPO_ROOT / "manifest.json"),
+        help="Manifest file to update (default: manifest.json)",
+    )
+    parser.add_argument(
+        "--manifest-version",
+        default=None,
+        help="Explicit 4-part manifest version, overriding normalize_version(tag). "
+        "Required for tags with a non-numeric suffix (e.g. -dev.N).",
+    )
+    parser.add_argument(
+        "--prerelease",
+        action="store_true",
+        help="Label the changelog entry as an automated pre-release build.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
-    if len(sys.argv) != 3:
-        print("Usage: update-manifest.py <tag> <zip-path>", file=sys.stderr)
-        sys.exit(1)
-
-    tag, zip_arg = sys.argv[1], sys.argv[2]
-    zip_path = Path(zip_arg)
+    args = parse_args()
+    zip_path = Path(args.zip_path)
     if not zip_path.is_file():
-        print(f"Release archive not found: {zip_path}", file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(f"Release archive not found: {zip_path}")
 
-    version = normalize_version(tag)
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest_path = Path(args.manifest)
+    version = args.manifest_version or normalize_version(args.tag)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     plugin = manifest[0]
+
+    changelog = (
+        f"Automated pre-release build {args.tag}. Not guaranteed stable -- see GitHub release notes."
+        if args.prerelease
+        else f"Automated release {args.tag}. See GitHub release notes for details."
+    )
 
     entry = {
         "version": version,
-        "changelog": f"Automated release {tag}. See GitHub release notes for details.",
+        "changelog": changelog,
         "targetAbi": read_target_abi(),
-        "sourceUrl": f"{REPO_URL}/releases/download/{tag}/{zip_path.name}",
+        "sourceUrl": f"{REPO_URL}/releases/download/{args.tag}/{zip_path.name}",
         "checksum": compute_checksum(zip_path),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -86,8 +119,8 @@ def main() -> None:
     versions.insert(0, entry)
     plugin["versions"] = versions
 
-    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(f"manifest.json updated with version {version}")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(f"{manifest_path.name} updated with version {version}")
 
 
 if __name__ == "__main__":
