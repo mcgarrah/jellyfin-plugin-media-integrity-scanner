@@ -31,31 +31,53 @@
     <EmbeddedResource Include="Web\integrity_settings.html" />
   </ItemGroup>
 
+  <!-- Ships alongside the plugin DLL in every publish/release output (see
+       the CopyToPublishDirectory items below). Its "assemblies" whitelist is
+       the real fix for the native-runtime crash described below. Without
+       it, Jellyfin only falls back to blindly loading every .dll it finds
+       recursively. -->
+  <ItemGroup>
+    <None Include="meta.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- SQLitePCLRaw.bundle_e_sqlite3 ships a native SQLite binary for every
        OS/architecture under runtimes/[rid]/native/. Jellyfin's plugin loader
        (Emby.Server.Implementations.Plugins.PluginManager.LoadAssemblies)
-       recursively tries to load every .dll it finds under a plugin's folder
-       as a managed .NET assembly; it does not do RID-aware filtering the
-       way a normal .NET app host does via its own .deps.json. Any bundled
-       Windows-named "*.dll" native binary (there are several: win-x86,
-       win-x64, win-arm64) crashes that loader with a BadImageFormatException
-       and disables the whole plugin. Confirmed for real: installing an
-       actual tagged release via Jellyfin's own Catalog/repository mechanism
-       (not a hand-picked local DLL copy, which is how this had gone
-       unnoticed) reproduced exactly this crash. Trimming to just the one
-       RID this project actually supports (linux-x64, matching the official
-       jellyfin/jellyfin Docker image used throughout this project's own
-       integration tests) removes every problematic file, since SQLitePCLRaw
-       itself resolves the native library relative to the loading assembly's
-       own directory regardless of how Jellyfin discovered that assembly. -->
-  <Target Name="RemoveUnnecessaryNativeRuntimes" AfterTargets="Publish">
+       by default recursively finds every .dll under a plugin's folder and
+       tries to load each one as a managed .NET assembly; a bundled
+       Windows-named "*.dll" native binary (win-x86/win-x64/win-arm64) blows
+       up with BadImageFormatException and disables the whole plugin.
+       Confirmed for real: installing an actual tagged release via
+       Jellyfin's own Catalog/repository mechanism (not a hand-picked local
+       DLL copy, which is how this had gone unnoticed) reproduced exactly
+       this crash.
+
+       Decompiling Jellyfin's own PluginManager (Emby.Server.Implementations.dll,
+       pulled straight from the real 10.11.11 server image) found the actual
+       fix: if the plugin ships its own meta.json with a populated
+       "assemblies" list, Jellyfin uses ONLY that whitelist instead of the
+       naive recursive-.dll fallback (PluginManager.ReconcileManifest, which
+       reads a meta.json already present in the extracted plugin folder and
+       copies its Assemblies field onto the manifest Jellyfin actually uses).
+       With that whitelist in place, native runtime binaries of any name or
+       platform are never touching Jellyfin's assembly loader at all. .NET's
+       own native P/Invoke resolution (used internally by SQLitePCLRaw) finds
+       the correct runtimes/[rid]/native/ entry for whatever platform Jellyfin
+       is actually running on, completely independent of how Jellyfin
+       discovered the managed assemblies. This is what makes it safe to ship
+       every real Jellyfin server platform in one universal package instead
+       of trimming down to a single RID (an earlier, more conservative fix
+       that worked but unnecessarily dropped Windows/macOS/other-Linux-arch
+       support). Only genuinely irrelevant client/mobile platforms (Android,
+       iOS, tvOS, browser-wasm) are trimmed since Jellyfin's server never runs
+       on those. -->
+  <Target Name="RemoveIrrelevantClientRuntimes" AfterTargets="Publish">
     <!-- MSBuild's own directory-only wildcard globbing (Include="...\*\")
-         didn't reliably match here across a couple of attempts (empty item
-         list even once the separator/trailing-slash issue was fixed). A
-         plain shell find/rm is simpler to verify correctly and matches how
-         this project's other tooling already assumes a Linux/bash
-         environment (scripts/update-manifest.py, tests/*.sh). -->
-    <Exec Command="find &quot;$(PublishDir)runtimes&quot; -mindepth 1 -maxdepth 1 -type d ! -name linux-x64 -exec rm -rf {} +"
+         didn't reliably match here across a couple of attempts. A plain
+         shell find/rm is simpler to verify correctly and matches how this
+         project's other tooling already assumes a Linux/bash environment
+         (scripts/update-manifest.py, tests/*.sh). -->
+    <Exec Command="find &quot;$(PublishDir)runtimes&quot; -mindepth 1 -maxdepth 1 -type d \( -name 'android-*' -o -name 'ios-*' -o -name 'iossimulator-*' -o -name 'maccatalyst-*' -o -name 'browser-*' -o -name 'tvos*' \) -exec rm -rf {} +"
           Condition="Exists('$(PublishDir)runtimes')" />
   </Target>
 
