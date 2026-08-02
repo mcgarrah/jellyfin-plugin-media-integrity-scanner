@@ -4,7 +4,7 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 
 ## Status
 
-✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, the in-app settings page, and library event hooks are all implemented and covered by 141 unit tests plus a Docker-based integration test suite. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
+✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, the in-app settings page, and library event hooks are all implemented and covered by 141 unit tests, a Docker-based integration test suite (including a good/bad video corruption matrix), and a Playwright suite that drives the admin dashboard and settings pages through a real browser session. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
 
 ## Features
 
@@ -141,7 +141,10 @@ jellyfin-plugin-media-integrity-scanner/
 ├── tests/
 │   ├── Jellyfin.Plugin.MediaIntegrityScanner.Tests/  # xUnit unit tests (141 tests)
 │   ├── docker-compose.integration.yml   # Integration test Jellyfin instance
-│   └── run-integration-tests.sh         # Integration test runner
+│   ├── generate-test-media.sh           # Good/bad video corruption matrix generator
+│   ├── setup-jellyfin.sh                # Shared Jellyfin bring-up (sourced by the below + Playwright)
+│   ├── run-integration-tests.sh         # Integration test runner (curl-based)
+│   └── playwright/                      # Real-browser E2E suite (dashboard + settings pages)
 ├── scripts/
 │   └── update-manifest.py               # Bumps manifest.json on tagged release
 ├── Jellyfin.Plugin.MediaIntegrityScanner.csproj
@@ -151,6 +154,7 @@ jellyfin-plugin-media-integrity-scanner/
 ├── .github/workflows/
 │   ├── build.yml                        # Build + unit tests on every push/PR
 │   ├── integration-test.yml             # Docker-based integration test
+│   ├── playwright-e2e.yml               # Real-browser E2E suite (separate, non-blocking)
 │   └── release.yml                      # Tagged release + manifest.json automation
 ├── .editorconfig
 ├── .gitignore
@@ -200,17 +204,37 @@ docker compose -f tests/docker-compose.integration.yml up -d
 docker compose -f tests/docker-compose.integration.yml down -v
 ```
 
-The test script will:
-- Copy the built plugin DLLs into the Jellyfin config directory
-- Generate a small test video if one doesn't exist
-- Wait for Jellyfin to become healthy
-- Complete the startup wizard via API
-- Authenticate and verify the plugin is loaded (by GUID)
-- Check the plugin configuration endpoint
-- Verify FFmpeg is available inside the container
-- Create a test media library and confirm items are discovered
+The test script sources `tests/setup-jellyfin.sh`, which:
+- Copies the built plugin DLLs into the Jellyfin config directory
+- Generates the good/bad test-media matrix via `tests/generate-test-media.sh` if it doesn't exist yet (two valid files, five corrupted in distinct, verified-for-real ways — see that script's header comment for the full pass/fail table)
+- Waits for Jellyfin to become healthy
+- Completes the startup wizard via API
+- Authenticates and creates a test media library, waiting for all 7 items to be discovered
+
+`run-integration-tests.sh` then runs its own curl-based assertions on top: plugin-loaded/config-endpoint checks, a settings round-trip, both web pages being served, a full scan-and-verify flow against the known corruption matrix, item-detail lookups, an item-scoped deep scan (proving the two-phase Header/FullDecode split actually catches different things), and the cancel endpoint.
+
+**Important ordering note:** Jellyfin loads plugins once, early in its own startup, and copying the plugin DLL into the bind-mounted config directory *after* the container has already started is a no-op until the container is restarted. `setup-jellyfin.sh`'s own file-copy step runs after step 2's `docker compose up` above, which can race Jellyfin's own startup — if `run-integration-tests.sh` fails with the plugin GUID missing or every `/MediaIntegrity/*` route 404ing, run `docker restart jellyfin-integration-test` once and re-run the script. CI sidesteps this entirely by copying the DLL in before the container's first start (see `.github/workflows/integration-test.yml`/`playwright-e2e.yml`).
 
 The same workflow runs automatically in CI on every push to `main`/`dev` and on pull requests (see `.github/workflows/integration-test.yml`).
+
+### End-to-End Testing with Playwright
+
+A [Playwright](https://playwright.dev/) suite (`tests/playwright/`) drives the admin dashboard and settings pages through a real Chromium session — logging in via the actual web login form, triggering a real scan, and asserting the UI reflects it — rather than curl+grep, which never executes a page's own JavaScript or its real `ApiClient`-backed session.
+
+```bash
+# 1-2. Same as above: build the plugin, bring up Jellyfin with tests/setup-jellyfin.sh
+dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
+docker compose -f tests/docker-compose.integration.yml up -d
+bash tests/setup-jellyfin.sh
+
+# 3. Install and run the suite
+cd tests/playwright
+npm ci
+npx playwright install --with-deps chromium
+npx playwright test
+```
+
+This runs in its own `playwright-e2e.yml` CI workflow, deliberately kept separate from `build.yml`/`integration-test.yml`: a real-browser suite is slower and more prone to environmental flakiness than a curl-based check, so a Playwright failure doesn't block those other checks.
 
 ## Blog Series
 
