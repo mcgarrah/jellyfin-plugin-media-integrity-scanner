@@ -90,6 +90,32 @@
                 padding: 0.8em 1.2em;
                 margin: 1em 0;
             }
+            .modal-overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.6);
+                z-index: 1000;
+                align-items: center;
+                justify-content: center;
+            }
+            .modal-overlay.open { display: flex; }
+            .modal-box {
+                background: #1c1c1c;
+                border-radius: 8px;
+                padding: 1.5em 2em;
+                max-width: 700px;
+                width: 90%;
+                max-height: 80vh;
+                overflow-y: auto;
+            }
+            .modal-box h2 { margin-top: 0; }
+            .modal-field { margin-bottom: 1em; }
+            .modal-field-label { opacity: 0.7; font-size: 0.85em; margin-bottom: 0.2em; }
+            .modal-field-value { word-break: break-word; white-space: pre-wrap; }
+            .modal-close { float: right; }
+            .results-table tbody tr { cursor: pointer; }
+            .results-table tbody tr:hover { background: rgba(255,255,255,0.05); }
         </style>
 
         <div class="integrity-dashboard">
@@ -189,6 +215,38 @@
 
             <!-- Pagination -->
             <div class="pagination" id="pagination"></div>
+
+            <!-- Result Detail Modal -->
+            <div class="modal-overlay" id="detail-modal-overlay" onclick="if (event.target === this) closeDetail();">
+                <div class="modal-box">
+                    <button class="btn btn-primary modal-close" onclick="closeDetail()">Close</button>
+                    <h2>Scan Result Detail</h2>
+                    <div class="modal-field">
+                        <div class="modal-field-label">File Path</div>
+                        <div class="modal-field-value" id="detail-filepath"></div>
+                    </div>
+                    <div class="modal-field">
+                        <div class="modal-field-label">Status</div>
+                        <div class="modal-field-value" id="detail-status"></div>
+                    </div>
+                    <div class="modal-field">
+                        <div class="modal-field-label">Phase</div>
+                        <div class="modal-field-value" id="detail-phase"></div>
+                    </div>
+                    <div class="modal-field">
+                        <div class="modal-field-label">Last Scanned</div>
+                        <div class="modal-field-value" id="detail-timestamp"></div>
+                    </div>
+                    <div class="modal-field">
+                        <div class="modal-field-label">Duration</div>
+                        <div class="modal-field-value" id="detail-duration"></div>
+                    </div>
+                    <div class="modal-field">
+                        <div class="modal-field-label">Full Error / Output</div>
+                        <div class="modal-field-value" id="detail-error"></div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <script>
@@ -196,6 +254,7 @@
             var currentPage = 1;
             var pageSize = 50;
             var refreshInterval = null;
+            var currentResults = [];
 
             function getApiUrl(path) {
                 return ApiClient.getUrl('MediaIntegrity/' + path);
@@ -270,13 +329,14 @@
 
             function renderResults(data) {
                 var tbody = document.getElementById('results-body');
-                if (!data.Items || data.Items.length === 0) {
+                currentResults = data.Items || [];
+                if (currentResults.length === 0) {
                     tbody.innerHTML =
                         '<tr><td colspan="6">No results yet. Run a scan to begin.</td></tr>';
                     return;
                 }
 
-                tbody.innerHTML = data.Items.map(function(item) {
+                tbody.innerHTML = currentResults.map(function(item, index) {
                     var filename = item.FilePath ? item.FilePath.split('/').pop().split('\\').pop() : '—';
                     var statusClass = getStatusClass(item.ScanStatus);
                     var statusLabel = getStatusLabel(item.ScanStatus);
@@ -288,7 +348,7 @@
                           escapeHtml(item.ErrorOutput.substring(0, 50)) + '...</span>'
                         : '—';
 
-                    return '<tr>' +
+                    return '<tr onclick="showDetail(' + index + ')">' +
                         '<td title="' + escapeHtml(item.FilePath || '') + '">' + escapeHtml(filename) + '</td>' +
                         '<td class="status-' + statusClass + '">' + statusLabel + '</td>' +
                         '<td>' + phaseLabel + '</td>' +
@@ -297,6 +357,26 @@
                         '<td>' + error + '</td>' +
                         '</tr>';
                 }).join('');
+            }
+
+            function showDetail(index) {
+                var item = currentResults[index];
+                if (!item) return;
+
+                document.getElementById('detail-filepath').textContent = item.FilePath || '—';
+                document.getElementById('detail-status').textContent = getStatusLabel(item.ScanStatus);
+                document.getElementById('detail-phase').textContent =
+                    item.ScanPhase === 1 ? 'Header' : 'Full Decode';
+                document.getElementById('detail-timestamp').textContent = formatDate(item.ScanTimestamp);
+                document.getElementById('detail-duration').textContent =
+                    item.ScanDurationMs ? (item.ScanDurationMs / 1000).toFixed(1) + 's' : '—';
+                document.getElementById('detail-error').textContent = item.ErrorOutput || '—';
+
+                document.getElementById('detail-modal-overlay').classList.add('open');
+            }
+
+            function closeDetail() {
+                document.getElementById('detail-modal-overlay').classList.remove('open');
             }
 
             function renderPagination(data) {
