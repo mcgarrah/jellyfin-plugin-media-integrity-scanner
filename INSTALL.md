@@ -20,6 +20,21 @@ This method allows Jellyfin to track updates automatically.
 
 After restart, the plugin appears under **Dashboard → Plugins → My Plugins**.
 
+## Using the Development (Pre-Release) Channel
+
+The plugin's own **Settings → Update Channel** dropdown lets you track either Stable or Development builds — but switching it alone does nothing. Jellyfin's plugin catalog only ever knows about versions from repositories you've explicitly registered under **Dashboard → Plugins → Repositories**; the plugin's update checker doesn't fetch a manifest URL on its own, it only reads whatever Jellyfin has already found there. If you followed Method 1 above, Jellyfin only knows about the **stable** manifest — it has no reason to ever look at the development one, so switching the channel setting will silently never find an update.
+
+To actually enable the Development channel:
+
+1. **Dashboard → Plugins → Repositories → Add** a *second* repository (in addition to the one from Method 1):
+   - **Name:** `mcgarrah-plugins-dev`
+   - **URL:** `https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/manifest-unstable.json`
+2. Click **Save**
+3. Open the plugin's own **Settings** page and set **Update Channel** to **Development (pre-releases)**
+4. **Restart Jellyfin** (or use the dashboard's **Check for Updates** button) so the plugin re-checks with the newly-registered repository in view
+
+Once both repositories are registered, you can switch the channel back and forth freely — no need to add/remove repositories again.
+
 ## Method 2: Manual Installation from GitHub Release
 
 1. Download the latest release zip from:
@@ -109,3 +124,7 @@ If your Jellyfin runs in a Proxmox LXC container:
 - Verify the repository URL is exactly: `https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/manifest.json`
 - Try removing and re-adding the repository
 - Restart Jellyfin and check the catalog again
+
+**Development channel selected but no update ever appears:**
+- The Development manifest URL (`.../main/manifest-unstable.json`) needs to be registered as its *own separate* entry under Dashboard → Plugins → Repositories — the stable repository from Method 1 does not cover it. See [Using the Development (Pre-Release) Channel](#using-the-development-pre-release-channel) above.
+- After registering it, restart Jellyfin or use the dashboard's **Check for Updates** button — the plugin only checks once automatically per restart, then once daily.
