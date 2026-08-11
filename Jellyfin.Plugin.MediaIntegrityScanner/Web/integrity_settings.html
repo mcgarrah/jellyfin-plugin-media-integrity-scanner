@@ -142,7 +142,8 @@
                         <div class="field-hint">
                             Only versions from a repository you've registered under
                             Dashboard &gt; Plugins &gt; Repositories can ever be detected --
-                            add the manifest URL below there once to enable update checks.
+                            each manifest URL below needs its own separate entry there
+                            (Add &gt; paste the URL &gt; Save) before its channel will find anything.
                         </div>
                     </div>
                     <div class="field-row">
@@ -152,7 +153,14 @@
                     <div class="field-row">
                         <label for="DevManifestUrl">Development Manifest URL</label>
                         <input type="text" id="DevManifestUrl">
-                        <div class="field-hint">Only used if the Development channel is selected above.</div>
+                        <div class="field-hint">
+                            Only used if the Development channel is selected above -- and only works
+                            once this exact URL is <em>also</em> registered as its own repository
+                            under Dashboard &gt; Plugins &gt; Repositories. Registering the Stable
+                            Manifest URL there does not make Jellyfin aware of development builds too;
+                            switching the channel above without this extra step will silently never
+                            find an update.
+                        </div>
                     </div>
                     <div class="checkbox-row">
                         <input type="checkbox" id="EnableAutoUpdate">
