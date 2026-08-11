@@ -116,6 +116,9 @@
             .modal-close { float: right; }
             .results-table tbody tr { cursor: pointer; }
             .results-table tbody tr:hover { background: rgba(255,255,255,0.05); }
+            .backup-section { margin: 2em 0; }
+            .backup-section .field-hint { opacity: 0.6; font-size: 0.85em; margin: 0.3em 0 1em; }
+            .backup-section .results-table tbody tr { cursor: default; }
         </style>
 
         <div class="integrity-dashboard">
@@ -218,6 +221,31 @@
 
             <!-- Pagination -->
             <div class="pagination" id="pagination"></div>
+
+            <!-- Database Backup -->
+            <div class="backup-section">
+                <h2>Database Backup</h2>
+                <p class="field-hint">
+                    Snapshots the scan-history database (not the media library itself) --
+                    useful before clearing/re-scanning for testing, so results can be
+                    restored and compared afterward without re-scanning the whole library.
+                    Not covered by Jellyfin's own Dashboard &gt; Advanced &gt; Backups.
+                </p>
+                <button class="btn btn-primary" id="btn-backup-now" onclick="createBackup()">Backup Now</button>
+                <table class="results-table" id="backups-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Created</th>
+                            <th>Size</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="backups-body">
+                        <tr><td colspan="4" class="loading">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
 
             <!-- Result Detail Modal -->
             <div class="modal-overlay" id="detail-modal-overlay" onclick="if (event.target === this) closeDetail();">
@@ -429,6 +457,83 @@
                 loadResults();
             }
 
+            function formatBytes(bytes) {
+                if (bytes < 1024) return bytes + ' B';
+                if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+                return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            }
+
+            function loadBackups() {
+                apiFetch('Database/Backups').then(function(backups) {
+                    var tbody = document.getElementById('backups-body');
+                    if (!backups || backups.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4">No backups yet.</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = backups.map(function(b) {
+                        return '<tr>' +
+                            '<td>' + escapeHtml(b.FileName) + '</td>' +
+                            '<td>' + formatDate(b.CreatedUtc) + '</td>' +
+                            '<td>' + formatBytes(b.SizeBytes) + '</td>' +
+                            '<td><button class="btn btn-primary" onclick="restoreBackup(\'' +
+                                escapeHtml(b.FileName) + '\')">Restore</button></td>' +
+                            '</tr>';
+                    }).join('');
+                }).catch(function(err) {
+                    showError('Failed to load backups: ' + err.message);
+                });
+            }
+
+            function createBackup() {
+                var btn = document.getElementById('btn-backup-now');
+                btn.disabled = true;
+
+                apiFetch('Database/Backup', {
+                    method: 'POST',
+                    headers: {
+                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Content-Type': 'application/json'
+                    }
+                }).then(function() {
+                    loadBackups();
+                    hideError();
+                }).catch(function(err) {
+                    if (err.message.indexOf('409') >= 0) {
+                        showError('Cannot back up while a scan is in progress.');
+                    } else {
+                        showError('Failed to create backup: ' + err.message);
+                    }
+                }).then(function() {
+                    btn.disabled = false;
+                });
+            }
+
+            function restoreBackup(fileName) {
+                if (!window.confirm('Restore "' + fileName + '"? This replaces all current scan history.')) {
+                    return;
+                }
+
+                apiFetch('Database/Restore', {
+                    method: 'POST',
+                    headers: {
+                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ fileName: fileName })
+                }).then(function() {
+                    loadStatus();
+                    loadResults();
+                    hideError();
+                }).catch(function(err) {
+                    if (err.message.indexOf('409') >= 0) {
+                        showError('Cannot restore while a scan is in progress.');
+                    } else {
+                        showError('Failed to restore backup: ' + err.message);
+                    }
+                });
+            }
+
             function triggerScan(deep) {
                 apiFetch('Scan', {
                     method: 'POST',
@@ -573,6 +678,7 @@
             loadStatus();
             loadResults();
             loadUpdateStatus();
+            loadBackups();
 
             // Auto-refresh status every 10 seconds
             refreshInterval = setInterval(loadStatus, 10000);

@@ -32,6 +32,7 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Data;
 public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 {
     private readonly string _connectionString;
+    private readonly string _dbPath;
     private readonly ILogger<SqliteDatabaseManager> _logger;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _disposed;
@@ -52,10 +53,10 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
             "MediaIntegrityScanner");
         Directory.CreateDirectory(dataDir);
 
-        var dbPath = Path.Combine(dataDir, "media-integrity.db");
-        _connectionString = $"Data Source={dbPath}";
+        _dbPath = Path.Combine(dataDir, "media-integrity.db");
+        _connectionString = $"Data Source={_dbPath}";
 
-        LogDatabasePath(dbPath);
+        LogDatabasePath(_dbPath);
     }
 
     /// <inheritdoc />
@@ -397,6 +398,114 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         }
     }
 
+    /// <inheritdoc />
+    public async Task<string> BackupAsync()
+    {
+        var backupDir = GetBackupDirectory();
+        Directory.CreateDirectory(backupDir);
+
+        var fileName = $"media-integrity-backup-{DateTime.UtcNow:yyyyMMdd-HHmmss}.db";
+        var backupPath = Path.Combine(backupDir, fileName);
+
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            // VACUUM INTO produces a single, self-contained, consistent snapshot
+            // file directly from a live WAL-mode database -- it takes a read
+            // snapshot rather than requiring exclusive access, so this is safe
+            // to run without stopping the scanner (unlike copying the raw
+            // .db/-wal/-shm files by hand, which could capture an inconsistent
+            // mid-checkpoint state).
+            await using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync().ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "VACUUM INTO $path";
+            command.Parameters.AddWithValue("$path", backupPath);
+            await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+
+        LogBackupCreated(fileName);
+        return fileName;
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<DatabaseBackupInfo>> ListBackupsAsync()
+    {
+        var backupDir = GetBackupDirectory();
+        if (!Directory.Exists(backupDir))
+        {
+            return Task.FromResult<IReadOnlyList<DatabaseBackupInfo>>(Array.Empty<DatabaseBackupInfo>());
+        }
+
+        var backups = new DirectoryInfo(backupDir)
+            .GetFiles("media-integrity-backup-*.db")
+            .OrderByDescending(f => f.LastWriteTimeUtc)
+            .Select(f => new DatabaseBackupInfo
+            {
+                FileName = f.Name,
+                SizeBytes = f.Length,
+                CreatedUtc = f.LastWriteTimeUtc.ToString("O")
+            })
+            .ToArray();
+
+        return Task.FromResult<IReadOnlyList<DatabaseBackupInfo>>(backups);
+    }
+
+    /// <inheritdoc />
+    public async Task RestoreAsync(string backupFileName)
+    {
+        // backupFileName comes from an API request body -- reject anything that
+        // isn't a bare file name before it ever reaches Path.Combine, so a
+        // caller can't traverse outside the backups directory.
+        if (string.IsNullOrEmpty(backupFileName) || Path.GetFileName(backupFileName) != backupFileName)
+        {
+            throw new ArgumentException("Invalid backup file name.", nameof(backupFileName));
+        }
+
+        var backupPath = Path.Combine(GetBackupDirectory(), backupFileName);
+        if (!File.Exists(backupPath))
+        {
+            throw new FileNotFoundException($"Backup file not found: {backupFileName}", backupPath);
+        }
+
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            // Microsoft.Data.Sqlite pools connections by connection string --
+            // without this, a pooled connection could still be holding the old
+            // file open (or the old -wal/-shm) after we overwrite it below.
+            SqliteConnection.ClearAllPools();
+
+            File.Delete(_dbPath);
+            var walPath = _dbPath + "-wal";
+            var shmPath = _dbPath + "-shm";
+            if (File.Exists(walPath))
+            {
+                File.Delete(walPath);
+            }
+
+            if (File.Exists(shmPath))
+            {
+                File.Delete(shmPath);
+            }
+
+            File.Copy(backupPath, _dbPath);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+
+        LogBackupRestored(backupFileName);
+    }
+
+    private string GetBackupDirectory() => Path.Combine(Path.GetDirectoryName(_dbPath)!, "backups");
+
     /// <summary>
     /// Disposes resources.
     /// </summary>
@@ -415,6 +524,12 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 
     [LoggerMessage(EventId = 2, Level = LogLevel.Information, Message = "Database schema initialized")]
     private partial void LogSchemaInitialized();
+
+    [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "Database backup created: {FileName}")]
+    private partial void LogBackupCreated(string fileName);
+
+    [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "Database restored from backup: {FileName}")]
+    private partial void LogBackupRestored(string fileName);
 
     [LoggerMessage(EventId = 3, Level = LogLevel.Debug, Message = "Purged {Count} scan records for item {ItemId}")]
     private partial void LogPurged(int count, string itemId);
