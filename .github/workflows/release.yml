@@ -61,11 +61,40 @@ jobs:
 
       - name: Update manifest.json
         run: |
-          python3 scripts/update-manifest.py "${{ github.ref_name }}" "media-integrity-scanner-${{ github.ref_name }}.zip" \
-            --manifest-version "${{ steps.version.outputs.version }}"
+          # Retry on a rejected push rather than failing outright -- see the
+          # identical comment in release-dev.yml for why (a concurrent release
+          # run winning the race is unlikely here since stable releases are
+          # human-triggered one at a time, but not impossible, and the fix is
+          # the same either way). A reset --hard also wipes the earlier step's
+          # uncommitted Directory.Build.props edit, so it's redone here too on
+          # every attempt using the same already-computed version string --
+          # deterministic and safe to repeat.
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifest.json Directory.Build.props
-          git commit -m "chore: release ${{ github.ref_name }} (manifest.json + Directory.Build.props)"
-          # Assumes the tag was created from the current tip of main.
-          git push origin HEAD:main
+
+          for attempt in 1 2 3 4 5; do
+            sed -i "s#<Version>[^<]*</Version>#<Version>${{ steps.version.outputs.version }}</Version>#" Directory.Build.props
+            sed -i "s#<AssemblyVersion>[^<]*</AssemblyVersion>#<AssemblyVersion>${{ steps.version.outputs.version }}</AssemblyVersion>#" Directory.Build.props
+            sed -i "s#<FileVersion>[^<]*</FileVersion>#<FileVersion>${{ steps.version.outputs.version }}</FileVersion>#" Directory.Build.props
+
+            python3 scripts/update-manifest.py "${{ github.ref_name }}" "media-integrity-scanner-${{ github.ref_name }}.zip" \
+              --manifest-version "${{ steps.version.outputs.version }}"
+            git add manifest.json Directory.Build.props
+            git commit -m "chore: release ${{ github.ref_name }} (manifest.json + Directory.Build.props)"
+
+            # Assumes the tag was created from the current tip of main.
+            if git push origin HEAD:main; then
+              echo "Pushed manifest.json update on attempt $attempt"
+              break
+            fi
+
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::Failed to push manifest.json update after 5 attempts"
+              exit 1
+            fi
+
+            echo "Push rejected on attempt $attempt (likely a concurrent release run) -- retrying against latest main"
+            git fetch origin main
+            git reset --hard origin/main
+            sleep $((RANDOM % 5 + 1))
+          done

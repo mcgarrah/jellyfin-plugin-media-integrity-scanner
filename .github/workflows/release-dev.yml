@@ -79,12 +79,37 @@ jobs:
 
       - name: Update manifest-unstable.json
         run: |
-          python3 scripts/update-manifest.py "${{ steps.version.outputs.tag }}" "media-integrity-scanner-${{ steps.version.outputs.tag }}.zip" \
-            --manifest manifest-unstable.json \
-            --manifest-version "${{ steps.version.outputs.manifest_version }}" \
-            --prerelease
+          # Two release-dev runs firing close together (e.g. two PRs merged within
+          # seconds of each other) can both reach this step before either has
+          # pushed -- the loser's `git push` is rejected (non-fast-forward) with
+          # no retry, silently dropping that run's manifest update even though its
+          # GitHub pre-release was already created. Retry against the new tip
+          # instead of failing outright: update-manifest.py is idempotent by
+          # design (replaces any existing entry for the same version), so
+          # re-running it fresh against origin/main after a reset is safe.
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifest-unstable.json
-          git commit -m "chore: dev release ${{ steps.version.outputs.tag }} (manifest-unstable.json)"
-          git push origin HEAD:main
+
+          for attempt in 1 2 3 4 5; do
+            python3 scripts/update-manifest.py "${{ steps.version.outputs.tag }}" "media-integrity-scanner-${{ steps.version.outputs.tag }}.zip" \
+              --manifest manifest-unstable.json \
+              --manifest-version "${{ steps.version.outputs.manifest_version }}" \
+              --prerelease
+            git add manifest-unstable.json
+            git commit -m "chore: dev release ${{ steps.version.outputs.tag }} (manifest-unstable.json)"
+
+            if git push origin HEAD:main; then
+              echo "Pushed manifest-unstable.json update on attempt $attempt"
+              break
+            fi
+
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::Failed to push manifest-unstable.json update after 5 attempts"
+              exit 1
+            fi
+
+            echo "Push rejected on attempt $attempt (likely a concurrent release run) -- retrying against latest main"
+            git fetch origin main
+            git reset --hard origin/main
+            sleep $((RANDOM % 5 + 1))
+          done
