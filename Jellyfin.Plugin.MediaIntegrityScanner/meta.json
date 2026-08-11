@@ -5,6 +5,7 @@
   "overview": "Production-safe media integrity scanning with two-phase validation, I/O throttling, and admin dashboard.",
   "owner": "Michael McGarrah",
   "category": "General",
+  "imageUrl": "https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/assets/icon.png",
   "targetAbi": "10.11.0.0",
   "status": 0,
   "assemblies": [

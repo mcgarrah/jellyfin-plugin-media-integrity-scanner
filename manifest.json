@@ -23,6 +23,7 @@
         "checksum": "",
         "timestamp": "2026-07-29T00:00:00Z"
       }
-    ]
+    ],
+    "imageUrl": "https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/assets/icon.png"
   }
 ]

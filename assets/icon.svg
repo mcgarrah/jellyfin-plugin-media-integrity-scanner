@@ -1,0 +1,43 @@
+<!--
+  Media Integrity Scanner plugin icon — source of truth.
+  Concept: a film frame (sprocket ticks + play glyph) with a verified
+  checkmark badge, in an ink-teal / warm-gold palette (deliberately not the
+  generic dark+neon-accent look).
+
+  To regenerate the PNG used in the manifests after editing this file:
+    rsvg-convert -w 512 -h 512 assets/icon.svg -o assets/icon.png
+  (requires librsvg2-bin: apt-get install librsvg2-bin)
+
+  If you change this icon, the PNG must be re-committed too — manifest.json
+  and manifest-unstable.json both reference the PNG's raw GitHub URL
+  directly, not the SVG.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Media Integrity Scanner</title>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="512" height="512" rx="100" ry="100" fill="#0E2A2C"/>
+
+  <!-- Film frame -->
+  <rect x="90" y="116" width="240" height="280" rx="32" ry="32"
+        fill="none" stroke="#F2EFE9" stroke-width="14"/>
+
+  <!-- Sprocket ticks, top edge -->
+  <rect x="120" y="101" width="20" height="28" rx="6" fill="#F2EFE9"/>
+  <rect x="200" y="101" width="20" height="28" rx="6" fill="#F2EFE9"/>
+  <rect x="280" y="101" width="20" height="28" rx="6" fill="#F2EFE9"/>
+
+  <!-- Sprocket ticks, bottom edge -->
+  <rect x="120" y="383" width="20" height="28" rx="6" fill="#F2EFE9"/>
+  <rect x="200" y="383" width="20" height="28" rx="6" fill="#F2EFE9"/>
+  <rect x="280" y="383" width="20" height="28" rx="6" fill="#F2EFE9"/>
+
+  <!-- Play glyph -->
+  <path d="M 184 206 L 184 306 L 254 256 Z" fill="#F2EFE9"/>
+
+  <!-- Verified badge: keyline cutout, then gold disc, then checkmark -->
+  <circle cx="350" cy="370" r="80" fill="#0E2A2C"/>
+  <circle cx="350" cy="370" r="68" fill="#D9A441"/>
+  <path d="M 316 372 L 340 396 L 388 338" fill="none"
+        stroke="#0E2A2C" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
