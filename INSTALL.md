@@ -95,6 +95,21 @@ If your Jellyfin runs in a Proxmox LXC container:
   systemctl restart jellyfin
   ```
 
+## Backing Up Your Data
+
+**Jellyfin's own Dashboard → Advanced → Backups (Database / Metadata / Subtitles / Trickplay) does not cover this plugin's data, no matter which options are checked.** Confirmed by reading the real Jellyfin server source, not assumed: the backup feature's code has a fixed, hardcoded list of paths it copies, and none of them ever reference a plugin's own data directory. This is a Jellyfin-wide limitation affecting every third-party plugin's persisted data, not something specific to this plugin.
+
+What's actually at risk is the scan-history database (`media-integrity.db` under the plugin's configuration directory) — your pass/fail/error results and timestamps. It's regenerable by re-running a scan, not irreplaceable data like the media itself, but losing it means losing history you may not want to re-earn by re-scanning a large library.
+
+**The plugin has its own backup/restore, specifically because of this gap:**
+
+1. Open the plugin's **Dashboard** page → **Database Backup** section
+2. Click **Backup Now** to snapshot the current database (safe to run at any time, including mid-scan — it doesn't stop or interfere with an in-progress scan)
+3. The backup appears in the list below, with its creation time and size
+4. Click **Restore** next to any backup to roll back to that snapshot — useful before a destructive test (clearing history and re-scanning), so you can restore and compare afterward instead of re-scanning the whole library again
+
+Restore (not Backup) requires no scan to be in progress — the dashboard will show an error if you try mid-scan.
+
 ## Uninstalling
 
 ### Via Jellyfin UI
