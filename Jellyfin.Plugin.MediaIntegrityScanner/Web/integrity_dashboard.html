@@ -121,7 +121,10 @@
         <div class="integrity-dashboard">
             <a class="nav-link" href="#/configurationpage?name=Media+Integrity+Scanner+Settings">Settings &raquo;</a>
             <h1>Media Integrity Scanner</h1>
-            <div class="version-line">Version <span id="current-version">&mdash;</span></div>
+            <div class="version-line">
+                Version <span id="current-version">&mdash;</span>
+                <button class="btn btn-primary" id="btn-check-updates" onclick="checkForUpdatesNow()">Check for Updates</button>
+            </div>
 
             <div id="update-banner" class="update-banner">
                 <span id="update-banner-text"></span>
@@ -498,7 +501,7 @@
             var lastUpdateStatus = null;
 
             function loadUpdateStatus() {
-                apiFetch('UpdateStatus').then(function(data) {
+                return apiFetch('UpdateStatus').then(function(data) {
                     lastUpdateStatus = data;
                     document.getElementById('current-version').textContent = data.CurrentVersion;
 
@@ -541,6 +544,28 @@
                 }).catch(function(err) {
                     btn.disabled = false;
                     showError('Failed to install update: ' + err.message);
+                });
+            }
+
+            function checkForUpdatesNow() {
+                var btn = document.getElementById('btn-check-updates');
+                var originalText = btn.textContent;
+                btn.disabled = true;
+                btn.textContent = 'Checking...';
+
+                apiFetch('UpdateStatus/Refresh', {
+                    method: 'POST',
+                    headers: {
+                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Content-Type': 'application/json'
+                    }
+                }).then(function() {
+                    return loadUpdateStatus();
+                }).catch(function(err) {
+                    showError('Failed to check for updates: ' + err.message);
+                }).then(function() {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
                 });
             }
 
