@@ -1,43 +1,48 @@
 <!--
   Media Integrity Scanner plugin icon — source of truth.
-  Concept: a film frame (sprocket ticks + play glyph) with a verified
-  checkmark badge, in an ink-teal / warm-gold palette (deliberately not the
-  generic dark+neon-accent look).
+  1920x1080, matching the actual convention used across the Jellyfin
+  catalog (checked against jellyfin-plugin-playbackreporting.png,
+  jellyfin-plugin-nextpvr.png, jellyfin-plugin-ldapauth.png at
+  repo.jellyfin.org): a radial-glow flat background, a simple left-aligned
+  glyph, and the plugin name as a bold wordmark to its right, not a
+  square app-icon-style badge.
+
+  Concept: a play glyph with a verified checkmark badge, ink-teal / warm-gold
+  palette (deliberately not the generic dark+neon-accent look).
 
   To regenerate the PNG used in the manifests after editing this file:
-    rsvg-convert -w 512 -h 512 assets/icon.svg -o assets/icon.png
+    rsvg-convert -w 1920 -h 1080 assets/icon.svg -o assets/icon.png
   (requires librsvg2-bin: apt-get install librsvg2-bin)
 
   If you change this icon, the PNG must be re-committed too — manifest.json
   and manifest-unstable.json both reference the PNG's raw GitHub URL
   directly, not the SVG.
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
   <title>Media Integrity Scanner</title>
 
+  <defs>
+    <radialGradient id="bgGlow" cx="18%" cy="45%" r="65%">
+      <stop offset="0%" stop-color="#173D40"/>
+      <stop offset="100%" stop-color="#0E2A2C"/>
+    </radialGradient>
+  </defs>
+
   <!-- Background -->
-  <rect x="0" y="0" width="512" height="512" rx="100" ry="100" fill="#0E2A2C"/>
-
-  <!-- Film frame -->
-  <rect x="90" y="116" width="240" height="280" rx="32" ry="32"
-        fill="none" stroke="#F2EFE9" stroke-width="14"/>
-
-  <!-- Sprocket ticks, top edge -->
-  <rect x="120" y="101" width="20" height="28" rx="6" fill="#F2EFE9"/>
-  <rect x="200" y="101" width="20" height="28" rx="6" fill="#F2EFE9"/>
-  <rect x="280" y="101" width="20" height="28" rx="6" fill="#F2EFE9"/>
-
-  <!-- Sprocket ticks, bottom edge -->
-  <rect x="120" y="383" width="20" height="28" rx="6" fill="#F2EFE9"/>
-  <rect x="200" y="383" width="20" height="28" rx="6" fill="#F2EFE9"/>
-  <rect x="280" y="383" width="20" height="28" rx="6" fill="#F2EFE9"/>
+  <rect x="0" y="0" width="1920" height="1080" fill="url(#bgGlow)"/>
 
   <!-- Play glyph -->
-  <path d="M 184 206 L 184 306 L 254 256 Z" fill="#F2EFE9"/>
+  <path d="M 140 400 L 140 680 L 380 540 Z" fill="#F2EFE9"/>
 
   <!-- Verified badge: keyline cutout, then gold disc, then checkmark -->
-  <circle cx="350" cy="370" r="80" fill="#0E2A2C"/>
-  <circle cx="350" cy="370" r="68" fill="#D9A441"/>
-  <path d="M 316 372 L 340 396 L 388 338" fill="none"
-        stroke="#0E2A2C" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="410" cy="660" r="110" fill="#0E2A2C"/>
+  <circle cx="410" cy="660" r="96" fill="#D9A441"/>
+  <path d="M 370 665 L 398 693 L 455 615" fill="none"
+        stroke="#0E2A2C" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Wordmark -->
+  <text x="560" y="500" font-family="DejaVu Sans, sans-serif" font-weight="bold"
+        font-size="124" fill="#F2EFE9">Media Integrity</text>
+  <text x="560" y="652" font-family="DejaVu Sans, sans-serif" font-weight="bold"
+        font-size="124" fill="#F2EFE9">Scanner</text>
 </svg>
