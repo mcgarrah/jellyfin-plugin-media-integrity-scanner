@@ -150,6 +150,9 @@
                 <button class="btn btn-danger" id="btn-cancel" onclick="cancelScan()" disabled>
                     Cancel Scan
                 </button>
+                <button class="btn btn-primary" id="btn-refresh-list" onclick="loadResults()">
+                    Refresh File List
+                </button>
                 <select id="filter-status" onchange="loadResults()">
                     <option value="">All Results</option>
                     <option value="2">Failed Only</option>
