@@ -197,6 +197,11 @@
                     <option value="100">100 / page</option>
                     <option value="250">250 / page</option>
                 </select>
+                <select id="export-format">
+                    <option value="csv">CSV</option>
+                    <option value="tsv">TSV</option>
+                </select>
+                <button class="btn btn-primary" id="btn-export" onclick="exportResults()">Export</button>
             </div>
 
             <!-- Error display -->
@@ -450,6 +455,26 @@
                 pageSize = parseInt(document.getElementById('page-size-select').value, 10);
                 currentPage = 1;
                 loadResults();
+            }
+
+            function exportResults() {
+                var status = document.getElementById('filter-status').value;
+                var format = document.getElementById('export-format').value;
+                var path = 'Export?format=' + encodeURIComponent(format) +
+                    '&ApiKey=' + encodeURIComponent(ApiClient.accessToken());
+                if (status) {
+                    path += '&status=' + encodeURIComponent(status);
+                }
+                // A plain navigation (not fetch) is what triggers the browser's
+                // download flow for the server's Content-Disposition: attachment
+                // response -- the API key has to travel as a query param here
+                // since a browser-triggered download can't set custom headers.
+                // Must be "ApiKey" (not "api_key"): confirmed against the real
+                // server source (AuthorizationContext.cs) that only the
+                // "ApiKey" query key is checked unconditionally -- "api_key" is
+                // gated behind the server's EnableLegacyAuthorization setting,
+                // which isn't guaranteed to be on.
+                window.location.href = getApiUrl(path);
             }
 
             function goToPage(page) {

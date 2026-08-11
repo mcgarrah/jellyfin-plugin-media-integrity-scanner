@@ -292,6 +292,46 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         };
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ScanRecord>> GetAllResultsAsync(int? status)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        var whereClause = BuildWhereClause(status, null, out var itemIdList);
+
+        await using var queryCmd = connection.CreateCommand();
+        queryCmd.CommandText = $@"
+            SELECT item_id, file_path, file_size, last_modified,
+                   scan_phase, scan_status, scan_timestamp,
+                   error_output, scan_duration_ms
+            FROM scan_results
+            {whereClause}
+            ORDER BY scan_timestamp DESC;
+        ";
+        AddFilterParameters(queryCmd, status, itemIdList);
+
+        var items = new List<ScanRecord>();
+        await using var reader = await queryCmd.ExecuteReaderAsync().ConfigureAwait(false);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            items.Add(new ScanRecord
+            {
+                ItemId = reader.GetString(0),
+                FilePath = reader.GetString(1),
+                FileSize = reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                LastModified = reader.IsDBNull(3) ? null : reader.GetString(3),
+                ScanPhase = reader.GetInt32(4),
+                ScanStatus = reader.GetInt32(5),
+                ScanTimestamp = reader.GetString(6),
+                ErrorOutput = reader.IsDBNull(7) ? null : reader.GetString(7),
+                ScanDurationMs = reader.IsDBNull(8) ? null : reader.GetInt32(8)
+            });
+        }
+
+        return items;
+    }
+
     /// <summary>
     /// Builds a parameterized WHERE clause for the optional status and item-id
     /// filters shared by the count and page queries in <see cref="GetResultsAsync"/>.
