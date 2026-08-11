@@ -65,7 +65,9 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             new PluginPageInfo
             {
                 Name = "Media Integrity Scanner",
-                EmbeddedResourcePath = GetType().Namespace + ".Web.integrity_dashboard.html"
+                EmbeddedResourcePath = GetType().Namespace + ".Web.integrity_dashboard.html",
+                EnableInMainMenu = true,
+                MenuIcon = "fact_check"
             },
             new PluginPageInfo
             {
