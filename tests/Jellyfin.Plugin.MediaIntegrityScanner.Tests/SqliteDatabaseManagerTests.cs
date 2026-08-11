@@ -471,6 +471,110 @@ public class SqliteDatabaseManagerTests : IDisposable
         Assert.Null(exception);
     }
 
+    // --- BackupAsync / ListBackupsAsync / RestoreAsync ---
+
+    [Fact]
+    public async Task BackupAsync_RestoreAsync_RoundTripsToTheSnapshottedState()
+    {
+        await _db.SaveResultAsync(MakeRecord("before-backup"));
+        var backupFileName = await _db.BackupAsync();
+
+        await _db.SaveResultAsync(MakeRecord("after-backup"));
+        var statsBeforeRestore = await _db.GetStatisticsAsync();
+        Assert.Equal(2, statsBeforeRestore.ScannedFiles);
+
+        await _db.RestoreAsync(backupFileName);
+
+        var statsAfterRestore = await _db.GetStatisticsAsync();
+        Assert.Equal(1, statsAfterRestore.ScannedFiles);
+        Assert.NotNull(await _db.GetItemDetailAsync("before-backup"));
+        Assert.Null(await _db.GetItemDetailAsync("after-backup"));
+    }
+
+    [Fact]
+    public async Task RestoreAsync_DatabaseRemainsFullyUsableAfterRestore()
+    {
+        // Specifically exercises the SqliteConnection.ClearAllPools() call in
+        // RestoreAsync -- without it, a pooled connection could still be
+        // holding the pre-restore file/WAL open, breaking subsequent queries.
+        var backupFileName = await _db.BackupAsync();
+        await _db.RestoreAsync(backupFileName);
+
+        var exception = await Record.ExceptionAsync(async () =>
+        {
+            await _db.SaveResultAsync(MakeRecord("after-restore"));
+            await _db.GetStatisticsAsync();
+        });
+
+        Assert.Null(exception);
+        Assert.NotNull(await _db.GetItemDetailAsync("after-restore"));
+    }
+
+    [Fact]
+    public async Task BackupAsync_CalledTwiceInQuickSuccession_ProducesTwoDistinctBackups()
+    {
+        // Regression test: BackupAsync's file name used to be a bare
+        // second-precision timestamp, which VACUUM INTO would refuse to
+        // overwrite if two backups landed in the same second.
+        var first = await _db.BackupAsync();
+        var second = await _db.BackupAsync();
+
+        Assert.NotEqual(first, second);
+
+        var backups = await _db.ListBackupsAsync();
+        Assert.Equal(2, backups.Count);
+    }
+
+    [Fact]
+    public async Task ListBackupsAsync_ReturnsEmptyList_WhenNoBackupsExist()
+    {
+        var backups = await _db.ListBackupsAsync();
+        Assert.Empty(backups);
+    }
+
+    [Fact]
+    public async Task ListBackupsAsync_ReturnsNewestFirst()
+    {
+        var older = await _db.BackupAsync();
+        await Task.Delay(50); // ext4's LastWriteTimeUtc resolution is well under this; keeps the test fast
+        var newer = await _db.BackupAsync();
+
+        var backups = await _db.ListBackupsAsync();
+
+        Assert.Equal(2, backups.Count);
+        Assert.Equal(newer, backups[0].FileName);
+        Assert.Equal(older, backups[1].FileName);
+    }
+
+    [Fact]
+    public async Task ListBackupsAsync_ReportsNonZeroSize()
+    {
+        var fileName = await _db.BackupAsync();
+
+        var backups = await _db.ListBackupsAsync();
+
+        var backup = Assert.Single(backups, b => b.FileName == fileName);
+        Assert.True(backup.SizeBytes > 0);
+        Assert.NotEmpty(backup.CreatedUtc);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_ThrowsFileNotFoundException_ForUnknownBackup()
+    {
+        await Assert.ThrowsAsync<FileNotFoundException>(
+            () => _db.RestoreAsync("media-integrity-backup-does-not-exist.db"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("../escape.db")]
+    [InlineData("../../etc/passwd")]
+    [InlineData("subdir/backup.db")]
+    public async Task RestoreAsync_ThrowsArgumentException_ForNonBareFileNames(string maliciousFileName)
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => _db.RestoreAsync(maliciousFileName));
+    }
+
     // --- Dispose ---
 
     [Fact]
