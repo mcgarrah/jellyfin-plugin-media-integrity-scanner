@@ -16,8 +16,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -181,6 +183,63 @@ public partial class MediaIntegrityController : ControllerBase
         }
 
         return Ok(detail);
+    }
+
+    /// <summary>
+    /// Export every result matching the given status filter (not just one page)
+    /// as a downloadable CSV or TSV file.
+    /// </summary>
+    /// <param name="status">Optional status filter, matching <see cref="GetResults"/>'s values.</param>
+    /// <param name="format">"csv" (default) or "tsv".</param>
+    /// <returns>A downloadable file.</returns>
+    [HttpGet("Export")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult> ExportResults([FromQuery] int? status = null, [FromQuery] string format = "csv")
+    {
+        var isTsv = string.Equals(format, "tsv", StringComparison.OrdinalIgnoreCase);
+        var delimiter = isTsv ? "\t" : ",";
+        var records = await _db.GetAllResultsAsync(status).ConfigureAwait(false);
+
+        var sb = new StringBuilder();
+        sb.Append(string.Join(delimiter, "FilePath", "Status", "Phase", "Timestamp", "DurationMs", "Error")).Append("\r\n");
+        foreach (var record in records)
+        {
+            sb.Append(string.Join(
+                delimiter,
+                FormatField(record.FilePath, isTsv),
+                ((ScanStatus)record.ScanStatus).ToString(),
+                ((ScanPhase)record.ScanPhase).ToString(),
+                record.ScanTimestamp,
+                record.ScanDurationMs?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                FormatField(record.ErrorOutput ?? string.Empty, isTsv)));
+            sb.Append("\r\n");
+        }
+
+        var extension = isTsv ? "tsv" : "csv";
+        var contentType = isTsv ? "text/tab-separated-values" : "text/csv";
+        var fileName = $"media-integrity-results-{DateTime.UtcNow:yyyyMMdd-HHmmss}.{extension}";
+        return File(Encoding.UTF8.GetBytes(sb.ToString()), contentType, fileName);
+    }
+
+    /// <summary>
+    /// Formats a field for CSV/TSV output. CSV uses RFC 4180 quoting for fields
+    /// containing the delimiter, a quote, or a newline. TSV has no standard
+    /// quoting convention most consumers honor, so embedded tabs/newlines are
+    /// flattened to spaces instead.
+    /// </summary>
+    private static string FormatField(string value, bool isTsv)
+    {
+        if (isTsv)
+        {
+            return value.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
+        }
+
+        if (value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+        {
+            return "\"" + value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+        }
+
+        return value;
     }
 
     /// <summary>
