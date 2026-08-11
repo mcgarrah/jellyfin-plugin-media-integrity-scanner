@@ -100,10 +100,12 @@ def main() -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     plugin = manifest[0]
 
+    release_url = f"{REPO_URL}/releases/tag/{args.tag}"
     changelog = (
-        f"Automated pre-release build {args.tag}. Not guaranteed stable -- see GitHub release notes."
+        f"Automated pre-release build {args.tag}. **Not guaranteed stable** -- "
+        f"see [release notes]({release_url})."
         if args.prerelease
-        else f"Automated release {args.tag}. See GitHub release notes for details."
+        else f"Automated release {args.tag}. See [release notes]({release_url}) for details."
     )
 
     entry = {
