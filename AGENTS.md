@@ -190,10 +190,19 @@ new TaskTriggerInfo { Type = "DailyTrigger", TimeOfDayTicks = TimeSpan.FromHours
 new TaskTriggerInfo { Type = "WeeklyTrigger", DayOfWeek = DayOfWeek.Sunday, TimeOfDayTicks = TimeSpan.FromHours(1).Ticks }
 ```
 
+### JSON Casing: API Responses Are PascalCase, Request Bodies Are Case-Insensitive
+
+Hit this bug for real more than once (most recently in `loadBackups()`, reading `b.fileName` instead of `b.FileName` before catching it in review). Confirmed the actual cause via the real Jellyfin server source (`/opt/jellyfin`), not guessed:
+
+- **Responses are always PascalCase, matching the C# property names verbatim — never camelCase.** `Jellyfin.Server/Extensions/ApiServiceCollectionExtensions.cs`'s `AddJsonOptions` call explicitly sets `options.JsonSerializerOptions.PropertyNamingPolicy = JsonDefaults.PascalCaseOptions.PropertyNamingPolicy` (which is `null` — no transformation) on the *same* `MvcBuilder` chain that plugin assemblies get added to via `AddApplicationPart(pluginAssembly)` immediately after. Plugin controllers inherit this global setting; there's no per-controller override available or needed. `JsonDefaults.cs` does define a `CamelCaseOptions` profile too, but nothing in the request pipeline plugin controllers run through ever selects it.
+- **Request bodies sent from JS can use camelCase safely** (ASP.NET Core's own case-insensitive property matching on deserialization, not overridden by anything in the snippet above) — this is why existing code like `installUpdate()`'s `body: JSON.stringify({ channel: ... })` binds correctly to `InstallUpdateRequest.Channel` despite the lowercase key. This direction is more forgiving; the response direction is not.
+- **The rule going forward:** when writing dashboard/settings JS that reads a JSON response, always use the exact PascalCase property name from the C# model (`data.HealthPercentage`, `item.ScanStatus`, `b.FileName`, etc.) — never assume camelCase, even though that's the more common convention in hand-written JS elsewhere. Request bodies can use either casing by convention, but matching the C# property name exactly there too removes any doubt.
+
 ### Key References
 - Plugin template: https://github.com/jellyfin/jellyfin-plugin-template
 - Jellyfin Controller NuGet: https://www.nuget.org/packages/Jellyfin.Controller
-- Jellyfin source (for API verification): https://github.com/jellyfin/jellyfin
+- Jellyfin source (for API verification): `/opt/jellyfin` (full clone, check this before decompiling assemblies) or https://github.com/jellyfin/jellyfin
+- Jellyfin web client source: `/opt/jellyfin-web` (full clone) or https://github.com/jellyfin/jellyfin-web
 
 ## Architecture
 
