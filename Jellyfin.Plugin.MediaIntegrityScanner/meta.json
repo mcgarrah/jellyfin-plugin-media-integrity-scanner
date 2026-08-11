@@ -4,7 +4,7 @@
   "description": "Validates media file integrity using FFmpeg. Detects corrupt, truncated, and damaged files without impacting playback.",
   "overview": "Production-safe media integrity scanning with two-phase validation, I/O throttling, and admin dashboard.",
   "owner": "Michael McGarrah",
-  "category": "General",
+  "category": "Administration",
   "imageUrl": "https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/assets/icon.png",
   "targetAbi": "10.11.0.0",
   "status": 0,
