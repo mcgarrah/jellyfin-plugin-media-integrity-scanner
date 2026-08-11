@@ -55,6 +55,7 @@
         "checksum": "fa9381bdbc5abd9adce7eb4cba08fbc2",
         "timestamp": "2026-08-02T04:36:51Z"
       }
-    ]
+    ],
+    "imageUrl": "https://raw.githubusercontent.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/main/assets/icon.png"
   }
 ]
