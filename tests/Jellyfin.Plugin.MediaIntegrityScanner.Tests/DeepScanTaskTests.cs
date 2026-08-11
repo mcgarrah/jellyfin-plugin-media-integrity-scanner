@@ -63,7 +63,16 @@ public class DeepScanTaskTests : IDisposable
         var scanner = new Mock<IScanEngine>();
         var task = CreateTask(scanner);
         double? reported = null;
-        var progress = new Progress<double>(v => reported = v);
+        // System.Progress<T>.Report() posts the callback via the captured
+        // SynchronizationContext (or the thread pool if none exists) rather
+        // than invoking it synchronously -- xUnit's test runner has no
+        // SynchronizationContext, so the callback lands on a thread pool
+        // thread with no guaranteed ordering relative to the very next line
+        // of test code. That made this assertion a genuine, if rare, race
+        // (hit for real in CI once) despite DeepScanTask.ExecuteAsync itself
+        // calling Report() synchronously and correctly. A plain IProgress<T>
+        // implementation invokes its callback on the calling thread instead.
+        IProgress<double> progress = new SynchronousProgress<double>(v => reported = v);
 
         await task.ExecuteAsync(progress, CancellationToken.None);
 
@@ -71,6 +80,15 @@ public class DeepScanTaskTests : IDisposable
             s => s.ScanLibraryAsync(It.IsAny<string>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()),
             Times.Never);
         Assert.Equal(100, reported);
+    }
+
+    private sealed class SynchronousProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _callback;
+
+        public SynchronousProgress(Action<T> callback) => _callback = callback;
+
+        public void Report(T value) => _callback(value);
     }
 
     [Fact]
