@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License along
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 
@@ -59,6 +60,50 @@ public interface IDatabaseManager
     /// </summary>
     /// <returns>A task representing the async operation.</returns>
     Task InitializeAsync();
+
+    /// <summary>
+    /// Creates a consistent point-in-time snapshot of the database (via SQLite's
+    /// <c>VACUUM INTO</c>, safe to run against a live WAL-mode database without
+    /// stopping the scanner) into a timestamped file under a <c>backups</c>
+    /// subdirectory next to the live database.
+    /// </summary>
+    /// <returns>The file name (not full path) of the backup that was created.</returns>
+    Task<string> BackupAsync();
+
+    /// <summary>
+    /// Lists available backups, newest first.
+    /// </summary>
+    /// <returns>Metadata for every backup file found.</returns>
+    Task<IReadOnlyList<DatabaseBackupInfo>> ListBackupsAsync();
+
+    /// <summary>
+    /// Replaces the live database with the contents of a previously-created backup.
+    /// The caller is responsible for ensuring no scan is in progress before calling this.
+    /// </summary>
+    /// <param name="backupFileName">The backup file name, as returned by <see cref="ListBackupsAsync"/> -- not a full path.</param>
+    /// <returns>A task representing the async operation.</returns>
+    Task RestoreAsync(string backupFileName);
+}
+
+/// <summary>
+/// Metadata describing one on-disk database backup.
+/// </summary>
+public class DatabaseBackupInfo
+{
+    /// <summary>
+    /// Gets or sets the backup file's name (not full path).
+    /// </summary>
+    public string FileName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the backup file's size in bytes.
+    /// </summary>
+    public long SizeBytes { get; set; }
+
+    /// <summary>
+    /// Gets or sets the backup's creation timestamp, ISO 8601 UTC.
+    /// </summary>
+    public string CreatedUtc { get; set; } = string.Empty;
 }
 
 /// <summary>

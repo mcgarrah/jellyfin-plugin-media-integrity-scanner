@@ -16,6 +16,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -241,6 +242,67 @@ public partial class MediaIntegrityController : ControllerBase
     }
 
     /// <summary>
+    /// List available database backups, newest first.
+    /// </summary>
+    /// <returns>Backup metadata.</returns>
+    [HttpGet("Database/Backups")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<DatabaseBackupInfo>>> GetBackups()
+    {
+        var backups = await _db.ListBackupsAsync().ConfigureAwait(false);
+        return Ok(backups);
+    }
+
+    /// <summary>
+    /// Create a new database backup -- primarily useful before destructive
+    /// testing (e.g. clearing scan history) so results can be restored and
+    /// compared later without re-scanning the whole library.
+    /// </summary>
+    /// <returns>The created backup's file name.</returns>
+    [HttpPost("Database/Backup")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult> CreateBackup()
+    {
+        if (_scanner.IsScanning)
+        {
+            return Conflict(new { message = "Cannot back up while a scan is in progress." });
+        }
+
+        var fileName = await _db.BackupAsync().ConfigureAwait(false);
+        return Ok(new { fileName });
+    }
+
+    /// <summary>
+    /// Restore the database from a previously-created backup, replacing all
+    /// current scan history.
+    /// </summary>
+    /// <param name="request">Which backup file to restore.</param>
+    /// <returns>Ok if the restore completed.</returns>
+    [HttpPost("Database/Restore")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult> RestoreBackup([FromBody] RestoreBackupRequest request)
+    {
+        if (_scanner.IsScanning)
+        {
+            return Conflict(new { message = "Cannot restore while a scan is in progress." });
+        }
+
+        try
+        {
+            await _db.RestoreAsync(request.FileName).ConfigureAwait(false);
+            return Ok(new { message = "Database restored." });
+        }
+        catch (Exception ex) when (ex is ArgumentException or FileNotFoundException)
+        {
+            LogRestoreError(ex);
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
     /// Get the current plugin version against the latest available versions
     /// on the stable and (if registered) development channels.
     /// </summary>
@@ -294,6 +356,9 @@ public partial class MediaIntegrityController : ControllerBase
 
     [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "Error installing plugin update")]
     private partial void LogInstallUpdateError(Exception ex);
+
+    [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Error restoring database backup")]
+    private partial void LogRestoreError(Exception ex);
 }
 
 /// <summary>
@@ -351,6 +416,15 @@ public class InstallUpdateRequest
 {
     /// <summary>Gets or sets which channel to install the latest available version from.</summary>
     public UpdateChannel Channel { get; set; }
+}
+
+/// <summary>
+/// Request model for restoring a database backup.
+/// </summary>
+public class RestoreBackupRequest
+{
+    /// <summary>Gets or sets the backup file name to restore, as returned by <c>GET Database/Backups</c>.</summary>
+    public string FileName { get; set; } = string.Empty;
 }
 
 /// <summary>
