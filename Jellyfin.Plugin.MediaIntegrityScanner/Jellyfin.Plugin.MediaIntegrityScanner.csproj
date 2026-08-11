@@ -76,8 +76,16 @@
          didn't reliably match here across a couple of attempts. A plain
          shell find/rm is simpler to verify correctly and matches how this
          project's other tooling already assumes a Linux/bash environment
-         (scripts/update-manifest.py, tests/*.sh). -->
-    <Exec Command="find &quot;$(PublishDir)runtimes&quot; -mindepth 1 -maxdepth 1 -type d \( -name 'android-*' -o -name 'ios-*' -o -name 'iossimulator-*' -o -name 'maccatalyst-*' -o -name 'browser-*' -o -name 'tvos*' \) -exec rm -rf {} +"
+         (scripts/update-manifest.py, tests/*.sh).
+
+         Two categories get trimmed: client/mobile platforms Jellyfin's
+         server never runs on at all (android/ios/tvos/browser/maccatalyst),
+         and a handful of server-capable-in-principle architectures Jellyfin
+         has never actually shipped official server builds for (mips64,
+         s390x, ppc64le, riscv64, and their musl variants), pure file-size
+         polish, not a compatibility fix; nothing here changes behavior for
+         anyone running on a platform Jellyfin actually supports. -->
+    <Exec Command="find &quot;$(PublishDir)runtimes&quot; -mindepth 1 -maxdepth 1 -type d \( -name 'android-*' -o -name 'ios-*' -o -name 'iossimulator-*' -o -name 'maccatalyst-*' -o -name 'browser-*' -o -name 'tvos*' -o -name 'linux-mips64*' -o -name 'linux-s390x*' -o -name 'linux-musl-s390x*' -o -name 'linux-ppc64le*' -o -name 'linux-riscv64*' -o -name 'linux-musl-riscv64*' \) -exec rm -rf {} +"
           Condition="Exists('$(PublishDir)runtimes')" />
   </Target>
 
