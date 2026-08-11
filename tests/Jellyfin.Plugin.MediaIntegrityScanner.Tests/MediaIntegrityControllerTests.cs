@@ -19,6 +19,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Api;
+using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
@@ -311,5 +312,104 @@ public class MediaIntegrityControllerTests : IDisposable
 
         Assert.IsType<OkObjectResult>(result);
         _scanner.Verify(s => s.Cancel(), Times.Once);
+    }
+
+    // --- GetBackups / CreateBackup / RestoreBackup ---
+
+    [Fact]
+    public async Task GetBackups_ReturnsBackupsFromDatabase()
+    {
+        await _dbFactory.Database.BackupAsync();
+
+        var controller = CreateController();
+        var result = await controller.GetBackups();
+
+        var backups = Assert.IsAssignableFrom<IReadOnlyList<DatabaseBackupInfo>>(
+            Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Single(backups);
+    }
+
+    [Fact]
+    public async Task CreateBackup_ReturnsConflict_AndCreatesNothing_WhenScanning()
+    {
+        _scanner.SetupGet(s => s.IsScanning).Returns(true);
+        var controller = CreateController();
+
+        var result = await controller.CreateBackup();
+
+        Assert.IsType<ConflictObjectResult>(result);
+        Assert.Empty(await _dbFactory.Database.ListBackupsAsync());
+    }
+
+    [Fact]
+    public async Task CreateBackup_ReturnsOk_AndCreatesABackup_WhenNotScanning()
+    {
+        var controller = CreateController();
+
+        var result = await controller.CreateBackup();
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Single(await _dbFactory.Database.ListBackupsAsync());
+    }
+
+    [Fact]
+    public async Task RestoreBackup_ReturnsConflict_WhenScanning()
+    {
+        var fileName = await _dbFactory.Database.BackupAsync();
+        _scanner.SetupGet(s => s.IsScanning).Returns(true);
+        var controller = CreateController();
+
+        var result = await controller.RestoreBackup(new RestoreBackupRequest { FileName = fileName });
+
+        Assert.IsType<ConflictObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task RestoreBackup_ReturnsBadRequest_ForUnknownBackup()
+    {
+        var controller = CreateController();
+
+        var result = await controller.RestoreBackup(new RestoreBackupRequest { FileName = "media-integrity-backup-missing.db" });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task RestoreBackup_ReturnsBadRequest_ForPathTraversalFileName()
+    {
+        var controller = CreateController();
+
+        var result = await controller.RestoreBackup(new RestoreBackupRequest { FileName = "../escape.db" });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task RestoreBackup_ActuallyRestoresPriorState_WhenValidBackupProvided()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "before-backup",
+            FilePath = "/media/before.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = DateTime.UtcNow.ToString("O")
+        });
+        var fileName = await _dbFactory.Database.BackupAsync();
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "after-backup",
+            FilePath = "/media/after.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = DateTime.UtcNow.ToString("O")
+        });
+
+        var controller = CreateController();
+        var result = await controller.RestoreBackup(new RestoreBackupRequest { FileName = fileName });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.NotNull(await _dbFactory.Database.GetItemDetailAsync("before-backup"));
+        Assert.Null(await _dbFactory.Database.GetItemDetailAsync("after-backup"));
     }
 }

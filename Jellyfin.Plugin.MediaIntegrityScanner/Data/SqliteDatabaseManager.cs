@@ -404,7 +404,14 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         var backupDir = GetBackupDirectory();
         Directory.CreateDirectory(backupDir);
 
-        var fileName = $"media-integrity-backup-{DateTime.UtcNow:yyyyMMdd-HHmmss}.db";
+        // A bare second-precision timestamp collides if two backups are
+        // triggered within the same second (e.g. a double-click, or two rapid
+        // API calls) -- VACUUM INTO refuses to overwrite an existing file, so
+        // that would throw. The random suffix keeps the human-readable
+        // timestamp prefix for the UI list while guaranteeing uniqueness
+        // regardless of call frequency.
+        var uniqueSuffix = Guid.NewGuid().ToString("N")[..6];
+        var fileName = $"media-integrity-backup-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{uniqueSuffix}.db";
         var backupPath = Path.Combine(backupDir, fileName);
 
         await _writeLock.WaitAsync().ConfigureAwait(false);
