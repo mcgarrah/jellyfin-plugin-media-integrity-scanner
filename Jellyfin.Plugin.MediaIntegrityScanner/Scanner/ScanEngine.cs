@@ -34,12 +34,15 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 /// </summary>
 public partial class ScanEngine : IScanEngine, IDisposable
 {
+    private static readonly TimeSpan BandwidthPollInterval = TimeSpan.FromMilliseconds(200);
+
     private readonly SemaphoreSlim _scanLock;
     private readonly FfmpegWrapper _ffmpeg;
     private readonly IDatabaseManager _db;
     private readonly ISessionManager _sessions;
     private readonly ILibraryManager _library;
     private readonly ILogger<ScanEngine> _logger;
+    private readonly SharedBandwidthLimiter _bandwidthLimiter;
     private CancellationTokenSource? _cts;
     private int _activeScanCount;
     private int _isLibraryScanning;
@@ -53,18 +56,26 @@ public partial class ScanEngine : IScanEngine, IDisposable
     /// <param name="sessions">Session manager for playback awareness.</param>
     /// <param name="library">Library manager for querying items.</param>
     /// <param name="logger">Logger instance.</param>
+    /// <param name="bandwidthLimiter">
+    /// Shared bandwidth budget. Optional -- no DI registration exists for
+    /// this type, so the default (a real, wall-clock-driven instance) is
+    /// what production always gets; tests can supply one built with a fake
+    /// <see cref="TimeProvider"/> for deterministic control.
+    /// </param>
     public ScanEngine(
         FfmpegWrapper ffmpeg,
         IDatabaseManager db,
         ISessionManager sessions,
         ILibraryManager library,
-        ILogger<ScanEngine> logger)
+        ILogger<ScanEngine> logger,
+        SharedBandwidthLimiter? bandwidthLimiter = null)
     {
         _ffmpeg = ffmpeg;
         _db = db;
         _sessions = sessions;
         _library = library;
         _logger = logger;
+        _bandwidthLimiter = bandwidthLimiter ?? new SharedBandwidthLimiter();
 
         var maxConcurrent = Plugin.Instance?.Configuration?.MaxConcurrentScans ?? 1;
         _scanLock = new SemaphoreSlim(maxConcurrent, maxConcurrent);
@@ -116,15 +127,38 @@ public partial class ScanEngine : IScanEngine, IDisposable
                 _ => throw new ArgumentException($"Unknown scan phase: {phase}", nameof(phase))
             };
 
-            // Pace the average read rate for this file before moving on
+            // Spend this file's size against the shared bandwidth budget
+            // before moving on -- draws from the same budget regardless of
+            // phase or how many scans are running concurrently, so
+            // concurrency divides the configured cap rather than
+            // multiplying past it. See SharedBandwidthLimiter's remarks for
+            // why this replaced a per-file-independent calculation.
             var fileInfo = new FileInfo(item.Path);
             if (fileInfo.Exists)
             {
-                var readRateDelay = ScanThrottle.ComputeReadRateDelay(
-                    fileInfo.Length, config?.MaxReadRateMbPerSec ?? 0, result.DurationMs);
-                if (readRateDelay > TimeSpan.Zero)
+                var fileSizeMb = fileInfo.Length / (1024.0 * 1024.0);
+                var maxRate = config?.MaxReadRateMbPerSec ?? 0;
+                if (!_bandwidthLimiter.TryConsume(fileSizeMb, maxRate, phase))
                 {
-                    await Task.Delay(readRateDelay, token).ConfigureAwait(false);
+                    if (phase == ScanPhase.FullDecode)
+                    {
+                        _bandwidthLimiter.MarkDeepScanWaiting();
+                    }
+
+                    try
+                    {
+                        while (!_bandwidthLimiter.TryConsume(fileSizeMb, maxRate, phase))
+                        {
+                            await Task.Delay(BandwidthPollInterval, token).ConfigureAwait(false);
+                        }
+                    }
+                    finally
+                    {
+                        if (phase == ScanPhase.FullDecode)
+                        {
+                            _bandwidthLimiter.MarkDeepScanNoLongerWaiting();
+                        }
+                    }
                 }
             }
 

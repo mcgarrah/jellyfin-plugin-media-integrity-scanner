@@ -16,6 +16,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
@@ -76,14 +78,16 @@ public class ScanEngineTests : IDisposable
         Mock<FfmpegWrapper> wrapper,
         Mock<IDatabaseManager>? db = null,
         Mock<ISessionManager>? sessions = null,
-        Mock<ILibraryManager>? library = null)
+        Mock<ILibraryManager>? library = null,
+        SharedBandwidthLimiter? bandwidthLimiter = null)
     {
         return new ScanEngine(
             wrapper.Object,
             (db ?? new Mock<IDatabaseManager>()).Object,
             (sessions ?? new Mock<ISessionManager>()).Object,
             (library ?? new Mock<ILibraryManager>()).Object,
-            NullLogger<ScanEngine>.Instance);
+            NullLogger<ScanEngine>.Instance,
+            bandwidthLimiter);
     }
 
     private static Movie MakeItem()
@@ -496,6 +500,111 @@ public class ScanEngineTests : IDisposable
         await libraryScanTask;
 
         Assert.False(engine.IsScanning);
+    }
+
+    // --- Bandwidth throttling wiring ---
+    //
+    // SharedBandwidthLimiterTests already covers the pure TryConsume logic
+    // deterministically. These two tests only check that ScanEngine actually
+    // engages that limiter for a real file on disk (the existing tests above
+    // all use MakeItem()'s nonexistent /media/{id}.mkv path, which never
+    // reaches the fileInfo.Exists branch at all) -- using the real system
+    // clock rather than a fake one, since the point is to prove genuine
+    // wall-clock waiting happens, bounded to well under a second by a small
+    // file size and a low configured rate.
+
+    private static string CreateTempFile(int sizeBytes)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"mis-bandwidth-test-{Guid.NewGuid():N}.bin");
+        File.WriteAllBytes(path, new byte[sizeBytes]);
+        return path;
+    }
+
+    [Fact]
+    public async Task ScanItemAsync_ThrottlesAcrossCalls_ViaTheSharedBandwidthBudget()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            MaxConcurrentScans = 1,
+            DelayBetweenFilesMs = 0,
+            PauseDuringPlayback = false,
+            UseQuietHoursOnly = false,
+            MaxReadRateMbPerSec = 2
+        });
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 1 });
+
+        var limiter = new SharedBandwidthLimiter();
+        var engine = CreateEngine(wrapper, bandwidthLimiter: limiter);
+
+        // Bucket seeds at 2 MB. Two 1.5 MB files back-to-back need 3 MB total
+        // -- the second must wait roughly 0.5s (at 2 MB/s) for enough budget
+        // to refill, via ScanEngine's real 200ms poll loop.
+        var fileA = CreateTempFile(1024 * 1024 + 512 * 1024);
+        var fileB = CreateTempFile(1024 * 1024 + 512 * 1024);
+        try
+        {
+            var itemA = new Movie { Id = Guid.NewGuid(), Path = fileA };
+            var itemB = new Movie { Id = Guid.NewGuid(), Path = fileB };
+
+            var stopwatch = Stopwatch.StartNew();
+            await engine.ScanItemAsync(itemA, ScanPhase.Header, CancellationToken.None);
+            await engine.ScanItemAsync(itemB, ScanPhase.Header, CancellationToken.None);
+            stopwatch.Stop();
+
+            Assert.True(
+                stopwatch.Elapsed > TimeSpan.FromMilliseconds(300),
+                $"Expected the second scan to wait on the shared budget (~0.5s), but both completed in {stopwatch.Elapsed}.");
+        }
+        finally
+        {
+            File.Delete(fileA);
+            File.Delete(fileB);
+        }
+    }
+
+    [Fact]
+    public async Task ScanItemAsync_DoesNotThrottle_WhenMaxReadRateIsZero()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            MaxConcurrentScans = 1,
+            DelayBetweenFilesMs = 0,
+            PauseDuringPlayback = false,
+            UseQuietHoursOnly = false,
+            MaxReadRateMbPerSec = 0
+        });
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 1 });
+
+        var limiter = new SharedBandwidthLimiter();
+        var engine = CreateEngine(wrapper, bandwidthLimiter: limiter);
+
+        var fileA = CreateTempFile(10 * 1024 * 1024);
+        var fileB = CreateTempFile(10 * 1024 * 1024);
+        try
+        {
+            var itemA = new Movie { Id = Guid.NewGuid(), Path = fileA };
+            var itemB = new Movie { Id = Guid.NewGuid(), Path = fileB };
+
+            var stopwatch = Stopwatch.StartNew();
+            await engine.ScanItemAsync(itemA, ScanPhase.Header, CancellationToken.None);
+            await engine.ScanItemAsync(itemB, ScanPhase.Header, CancellationToken.None);
+            stopwatch.Stop();
+
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromMilliseconds(300),
+                $"Expected no throttling wait with MaxReadRateMbPerSec=0, but both scans took {stopwatch.Elapsed}.");
+        }
+        finally
+        {
+            File.Delete(fileA);
+            File.Delete(fileB);
+        }
     }
 
     // --- Dispose ---
