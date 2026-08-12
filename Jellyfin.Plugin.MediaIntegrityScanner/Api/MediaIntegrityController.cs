@@ -19,6 +19,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,6 +27,7 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
+using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
@@ -48,6 +50,7 @@ public partial class MediaIntegrityController : ControllerBase
     private readonly ILibraryManager _library;
     private readonly IUpdateChecker _updateChecker;
     private readonly FfmpegWrapper _ffmpeg;
+    private readonly IServerApplicationHost _appHost;
     private readonly ILogger<MediaIntegrityController> _logger;
 
     /// <summary>
@@ -58,6 +61,7 @@ public partial class MediaIntegrityController : ControllerBase
     /// <param name="library">Library manager.</param>
     /// <param name="updateChecker">Plugin update checker.</param>
     /// <param name="ffmpeg">FFmpeg wrapper, for manual path re-resolution.</param>
+    /// <param name="appHost">Server application host, for the running Jellyfin server version.</param>
     /// <param name="logger">Logger instance.</param>
     public MediaIntegrityController(
         SqliteDatabaseManager db,
@@ -65,6 +69,7 @@ public partial class MediaIntegrityController : ControllerBase
         ILibraryManager library,
         IUpdateChecker updateChecker,
         FfmpegWrapper ffmpeg,
+        IServerApplicationHost appHost,
         ILogger<MediaIntegrityController> logger)
     {
         _db = db;
@@ -72,7 +77,49 @@ public partial class MediaIntegrityController : ControllerBase
         _library = library;
         _updateChecker = updateChecker;
         _ffmpeg = ffmpeg;
+        _appHost = appHost;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Gets a non-sensitive diagnostic snapshot for filing a bug report --
+    /// environment/version info and aggregate scan counts only, never file
+    /// paths, library names, or error text, so it's safe to prefill into a
+    /// public GitHub issue without the reporter needing to redact anything.
+    /// When <see cref="FfmpegWrapper.IsUsingCustomOverride"/> is set, the
+    /// resolved ffmpeg/ffprobe paths are withheld too, since those come
+    /// directly from an admin-entered path that could reveal local directory
+    /// structure -- only the fact that an override is configured is reported.
+    /// </summary>
+    /// <returns>Diagnostics response.</returns>
+    [HttpGet("Diagnostics")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<DiagnosticsResponse>> GetDiagnostics()
+    {
+        var stats = await _db.GetStatisticsAsync().ConfigureAwait(false);
+        var config = Plugin.Instance?.Configuration;
+        var usingOverride = _ffmpeg.IsUsingCustomOverride;
+
+        return Ok(new DiagnosticsResponse
+        {
+            PluginVersion = Plugin.Instance?.Version?.ToString() ?? "unknown",
+            UpdateChannel = config?.UpdateChannel.ToString() ?? "unknown",
+            JellyfinServerVersion = _appHost.ApplicationVersionString,
+            OperatingSystem = RuntimeInformation.OSDescription,
+            DotNetVersion = RuntimeInformation.FrameworkDescription,
+            UsingCustomFfmpegOverride = usingOverride,
+            FfmpegPath = usingOverride ? "(custom override configured)" : _ffmpeg.FfmpegPath,
+            FfprobePath = usingOverride ? "(custom override configured)" : _ffmpeg.FfprobePath,
+            HardwareAccelerationType = config?.HardwareAccelerationType.ToString() ?? "unknown",
+            MaxConcurrentScans = config?.MaxConcurrentScans ?? 0,
+            TotalFiles = stats.ScannedFiles,
+            PassedFiles = stats.PassedFiles,
+            FailedFiles = stats.FailedFiles,
+            ErroredFiles = stats.ErroredFiles,
+            HealthPercentage = stats.ScannedFiles > 0
+                ? Math.Round((double)stats.PassedFiles / stats.ScannedFiles * 100, 1)
+                : 0
+        });
     }
 
     /// <summary>
@@ -478,6 +525,60 @@ public partial class MediaIntegrityController : ControllerBase
 
     [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Error restoring database backup")]
     private partial void LogRestoreError(Exception ex);
+}
+
+/// <summary>
+/// Response model for the bug-report diagnostic snapshot. Deliberately holds
+/// only environment/version info and aggregate counts -- never file paths,
+/// library names, or error text -- so it's safe to prefill into a public
+/// GitHub issue.
+/// </summary>
+public class DiagnosticsResponse
+{
+    /// <summary>Gets or sets the currently running plugin version.</summary>
+    public string PluginVersion { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the configured update channel (Stable/Dev).</summary>
+    public string UpdateChannel { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the running Jellyfin server version.</summary>
+    public string JellyfinServerVersion { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the server OS description (e.g. "Linux ... " or "Microsoft Windows ...").</summary>
+    public string OperatingSystem { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the .NET runtime description.</summary>
+    public string DotNetVersion { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets a value indicating whether an admin-configured ffmpeg/ffprobe path override is in use.</summary>
+    public bool UsingCustomFfmpegOverride { get; set; }
+
+    /// <summary>Gets or sets the resolved ffmpeg path, or a placeholder if a custom override is configured.</summary>
+    public string FfmpegPath { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the resolved ffprobe path, or a placeholder if a custom override is configured.</summary>
+    public string FfprobePath { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the configured hardware acceleration type.</summary>
+    public string HardwareAccelerationType { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the configured maximum concurrent scans.</summary>
+    public int MaxConcurrentScans { get; set; }
+
+    /// <summary>Gets or sets the total number of scanned files.</summary>
+    public int TotalFiles { get; set; }
+
+    /// <summary>Gets or sets the number of files that passed.</summary>
+    public int PassedFiles { get; set; }
+
+    /// <summary>Gets or sets the number of files that failed.</summary>
+    public int FailedFiles { get; set; }
+
+    /// <summary>Gets or sets the number of files whose most recent scan ended in an error.</summary>
+    public int ErroredFiles { get; set; }
+
+    /// <summary>Gets or sets the library health percentage.</summary>
+    public double HealthPercentage { get; set; }
 }
 
 /// <summary>

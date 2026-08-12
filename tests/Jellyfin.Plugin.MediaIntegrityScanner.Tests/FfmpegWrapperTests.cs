@@ -76,6 +76,20 @@ public class FfmpegWrapperTests : IDisposable
         Assert.Equal("/fake/ffprobe", wrapper.FfprobePath);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void IsUsingCustomOverride_PassesThroughToResolver(bool resolverValue)
+    {
+        var resolver = CreateResolverMock();
+        resolver.Setup(r => r.ResolveFfmpegPath()).Returns("/fake/ffmpeg");
+        resolver.Setup(r => r.ResolveFfprobePath()).Returns("/fake/ffprobe");
+        resolver.Setup(r => r.IsUsingCustomOverride()).Returns(resolverValue);
+        var wrapper = new FfmpegWrapper(resolver.Object, NullLogger<FfmpegWrapper>.Instance);
+
+        Assert.Equal(resolverValue, wrapper.IsUsingCustomOverride);
+    }
+
     [Fact]
     public void ServerConfigurationChanged_TriggersRefresh_WhenNotUsingCustomOverride()
     {

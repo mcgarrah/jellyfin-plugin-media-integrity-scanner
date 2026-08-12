@@ -1,0 +1,90 @@
+name: Bug Report
+description: Report a problem with the Media Integrity Scanner plugin
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        The **Diagnostics** fields below are pre-filled if you got here via
+        the dashboard's "Report a Bug" button. They contain only plugin/server
+        version info, environment info, and aggregate scan counts -- never
+        file paths, library names, or error text -- so nothing there should
+        need redacting, but please double-check before submitting.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you do right before this happened?
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: >
+        Paste any relevant excerpt from Jellyfin's server log (Dashboard >
+        Logs). Please review it for anything you'd rather not share before
+        pasting it here.
+      render: shell
+
+  - type: markdown
+    attributes:
+      value: "### Diagnostics"
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+    validations:
+      required: true
+
+  - type: input
+    id: update-channel
+    attributes:
+      label: Update channel
+
+  - type: input
+    id: jellyfin-version
+    attributes:
+      label: Jellyfin server version
+
+  - type: input
+    id: operating-system
+    attributes:
+      label: Server OS
+
+  - type: input
+    id: dotnet-version
+    attributes:
+      label: .NET runtime
+
+  - type: input
+    id: ffmpeg-status
+    attributes:
+      label: FFmpeg / FFprobe resolution
+
+  - type: input
+    id: hardware-accel
+    attributes:
+      label: Hardware acceleration type
+
+  - type: input
+    id: max-concurrent-scans
+    attributes:
+      label: Max concurrent scans
+
+  - type: input
+    id: health-summary
+    attributes:
+      label: Scan health summary

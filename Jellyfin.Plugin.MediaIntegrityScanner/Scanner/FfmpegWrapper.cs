@@ -39,6 +39,9 @@ public partial class FfmpegWrapper
     /// <summary>Gets the currently resolved ffprobe binary path.</summary>
     public string FfprobePath => _ffprobePath;
 
+    /// <summary>Gets a value indicating whether both paths come from an admin-configured override rather than auto-detection.</summary>
+    public bool IsUsingCustomOverride => _resolver.IsUsingCustomOverride();
+
     /// <summary>
     /// Initializes a new instance of the <see cref="FfmpegWrapper"/> class.
     /// </summary>
