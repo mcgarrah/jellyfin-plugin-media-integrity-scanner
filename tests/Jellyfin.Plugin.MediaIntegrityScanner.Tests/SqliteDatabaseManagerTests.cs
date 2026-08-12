@@ -476,6 +476,72 @@ public class SqliteDatabaseManagerTests : IDisposable
         Assert.Equal("item-4", page1.Items[0].ItemId);
     }
 
+    // --- GetAllResultsAsync ---
+    // Used exclusively by CSV/TSV export (MediaIntegrityController.ExportResults),
+    // which needs every matching row in one shot rather than a page at a time.
+
+    [Fact]
+    public async Task GetAllResultsAsync_ReturnsAllRows_WhenUnfiltered()
+    {
+        await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Pass));
+        await _db.SaveResultAsync(MakeRecord("item-2", status: (int)ScanStatus.Fail));
+        await _db.SaveResultAsync(MakeRecord("item-3", status: (int)ScanStatus.Error));
+
+        var results = await _db.GetAllResultsAsync(status: null);
+
+        Assert.Equal(3, results.Count);
+    }
+
+    [Fact]
+    public async Task GetAllResultsAsync_FiltersByStatus()
+    {
+        await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Pass));
+        await _db.SaveResultAsync(MakeRecord("item-2", status: (int)ScanStatus.Fail));
+        await _db.SaveResultAsync(MakeRecord("item-3", status: (int)ScanStatus.Fail));
+
+        var results = await _db.GetAllResultsAsync(status: (int)ScanStatus.Fail);
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.Equal((int)ScanStatus.Fail, r.ScanStatus));
+    }
+
+    [Fact]
+    public async Task GetAllResultsAsync_ReturnsEmptyList_WhenNoRowsMatch()
+    {
+        await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Pass));
+
+        var results = await _db.GetAllResultsAsync(status: (int)ScanStatus.Fail);
+
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public async Task GetAllResultsAsync_IsNotPageLimited_UnlikeGetResultsAsync()
+    {
+        // The whole reason this method exists separately from GetResultsAsync --
+        // export needs every row, not one page's worth.
+        for (var i = 0; i < 60; i++)
+        {
+            await _db.SaveResultAsync(MakeRecord($"item-{i}"));
+        }
+
+        var results = await _db.GetAllResultsAsync(status: null);
+
+        Assert.Equal(60, results.Count);
+    }
+
+    [Fact]
+    public async Task GetAllResultsAsync_OrdersByScanTimestampDescending()
+    {
+        await _db.SaveResultAsync(MakeRecord("oldest", timestamp: "2026-01-01T00:00:00.0000000Z"));
+        await _db.SaveResultAsync(MakeRecord("newest", timestamp: "2026-01-03T00:00:00.0000000Z"));
+        await _db.SaveResultAsync(MakeRecord("middle", timestamp: "2026-01-02T00:00:00.0000000Z"));
+
+        var results = await _db.GetAllResultsAsync(status: null);
+
+        Assert.Equal(new[] { "newest", "middle", "oldest" }, results.Select(r => r.ItemId));
+    }
+
     // --- GetItemDetailAsync ---
 
     [Fact]
