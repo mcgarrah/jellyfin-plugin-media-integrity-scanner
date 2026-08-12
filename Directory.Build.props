@@ -17,8 +17,8 @@
     <Copyright>Copyright © 2026 Michael McGarrah &lt;mcgarrah@gmail.com&gt;</Copyright>
     <RepositoryUrl>https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner</RepositoryUrl>
     <PackageLicenseExpression>GPL-2.0-or-later</PackageLicenseExpression>
-    <Version>0.1.1.0</Version>
-    <AssemblyVersion>0.1.1.0</AssemblyVersion>
-    <FileVersion>0.1.1.0</FileVersion>
+    <Version>0.2.0.0</Version>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <FileVersion>0.2.0.0</FileVersion>
   </PropertyGroup>
 </Project>
