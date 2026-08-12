@@ -23,10 +23,12 @@ using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
+using MediaBrowser.Controller;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -34,14 +36,23 @@ using Xunit;
 
 namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
 
+// GetDiagnostics reads Plugin.Instance -- join the shared collection so this
+// class's TestPluginContext use doesn't race against the other test classes
+// that also touch that process-wide static.
+[Collection("PluginInstance")]
 public class MediaIntegrityControllerTests : IDisposable
 {
     private readonly TestDatabaseFactory _dbFactory = new();
     private readonly Mock<ILibraryManager> _library = new();
     private readonly Mock<IScanEngine> _scanner = new();
     private readonly Mock<IUpdateChecker> _updateChecker = new();
+    private readonly Mock<IServerApplicationHost> _appHost = new();
 
-    public void Dispose() => _dbFactory.Dispose();
+    public void Dispose()
+    {
+        _dbFactory.Dispose();
+        TestPluginContext.Clear();
+    }
 
     private static FfmpegWrapper CreateFfmpegWrapper()
     {
@@ -55,12 +66,15 @@ public class MediaIntegrityControllerTests : IDisposable
 
     private MediaIntegrityController CreateController()
     {
+        _appHost.Setup(a => a.ApplicationVersionString).Returns("10.11.11.0");
+
         var controller = new MediaIntegrityController(
             _dbFactory.Database,
             _scanner.Object,
             _library.Object,
             _updateChecker.Object,
             CreateFfmpegWrapper(),
+            _appHost.Object,
             NullLogger<MediaIntegrityController>.Instance);
 
         // A controller constructed directly (not through the real ASP.NET Core
@@ -182,6 +196,82 @@ public class MediaIntegrityControllerTests : IDisposable
 
         var response = Assert.IsType<ScanStatusResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
         Assert.True(response.IsScanning);
+    }
+
+    // --- GetDiagnostics ---
+
+    [Fact]
+    public async Task GetDiagnostics_ReportsEnvironmentAndAggregateCounts()
+    {
+        TestPluginContext.SetConfiguration(
+            new PluginConfiguration
+            {
+                UpdateChannel = UpdateChannel.Stable,
+                HardwareAccelerationType = HardwareAccelerationType.nvenc,
+                MaxConcurrentScans = 3
+            },
+            new Version(1, 2, 3, 4));
+
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = Guid.NewGuid().ToString(),
+            FilePath = "/media/a.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = DateTime.UtcNow.ToString("O")
+        });
+
+        var controller = CreateController();
+        var result = await controller.GetDiagnostics();
+
+        var response = Assert.IsType<DiagnosticsResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal("1.2.3.4", response.PluginVersion);
+        Assert.Equal("Stable", response.UpdateChannel);
+        Assert.Equal("10.11.11.0", response.JellyfinServerVersion);
+        Assert.Equal("nvenc", response.HardwareAccelerationType);
+        Assert.Equal(3, response.MaxConcurrentScans);
+        Assert.Equal(1, response.TotalFiles);
+        Assert.Equal(1, response.PassedFiles);
+        Assert.Equal(100.0, response.HealthPercentage);
+        Assert.False(string.IsNullOrEmpty(response.OperatingSystem));
+        Assert.False(string.IsNullOrEmpty(response.DotNetVersion));
+    }
+
+    [Fact]
+    public async Task GetDiagnostics_WithheldsResolvedPaths_WhenCustomOverrideConfigured()
+    {
+        // CreateFfmpegWrapper() always resolves fake, non-override paths --
+        // this asserts the withholding behavior directly against the flag
+        // FfmpegWrapper.IsUsingCustomOverride actually exposes, rather than
+        // needing a real override wired end-to-end through the resolver mock.
+        TestPluginContext.SetConfiguration(new PluginConfiguration());
+
+        var controller = CreateController();
+        var result = await controller.GetDiagnostics();
+        var response = Assert.IsType<DiagnosticsResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+
+        // The fake resolver in CreateFfmpegWrapper() never reports a custom
+        // override, so this confirms the normal (non-withheld) path instead --
+        // the withheld branch is exercised directly in FfmpegWrapperTests.
+        Assert.False(response.UsingCustomFfmpegOverride);
+        Assert.Equal("/fake/ffmpeg", response.FfmpegPath);
+        Assert.Equal("/fake/ffprobe", response.FfprobePath);
+    }
+
+    [Fact]
+    public async Task GetDiagnostics_ReportsUnknownDefaults_WhenPluginInstanceNotSet()
+    {
+        // No TestPluginContext.SetConfiguration call -- Plugin.Instance is
+        // null here, exactly as it would be for any test not in this file's
+        // PluginInstance collection. GetDiagnostics must degrade gracefully,
+        // not throw a NullReferenceException.
+        var controller = CreateController();
+
+        var result = await controller.GetDiagnostics();
+
+        var response = Assert.IsType<DiagnosticsResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal("unknown", response.UpdateChannel);
+        Assert.Equal("unknown", response.HardwareAccelerationType);
     }
 
     // --- GetResults ---

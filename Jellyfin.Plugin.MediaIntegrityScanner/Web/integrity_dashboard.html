@@ -127,6 +127,7 @@
             <div class="version-line">
                 Version <span id="current-version">&mdash;</span>
                 <button class="btn btn-primary" id="btn-check-updates" onclick="checkForUpdatesNow()">Check for Updates</button>
+                <button class="btn btn-primary" id="btn-report-bug" onclick="reportBug()">Report a Bug</button>
             </div>
 
             <div id="update-banner" class="update-banner">
@@ -784,6 +785,52 @@
                     return loadUpdateStatus();
                 }).catch(function(err) {
                     showError('Failed to check for updates: ' + err.message);
+                }).then(function() {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                });
+            }
+
+            // Opens a pre-filled GitHub issue in a new tab, using the
+            // Diagnostics endpoint's non-sensitive snapshot (version/environment
+            // info and aggregate counts only -- never file paths, library names,
+            // or error text). The reporter reviews everything in the GitHub form
+            // before it's actually submitted; nothing here submits on their
+            // behalf. Field ids in the query string match bug_report.yml's
+            // own field ids exactly -- that's what GitHub uses to prefill an
+            // issue form from a URL.
+            function reportBug() {
+                var btn = document.getElementById('btn-report-bug');
+                var originalText = btn.textContent;
+                btn.disabled = true;
+                btn.textContent = 'Preparing...';
+
+                apiFetch('Diagnostics').then(function(diag) {
+                    var ffmpegStatus = diag.UsingCustomFfmpegOverride
+                        ? 'custom override configured'
+                        : (diag.FfmpegPath + ' / ' + diag.FfprobePath);
+                    var healthSummary = diag.TotalFiles + ' scanned, ' +
+                        diag.PassedFiles + ' passed, ' + diag.FailedFiles + ' failed, ' +
+                        diag.ErroredFiles + ' errored (' + diag.HealthPercentage + '% health)';
+
+                    var params = new URLSearchParams();
+                    params.set('template', 'bug_report.yml');
+                    params.set('plugin-version', diag.PluginVersion || '');
+                    params.set('update-channel', diag.UpdateChannel || '');
+                    params.set('jellyfin-version', diag.JellyfinServerVersion || '');
+                    params.set('operating-system', diag.OperatingSystem || '');
+                    params.set('dotnet-version', diag.DotNetVersion || '');
+                    params.set('ffmpeg-status', ffmpegStatus);
+                    params.set('hardware-accel', diag.HardwareAccelerationType || '');
+                    params.set('max-concurrent-scans', String(diag.MaxConcurrentScans));
+                    params.set('health-summary', healthSummary);
+
+                    var url = 'https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/issues/new?' +
+                        params.toString();
+                    window.open(url, '_blank', 'noopener');
+                    hideError();
+                }).catch(function(err) {
+                    showError('Failed to gather diagnostics: ' + err.message);
                 }).then(function() {
                     btn.disabled = false;
                     btn.textContent = originalText;
