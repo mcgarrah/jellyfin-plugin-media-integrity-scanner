@@ -56,6 +56,21 @@ public interface IDatabaseManager
     Task PurgeItemAsync(string itemId);
 
     /// <summary>
+    /// Purges scan records for any item not present in <paramref name="currentItemIds"/> --
+    /// the periodic counterpart to <see cref="PurgeItemAsync"/>'s event-driven purge,
+    /// for catching removals the <c>ItemRemoved</c> event missed (plugin offline at
+    /// removal time, purge-on-remove was off, an unverified Jellyfin removal path
+    /// that doesn't fire the event). As a safety guard against wiping the entire
+    /// table from a caller passing an empty set by mistake (e.g. a transient
+    /// library-query failure), an empty <paramref name="currentItemIds"/> is treated
+    /// as "don't reconcile" rather than "nothing is current" -- callers should not
+    /// call this at all if the library query itself failed.
+    /// </summary>
+    /// <param name="currentItemIds">Every item ID currently present in the library.</param>
+    /// <returns>The number of scan-history rows purged (0 if <paramref name="currentItemIds"/> was empty).</returns>
+    Task<int> ReconcileAsync(IReadOnlyCollection<string> currentItemIds);
+
+    /// <summary>
     /// Initializes the database schema.
     /// </summary>
     /// <returns>A task representing the async operation.</returns>

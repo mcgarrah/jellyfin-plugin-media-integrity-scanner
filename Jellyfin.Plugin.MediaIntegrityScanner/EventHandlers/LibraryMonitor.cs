@@ -68,6 +68,7 @@ public partial class LibraryMonitor : IHostedService, IDisposable
         await _db.InitializeAsync().ConfigureAwait(false);
 
         _library.ItemAdded += OnItemAdded;
+        _library.ItemUpdated += OnItemUpdated;
         _library.ItemRemoved += OnItemRemoved;
 
         LogMonitorRegistered();
@@ -81,6 +82,7 @@ public partial class LibraryMonitor : IHostedService, IDisposable
     public Task StopAsync(CancellationToken cancellationToken)
     {
         _library.ItemAdded -= OnItemAdded;
+        _library.ItemUpdated -= OnItemUpdated;
         _library.ItemRemoved -= OnItemRemoved;
 
         LogMonitorUnregistered();
@@ -114,6 +116,41 @@ public partial class LibraryMonitor : IHostedService, IDisposable
             catch (Exception ex)
             {
                 LogScanNewItemError(ex, item.Path);
+            }
+        });
+    }
+
+    private void OnItemUpdated(object? sender, ItemChangeEventArgs e)
+    {
+        var config = Plugin.Instance?.Configuration;
+        if (config?.ScanOnItemUpdated != true)
+        {
+            return;
+        }
+
+        var item = e.Item;
+        if (!IsMediaItem(item))
+        {
+            return;
+        }
+
+        LogItemUpdateQueuedForScan(item.Name, item.Path);
+
+        // Fire-and-forget with error logging, same shape as OnItemAdded. A
+        // Header-phase rescan is deliberately used here, not FullDecode --
+        // matches the cost of the other event-driven path and is enough to
+        // pick up the new mtime/size immediately; a full deep rescan still
+        // happens on its own schedule if deep scanning is enabled.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _scanner.ScanItemAsync(item, ScanPhase.Header, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LogScanUpdatedItemError(ex, item.Path);
             }
         });
     }
@@ -163,6 +200,7 @@ public partial class LibraryMonitor : IHostedService, IDisposable
         if (!_disposed)
         {
             _library.ItemAdded -= OnItemAdded;
+            _library.ItemUpdated -= OnItemUpdated;
             _library.ItemRemoved -= OnItemRemoved;
             _disposed = true;
             GC.SuppressFinalize(this);
@@ -186,4 +224,10 @@ public partial class LibraryMonitor : IHostedService, IDisposable
 
     [LoggerMessage(EventId = 6, Level = LogLevel.Error, Message = "Error purging scan records for removed item: {Id}")]
     private partial void LogPurgeError(Exception ex, Guid id);
+
+    [LoggerMessage(EventId = 7, Level = LogLevel.Debug, Message = "Item updated: {Name} ({Path}), queuing for rescan")]
+    private partial void LogItemUpdateQueuedForScan(string? name, string? path);
+
+    [LoggerMessage(EventId = 8, Level = LogLevel.Error, Message = "Error scanning updated item: {Path}")]
+    private partial void LogScanUpdatedItemError(Exception ex, string? path);
 }

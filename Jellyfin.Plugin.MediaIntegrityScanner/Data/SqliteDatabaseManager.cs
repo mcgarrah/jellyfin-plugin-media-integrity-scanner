@@ -500,6 +500,71 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<int> ReconcileAsync(IReadOnlyCollection<string> currentItemIds)
+    {
+        if (currentItemIds.Count == 0)
+        {
+            LogReconcileSkippedEmptySet();
+            return 0;
+        }
+
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync().ConfigureAwait(false);
+
+            // A TEMP table (connection-scoped, dropped automatically once this
+            // connection closes) avoids the parameter-count risk a plain
+            // "item_id NOT IN (@id0, @id1, ...)" list would carry on a very
+            // large library -- scales to any library size.
+            await using (var createTempCommand = connection.CreateCommand())
+            {
+                createTempCommand.CommandText = "CREATE TEMP TABLE reconcile_current_ids (item_id TEXT PRIMARY KEY);";
+                await createTempCommand.ExecuteNonQueryAsync().ConfigureAwait(false);
+            }
+
+            await using (var transaction = connection.BeginTransaction())
+            {
+                await using (var insertCommand = connection.CreateCommand())
+                {
+                    insertCommand.Transaction = transaction;
+                    insertCommand.CommandText = "INSERT OR IGNORE INTO reconcile_current_ids (item_id) VALUES (@id);";
+                    var idParam = insertCommand.CreateParameter();
+                    idParam.ParameterName = "@id";
+                    insertCommand.Parameters.Add(idParam);
+
+                    foreach (var itemId in currentItemIds)
+                    {
+                        idParam.Value = itemId;
+                        await insertCommand.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    }
+                }
+
+                await transaction.CommitAsync().ConfigureAwait(false);
+            }
+
+            await using var deleteCommand = connection.CreateCommand();
+            deleteCommand.CommandText = @"
+                DELETE FROM scan_results
+                WHERE item_id NOT IN (SELECT item_id FROM reconcile_current_ids);
+            ";
+            var deleted = await deleteCommand.ExecuteNonQueryAsync().ConfigureAwait(false);
+
+            if (deleted > 0)
+            {
+                LogReconciled(deleted);
+            }
+
+            return deleted;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<string> BackupAsync()
     {
         var backupDir = GetBackupDirectory();
@@ -780,6 +845,12 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 
     [LoggerMessage(EventId = 7, Level = LogLevel.Error, Message = "Database integrity check failed: {Message}")]
     private partial void LogIntegrityCheckFailed(string message);
+
+    [LoggerMessage(EventId = 8, Level = LogLevel.Information, Message = "Reconciliation purged {Count} orphaned scan-history rows")]
+    private partial void LogReconciled(int count);
+
+    [LoggerMessage(EventId = 9, Level = LogLevel.Warning, Message = "Reconciliation skipped -- empty current-item-ids set (treated as a failed library query, not an empty library)")]
+    private partial void LogReconcileSkippedEmptySet();
 }
 
 /// <summary>

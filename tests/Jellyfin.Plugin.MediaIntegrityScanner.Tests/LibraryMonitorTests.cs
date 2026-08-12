@@ -152,6 +152,67 @@ public class LibraryMonitorTests : IDisposable
     }
 
     [Fact]
+    public async Task OnItemUpdated_RescansItem_WhenScanOnItemUpdatedTrue_AndIsMediaItem()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemUpdated = true });
+
+        var library = new Mock<ILibraryManager>();
+        var scanner = new Mock<IScanEngine>();
+        var db = new Mock<IDatabaseManager>();
+        var monitor = CreateMonitor(library, scanner, db);
+        await monitor.StartAsync(CancellationToken.None);
+
+        var item = MakeMediaItem();
+        var tcs = new TaskCompletionSource();
+        scanner.Setup(s => s.ScanItemAsync(item, ScanPhase.Header, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => tcs.TrySetResult());
+
+        library.Raise(l => l.ItemUpdated += null, library.Object, new ItemChangeEventArgs { Item = item });
+
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        scanner.Verify(s => s.ScanItemAsync(item, ScanPhase.Header, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OnItemUpdated_DoesNothing_WhenScanOnItemUpdatedFalse()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemUpdated = false });
+
+        var library = new Mock<ILibraryManager>();
+        var scanner = new Mock<IScanEngine>();
+        var db = new Mock<IDatabaseManager>();
+        var monitor = CreateMonitor(library, scanner, db);
+        await monitor.StartAsync(CancellationToken.None);
+
+        library.Raise(l => l.ItemUpdated += null, library.Object, new ItemChangeEventArgs { Item = MakeMediaItem() });
+
+        scanner.Verify(
+            s => s.ScanItemAsync(It.IsAny<MediaBrowser.Controller.Entities.BaseItem>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task OnItemUpdated_DoesNothing_WhenItemIsNotAMediaItem()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemUpdated = true });
+
+        var library = new Mock<ILibraryManager>();
+        var scanner = new Mock<IScanEngine>();
+        var db = new Mock<IDatabaseManager>();
+        var monitor = CreateMonitor(library, scanner, db);
+        await monitor.StartAsync(CancellationToken.None);
+
+        var nonMediaItem = new Movie { Id = Guid.NewGuid(), Path = null };
+
+        library.Raise(l => l.ItemUpdated += null, library.Object, new ItemChangeEventArgs { Item = nonMediaItem });
+
+        scanner.Verify(
+            s => s.ScanItemAsync(It.IsAny<MediaBrowser.Controller.Entities.BaseItem>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task OnItemRemoved_PurgesRecord_WhenPurgeOnItemRemovedTrue_AndIsMediaItem()
     {
         TestPluginContext.SetConfiguration(new PluginConfiguration { PurgeOnItemRemoved = true });
@@ -193,7 +254,7 @@ public class LibraryMonitorTests : IDisposable
     [Fact]
     public async Task StopAsync_UnsubscribesFromEvents()
     {
-        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemAdded = true });
+        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemAdded = true, ScanOnItemUpdated = true });
 
         var library = new Mock<ILibraryManager>();
         var scanner = new Mock<IScanEngine>();
@@ -203,6 +264,7 @@ public class LibraryMonitorTests : IDisposable
         await monitor.StopAsync(CancellationToken.None);
 
         library.Raise(l => l.ItemAdded += null, library.Object, new ItemChangeEventArgs { Item = MakeMediaItem() });
+        library.Raise(l => l.ItemUpdated += null, library.Object, new ItemChangeEventArgs { Item = MakeMediaItem() });
 
         scanner.Verify(
             s => s.ScanItemAsync(It.IsAny<MediaBrowser.Controller.Entities.BaseItem>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>()),
@@ -212,7 +274,7 @@ public class LibraryMonitorTests : IDisposable
     [Fact]
     public async Task Dispose_UnsubscribesFromEvents()
     {
-        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemAdded = true });
+        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemAdded = true, ScanOnItemUpdated = true });
 
         var library = new Mock<ILibraryManager>();
         var scanner = new Mock<IScanEngine>();
@@ -222,6 +284,7 @@ public class LibraryMonitorTests : IDisposable
         monitor.Dispose();
 
         library.Raise(l => l.ItemAdded += null, library.Object, new ItemChangeEventArgs { Item = MakeMediaItem() });
+        library.Raise(l => l.ItemUpdated += null, library.Object, new ItemChangeEventArgs { Item = MakeMediaItem() });
 
         scanner.Verify(
             s => s.ScanItemAsync(It.IsAny<MediaBrowser.Controller.Entities.BaseItem>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>()),
