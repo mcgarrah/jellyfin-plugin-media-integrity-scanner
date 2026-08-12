@@ -43,7 +43,44 @@ public partial class FfmpegResolver
     {
         _config = config;
         _logger = logger;
+
+        // Relay Jellyfin's own server-configuration-saved event. This fires on
+        // any server config save, not just an encoding-path change -- broader
+        // than strictly necessary, but re-resolution is cheap (a couple of
+        // File.Exists calls), so reacting to a few extra no-op fires is an
+        // acceptable trade against polling instead. Subscribers are expected
+        // to consult IsUsingCustomOverride() before treating this as
+        // meaningful, since a custom override has nothing for this event to
+        // ever invalidate.
+        _config.ConfigurationUpdated += (_, _) => ServerConfigurationChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>
+    /// Raised whenever Jellyfin's own server configuration is saved. Does not
+    /// by itself mean the resolved ffmpeg/ffprobe paths changed -- subscribers
+    /// should re-resolve and compare, or check <see cref="IsUsingCustomOverride"/>
+    /// first to skip the work entirely when it can't matter.
+    /// </summary>
+    public event EventHandler? ServerConfigurationChanged;
+
+    /// <summary>
+    /// Gets a value indicating whether both ffmpeg and ffprobe are pinned to a
+    /// user-configured override that currently resolves to a real file. When
+    /// true, Jellyfin's own global ffmpeg path is never consulted for either
+    /// binary (see <see cref="ResolveBinary"/>'s fallback order), so reacting
+    /// to <see cref="ServerConfigurationChanged"/> or offering a "re-check"
+    /// action as meaningful would be misleading -- there is nothing for either
+    /// to ever invalidate while both overrides remain set.
+    /// </summary>
+    /// <returns>True if both binaries are fully pinned to a valid override path.</returns>
+    public virtual bool IsUsingCustomOverride()
+    {
+        var config = Plugin.Instance?.Configuration;
+        return IsValidOverride(config?.FfmpegPathOverride) && IsValidOverride(config?.FfprobePathOverride);
+    }
+
+    private static bool IsValidOverride(string? overridePath) =>
+        !string.IsNullOrEmpty(overridePath) && File.Exists(overridePath);
 
     /// <summary>
     /// Resolves the path to the ffmpeg binary.

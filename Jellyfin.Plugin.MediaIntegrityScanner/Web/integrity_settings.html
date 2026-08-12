@@ -147,7 +147,19 @@
                     <div class="field-row">
                         <label for="FfprobePathOverride">FFprobe Path Override</label>
                         <input type="text" id="FfprobePathOverride" placeholder="Auto-detected if blank">
-                        <div class="field-hint">Only needed if the plugin picks the wrong ffmpeg/ffprobe binary automatically.</div>
+                        <div class="field-hint">
+                            Only needed if the plugin picks the wrong ffmpeg/ffprobe binary automatically.
+                            When both overrides above are set, Jellyfin's own global ffmpeg path (Dashboard
+                            &gt; Playback &gt; Transcoding) is never consulted for either binary.
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-primary" id="btn-refresh-ffmpeg" onclick="refreshFfmpegPaths()">Re-check FFmpeg Path Now</button>
+                    <p class="field-hint" id="ffmpeg-refresh-result"></p>
+                    <div class="field-hint">
+                        The resolved ffmpeg/ffprobe paths are otherwise only re-checked on restart/upgrade,
+                        or automatically when Jellyfin's own settings are saved (skipped if both overrides
+                        above are set, since there would be nothing to invalidate). Use this button to force
+                        a re-check immediately without saving this form or restarting.
                     </div>
                 </div>
 
@@ -220,6 +232,47 @@
             // REST responses (c8f4a3b2-1d5e-... -> c8f4a3b21d5e...); the plugin-config
             // endpoints require the same dashless form.
             var PLUGIN_ID = 'c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c';
+
+            function getApiUrl(path) {
+                return ApiClient.getUrl('MediaIntegrity/' + path);
+            }
+
+            function apiFetch(path, options) {
+                var url = getApiUrl(path);
+                var opts = Object.assign({
+                    headers: {
+                        'X-Emby-Token': ApiClient.accessToken()
+                    }
+                }, options || {});
+                return fetch(url, opts).then(function (resp) {
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    return resp.json();
+                });
+            }
+
+            function refreshFfmpegPaths() {
+                var btn = document.getElementById('btn-refresh-ffmpeg');
+                var resultEl = document.getElementById('ffmpeg-refresh-result');
+                btn.disabled = true;
+                resultEl.textContent = 'Checking...';
+
+                apiFetch('Ffmpeg/Refresh', {
+                    method: 'POST',
+                    headers: {
+                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Content-Type': 'application/json'
+                    }
+                }).then(function (result) {
+                    resultEl.textContent = (result.Changed ? 'Paths changed. ' : 'No change. ') +
+                        'ffmpeg: ' + result.FfmpegPath + ' / ffprobe: ' + result.FfprobePath;
+                    hideMessages();
+                }).catch(function (err) {
+                    showError('Failed to re-check ffmpeg paths: ' + err.message);
+                    resultEl.textContent = '';
+                }).then(function () {
+                    btn.disabled = false;
+                });
+            }
 
             function loadConfig() {
                 ApiClient.getPluginConfiguration(PLUGIN_ID).then(function (config) {

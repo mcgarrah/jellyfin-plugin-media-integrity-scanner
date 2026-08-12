@@ -47,6 +47,7 @@ public partial class MediaIntegrityController : ControllerBase
     private readonly IScanEngine _scanner;
     private readonly ILibraryManager _library;
     private readonly IUpdateChecker _updateChecker;
+    private readonly FfmpegWrapper _ffmpeg;
     private readonly ILogger<MediaIntegrityController> _logger;
 
     /// <summary>
@@ -56,18 +57,21 @@ public partial class MediaIntegrityController : ControllerBase
     /// <param name="scanner">Scan engine.</param>
     /// <param name="library">Library manager.</param>
     /// <param name="updateChecker">Plugin update checker.</param>
+    /// <param name="ffmpeg">FFmpeg wrapper, for manual path re-resolution.</param>
     /// <param name="logger">Logger instance.</param>
     public MediaIntegrityController(
         SqliteDatabaseManager db,
         IScanEngine scanner,
         ILibraryManager library,
         IUpdateChecker updateChecker,
+        FfmpegWrapper ffmpeg,
         ILogger<MediaIntegrityController> logger)
     {
         _db = db;
         _scanner = scanner;
         _library = library;
         _updateChecker = updateChecker;
+        _ffmpeg = ffmpeg;
         _logger = logger;
     }
 
@@ -397,6 +401,27 @@ public partial class MediaIntegrityController : ControllerBase
     }
 
     /// <summary>
+    /// Re-resolve the ffmpeg/ffprobe binary paths right now, rather than
+    /// waiting for the next restart/upgrade or a Jellyfin server-config save.
+    /// Always safe to call, including mid-scan or with a custom override
+    /// configured (it will simply re-confirm the override, since
+    /// <see cref="FfmpegResolver.ResolveBinary"/> always checks it first).
+    /// </summary>
+    /// <returns>The resolved paths and whether either one changed.</returns>
+    [HttpPost("Ffmpeg/Refresh")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<FfmpegRefreshResult> RefreshFfmpegPaths()
+    {
+        var changed = _ffmpeg.RefreshPaths();
+        return Ok(new FfmpegRefreshResult
+        {
+            Changed = changed,
+            FfmpegPath = _ffmpeg.FfmpegPath,
+            FfprobePath = _ffmpeg.FfprobePath
+        });
+    }
+
+    /// <summary>
     /// Get the current plugin version against the latest available versions
     /// on the stable and (if registered) development channels.
     /// </summary>
@@ -528,6 +553,21 @@ public class RestoreBackupRequest
 {
     /// <summary>Gets or sets the backup file name to restore, as returned by <c>GET Database/Backups</c>.</summary>
     public string FileName { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Response model for a manual ffmpeg/ffprobe path re-resolution.
+/// </summary>
+public class FfmpegRefreshResult
+{
+    /// <summary>Gets or sets a value indicating whether either resolved path actually changed.</summary>
+    public bool Changed { get; set; }
+
+    /// <summary>Gets or sets the currently resolved ffmpeg path.</summary>
+    public string FfmpegPath { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the currently resolved ffprobe path.</summary>
+    public string FfprobePath { get; set; } = string.Empty;
 }
 
 /// <summary>

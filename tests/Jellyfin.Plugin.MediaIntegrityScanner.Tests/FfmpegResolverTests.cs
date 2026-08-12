@@ -17,6 +17,9 @@
 using System;
 using System.Linq;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
+using MediaBrowser.Controller.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
@@ -27,8 +30,19 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
 /// OS-conditional GetPlatformCandidates is exercised here — Windows/macOS branches
 /// aren't reachable without running on those platforms.
 /// </summary>
-public class FfmpegResolverTests
+[Collection("PluginInstance")]
+public class FfmpegResolverTests : IDisposable
 {
+    public void Dispose() => TestPluginContext.Clear();
+
+    private static FfmpegResolver CreateResolver(Mock<IServerConfigurationManager>? config = null)
+    {
+        return new FfmpegResolver(
+            (config ?? new Mock<IServerConfigurationManager>()).Object,
+            NullLogger<FfmpegResolver>.Instance);
+    }
+
+
     [Fact]
     public void GetPlatformCandidates_Linux_ReturnsExpectedPaths()
     {
@@ -76,5 +90,81 @@ public class FfmpegResolverTests
     public void FindInPath_ReturnsNull_ForNonexistentExecutable()
     {
         Assert.Null(FfmpegResolver.FindInPath("this-executable-definitely-does-not-exist-xyz123"));
+    }
+
+    [Fact]
+    public void IsUsingCustomOverride_False_WhenNeitherOverrideSet()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration());
+        var resolver = CreateResolver();
+
+        Assert.False(resolver.IsUsingCustomOverride());
+    }
+
+    [Fact]
+    public void IsUsingCustomOverride_False_WhenOnlyOneOverrideSet()
+    {
+        var realFile = System.IO.Path.GetTempFileName();
+        try
+        {
+            TestPluginContext.SetConfiguration(new PluginConfiguration { FfmpegPathOverride = realFile });
+            var resolver = CreateResolver();
+
+            Assert.False(resolver.IsUsingCustomOverride());
+        }
+        finally
+        {
+            System.IO.File.Delete(realFile);
+        }
+    }
+
+    [Fact]
+    public void IsUsingCustomOverride_False_WhenOverrideSetButFileMissing()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            FfmpegPathOverride = "/definitely/does/not/exist/ffmpeg",
+            FfprobePathOverride = "/definitely/does/not/exist/ffprobe"
+        });
+        var resolver = CreateResolver();
+
+        Assert.False(resolver.IsUsingCustomOverride());
+    }
+
+    [Fact]
+    public void IsUsingCustomOverride_True_WhenBothOverridesSetAndFilesExist()
+    {
+        var ffmpegFile = System.IO.Path.GetTempFileName();
+        var ffprobeFile = System.IO.Path.GetTempFileName();
+        try
+        {
+            TestPluginContext.SetConfiguration(new PluginConfiguration
+            {
+                FfmpegPathOverride = ffmpegFile,
+                FfprobePathOverride = ffprobeFile
+            });
+            var resolver = CreateResolver();
+
+            Assert.True(resolver.IsUsingCustomOverride());
+        }
+        finally
+        {
+            System.IO.File.Delete(ffmpegFile);
+            System.IO.File.Delete(ffprobeFile);
+        }
+    }
+
+    [Fact]
+    public void ServerConfigurationChanged_Fires_WhenConfigurationUpdatedFires()
+    {
+        var config = new Mock<IServerConfigurationManager>();
+        var resolver = CreateResolver(config);
+
+        var raised = false;
+        resolver.ServerConfigurationChanged += (_, _) => raised = true;
+
+        config.Raise(c => c.ConfigurationUpdated += null, config.Object, EventArgs.Empty);
+
+        Assert.True(raised);
     }
 }
