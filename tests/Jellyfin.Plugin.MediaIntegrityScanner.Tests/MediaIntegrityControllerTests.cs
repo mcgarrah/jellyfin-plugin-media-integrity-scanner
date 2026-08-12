@@ -44,12 +44,22 @@ public class MediaIntegrityControllerTests : IDisposable
 
     private MediaIntegrityController CreateController()
     {
-        return new MediaIntegrityController(
+        var controller = new MediaIntegrityController(
             _dbFactory.Database,
             _scanner.Object,
             _library.Object,
             _updateChecker.Object,
             NullLogger<MediaIntegrityController>.Instance);
+
+        // A controller constructed directly (not through the real ASP.NET Core
+        // pipeline) has a null HttpContext by default -- real here since
+        // RefreshUpdateStatus/InstallUpdate read HttpContext.RequestAborted.
+        controller.ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext
+        {
+            HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext()
+        };
+
+        return controller;
     }
 
     private void SetLibraryItems(params Guid[] ids)
@@ -547,5 +557,175 @@ public class MediaIntegrityControllerTests : IDisposable
         Assert.Equal("FilePath,Status,Phase,Timestamp,DurationMs,DecodeMode,HardwareAccelType,Error", lines[0]);
         Assert.Contains(lines, l => l.Contains("Hardware", StringComparison.Ordinal) && l.Contains("cuda", StringComparison.Ordinal));
         Assert.Contains(lines, l => l.Contains("NotApplicable", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExportResults_Csv_ContentTypeAndFileName()
+    {
+        var controller = CreateController();
+        var result = await controller.ExportResults();
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("text/csv", file.ContentType);
+        Assert.EndsWith(".csv", file.FileDownloadName, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportResults_Tsv_UsesTabDelimiter_AndFlattensEmbeddedTabsAndNewlines()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "item-1",
+            FilePath = "/media/a.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Fail,
+            ScanTimestamp = "2026-01-01T00:00:00.0000000Z",
+            ErrorOutput = "line one\twith a tab\nline two"
+        });
+
+        var controller = CreateController();
+        var result = await controller.ExportResults(format: "tsv");
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("text/tab-separated-values", file.ContentType);
+        Assert.EndsWith(".tsv", file.FileDownloadName, StringComparison.Ordinal);
+
+        var tsv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        var lines = tsv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Equal("FilePath\tStatus\tPhase\tTimestamp\tDurationMs\tDecodeMode\tHardwareAccelType\tError", lines[0]);
+        // TSV has no standard quoting convention -- embedded tabs/newlines are
+        // flattened to spaces rather than quoted, so the row still has exactly
+        // 8 tab-separated fields and no literal tab/newline survives inside one.
+        var dataRow = lines[1];
+        Assert.Equal(8, dataRow.Split('\t').Length);
+        Assert.Contains("line one with a tab line two", dataRow, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportResults_FiltersByStatus()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "pass-item",
+            FilePath = "/media/pass.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = "2026-01-01T00:00:00.0000000Z"
+        });
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "fail-item",
+            FilePath = "/media/fail.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Fail,
+            ScanTimestamp = "2026-01-01T00:00:01.0000000Z"
+        });
+
+        var controller = CreateController();
+        var result = await controller.ExportResults(status: (int)ScanStatus.Fail);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+
+        Assert.Contains("fail.mkv", csv, StringComparison.Ordinal);
+        Assert.DoesNotContain("pass.mkv", csv, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportResults_Csv_QuotesFieldsContainingCommaQuoteOrNewline_PerRfc4180()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "item-1",
+            FilePath = "/media/a.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Fail,
+            ScanTimestamp = "2026-01-01T00:00:00.0000000Z",
+            ErrorOutput = "moov atom not found, \"invalid\" data\nsecond line"
+        });
+
+        var controller = CreateController();
+        var result = await controller.ExportResults();
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+
+        // RFC 4180: wrap the whole field in double quotes, and double up any
+        // literal quote characters inside it. The embedded newline stays
+        // literal *inside* the quoted field rather than starting a new CSV row.
+        Assert.Contains("\"moov atom not found, \"\"invalid\"\" data\nsecond line\"", csv, StringComparison.Ordinal);
+    }
+
+    // --- GetUpdateStatus / RefreshUpdateStatus / InstallUpdate ---
+
+    [Fact]
+    public async Task GetUpdateStatus_ReturnsCachedStatus_WithoutCallingRefreshAsync()
+    {
+        var cached = new UpdateStatus { CurrentVersion = "0.1.0.0", UpdateAvailable = false };
+        _updateChecker.SetupGet(u => u.CachedStatus).Returns(cached);
+
+        var controller = CreateController();
+        var result = await controller.GetUpdateStatus();
+
+        var status = Assert.IsType<UpdateStatus>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Same(cached, status);
+        _updateChecker.Verify(u => u.RefreshAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetUpdateStatus_NoCachedStatus_FallsBackToRefreshAsync()
+    {
+        _updateChecker.SetupGet(u => u.CachedStatus).Returns((UpdateStatus?)null);
+        var fresh = new UpdateStatus { CurrentVersion = "0.1.0.0", UpdateAvailable = true, AvailableVersion = "0.2.0.0" };
+        _updateChecker.Setup(u => u.RefreshAsync(It.IsAny<CancellationToken>())).ReturnsAsync(fresh);
+
+        var controller = CreateController();
+        var result = await controller.GetUpdateStatus();
+
+        var status = Assert.IsType<UpdateStatus>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Same(fresh, status);
+        _updateChecker.Verify(u => u.RefreshAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RefreshUpdateStatus_AlwaysCallsRefreshAsync_EvenWhenACachedStatusExists()
+    {
+        var cached = new UpdateStatus { CurrentVersion = "0.1.0.0", UpdateAvailable = false };
+        _updateChecker.SetupGet(u => u.CachedStatus).Returns(cached);
+        var fresh = new UpdateStatus { CurrentVersion = "0.1.0.0", UpdateAvailable = true, AvailableVersion = "0.2.0.0" };
+        _updateChecker.Setup(u => u.RefreshAsync(It.IsAny<CancellationToken>())).ReturnsAsync(fresh);
+
+        var controller = CreateController();
+        var result = await controller.RefreshUpdateStatus();
+
+        var status = Assert.IsType<UpdateStatus>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Same(fresh, status);
+        _updateChecker.Verify(u => u.RefreshAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task InstallUpdate_ReturnsOk_WhenInstallSucceeds()
+    {
+        _updateChecker.Setup(u => u.InstallAsync(UpdateChannel.Development, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var controller = CreateController();
+        var result = await controller.InstallUpdate(new InstallUpdateRequest { Channel = UpdateChannel.Development });
+
+        Assert.IsType<OkObjectResult>(result);
+        _updateChecker.Verify(u => u.InstallAsync(UpdateChannel.Development, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task InstallUpdate_ReturnsBadRequest_WhenInstallAsyncThrowsInvalidOperationException()
+    {
+        _updateChecker.Setup(u => u.InstallAsync(It.IsAny<UpdateChannel>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("no version found for that channel"));
+
+        var controller = CreateController();
+        var result = await controller.InstallUpdate(new InstallUpdateRequest { Channel = UpdateChannel.Stable });
+
+        Assert.IsType<BadRequestObjectResult>(result);
     }
 }
