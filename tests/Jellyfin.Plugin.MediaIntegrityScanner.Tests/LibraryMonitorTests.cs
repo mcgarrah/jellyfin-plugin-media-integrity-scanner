@@ -206,6 +206,51 @@ public class LibraryMonitorTests : IDisposable
     }
 
     [Fact]
+    public async Task OnItemUpdated_SkipsDispatch_WhenOnItemAddedScanForSameItemIsAlreadyInFlight()
+    {
+        // The real scenario this guards against, and the actual cause of the
+        // CI-caught regression this test was added to fix: Jellyfin fires
+        // ItemUpdated for a genuinely new item moments after ItemAdded, before
+        // that item's own add-triggered scan has completed (or saved a record
+        // IsCurrentAsync could compare against) -- without this dedup guard,
+        // that doubles the event-driven scan queue on every burst-add.
+        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemAdded = true, ScanOnItemUpdated = true });
+
+        var library = new Mock<ILibraryManager>();
+        var scanner = new Mock<IScanEngine>();
+        var db = new Mock<IDatabaseManager>();
+        var item = MakeMediaItem();
+
+        // OnItemAdded's scan is held open (as it would be for the real
+        // DelayBetweenFilesMs + ffprobe duration) so ItemUpdated fires while
+        // it's still "in flight" from this handler's point of view.
+        var addedScanStarted = new TaskCompletionSource();
+        var releaseAddedScan = new TaskCompletionSource();
+        scanner.Setup(s => s.ScanItemAsync(item, ScanPhase.Header, It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                addedScanStarted.TrySetResult();
+                await releaseAddedScan.Task;
+            });
+
+        var monitor = CreateMonitor(library, scanner, db);
+        await monitor.StartAsync(CancellationToken.None);
+
+        library.Raise(l => l.ItemAdded += null, library.Object, new ItemChangeEventArgs { Item = item });
+        await addedScanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        library.Raise(l => l.ItemUpdated += null, library.Object, new ItemChangeEventArgs { Item = item });
+
+        // The dedup check runs synchronously inside OnItemUpdated, before any
+        // Task.Run is scheduled -- nothing to wait for here, unlike the
+        // IsCurrentAsync check which only runs once dispatch already won.
+        scanner.Verify(s => s.ScanItemAsync(item, ScanPhase.Header, It.IsAny<CancellationToken>()), Times.Once);
+        db.Verify(d => d.IsCurrentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+
+        releaseAddedScan.TrySetResult();
+    }
+
+    [Fact]
     public async Task OnItemUpdated_DoesNothing_WhenScanOnItemUpdatedFalse()
     {
         TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemUpdated = false });
