@@ -157,8 +157,12 @@
                     <div class="stat-value status-fail" id="errored-files">&mdash;</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">Pending</div>
-                    <div class="stat-value status-pending" id="pending-files">&mdash;</div>
+                    <div class="stat-label">Pending Header Scan</div>
+                    <div class="stat-value status-pending" id="pending-header-files">&mdash;</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Pending Deep Scan</div>
+                    <div class="stat-value status-pending" id="pending-deep-files">&mdash;</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Status</div>
@@ -321,8 +325,10 @@
                         data.FailedFiles;
                     document.getElementById('errored-files').textContent =
                         data.ErroredFiles;
-                    document.getElementById('pending-files').textContent =
-                        data.PendingFiles;
+                    document.getElementById('pending-header-files').textContent =
+                        data.PendingHeaderFiles;
+                    document.getElementById('pending-deep-files').textContent =
+                        data.PendingDeepFiles;
                     document.getElementById('scan-status').textContent =
                         data.IsScanning ? 'Scanning...' : 'Idle';
                     document.getElementById('health-bar').style.width =

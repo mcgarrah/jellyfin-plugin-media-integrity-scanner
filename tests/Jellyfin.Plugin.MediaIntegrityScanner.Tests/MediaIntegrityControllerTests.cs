@@ -87,7 +87,8 @@ public class MediaIntegrityControllerTests : IDisposable
         Assert.Equal(3, response.TotalFiles);
         Assert.Equal(1, response.ScannedFiles);
         Assert.Equal(1, response.PassedFiles);
-        Assert.Equal(2, response.PendingFiles);
+        Assert.Equal(2, response.PendingHeaderFiles);
+        Assert.Equal(3, response.PendingDeepFiles);
         Assert.Equal(100.0, response.HealthPercentage);
     }
 
@@ -101,8 +102,51 @@ public class MediaIntegrityControllerTests : IDisposable
 
         var response = Assert.IsType<ScanStatusResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
         Assert.Equal(0, response.ScannedFiles);
-        Assert.Equal(2, response.PendingFiles);
+        Assert.Equal(2, response.PendingHeaderFiles);
+        Assert.Equal(2, response.PendingDeepFiles);
         Assert.Equal(0, response.HealthPercentage);
+    }
+
+    [Fact]
+    public async Task GetStatus_TracksHeaderAndDeepPendingCountsIndependently()
+    {
+        // Regression test for the bug where a Deep Scan in progress showed
+        // "0 pending" (and thus looked hung) because the old single PendingFiles
+        // counter treated any item with a prior Header-phase record as fully
+        // "scanned", even though FullDecode hadn't touched it yet.
+        var headerOnlyId = Guid.NewGuid();
+        var deepScannedId = Guid.NewGuid();
+        var neverScannedId = Guid.NewGuid();
+        SetLibraryItems(headerOnlyId, deepScannedId, neverScannedId);
+
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = headerOnlyId.ToString(),
+            FilePath = "/media/header-only.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = DateTime.UtcNow.ToString("O")
+        });
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = deepScannedId.ToString(),
+            FilePath = "/media/deep-scanned.mkv",
+            ScanPhase = (int)ScanPhase.FullDecode,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = DateTime.UtcNow.ToString("O")
+        });
+
+        var controller = CreateController();
+        var result = await controller.GetStatus();
+
+        var response = Assert.IsType<ScanStatusResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(3, response.TotalFiles);
+        // Header-equivalent: header-only + deep-scanned both count (FullDecode implies Header).
+        Assert.Equal(2, response.ScannedFiles);
+        Assert.Equal(1, response.PendingHeaderFiles); // only neverScannedId
+        // Deep-specific: only the FullDecode item counts; the header-only item
+        // is still pending a deep scan even though it's not pending a header scan.
+        Assert.Equal(2, response.PendingDeepFiles); // headerOnlyId + neverScannedId
     }
 
     [Fact]

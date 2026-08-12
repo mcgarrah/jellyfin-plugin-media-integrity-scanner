@@ -81,7 +81,8 @@ public partial class MediaIntegrityController : ControllerBase
     {
         var stats = await _db.GetStatisticsAsync().ConfigureAwait(false);
         var totalFiles = GetLibraryMediaItems(null).Count;
-        var pendingFiles = Math.Max(0, totalFiles - stats.ScannedFiles);
+        var pendingHeaderFiles = Math.Max(0, totalFiles - stats.ScannedFiles);
+        var pendingDeepFiles = Math.Max(0, totalFiles - stats.DeepScannedFiles);
 
         return Ok(new ScanStatusResponse
         {
@@ -91,7 +92,8 @@ public partial class MediaIntegrityController : ControllerBase
             PassedFiles = stats.PassedFiles,
             FailedFiles = stats.FailedFiles,
             ErroredFiles = stats.ErroredFiles,
-            PendingFiles = pendingFiles,
+            PendingHeaderFiles = pendingHeaderFiles,
+            PendingDeepFiles = pendingDeepFiles,
             LastScanTimestamp = stats.LastScanTimestamp,
             HealthPercentage = stats.ScannedFiles > 0
                 ? Math.Round((double)stats.PassedFiles / stats.ScannedFiles * 100, 1)
@@ -443,8 +445,17 @@ public class ScanStatusResponse
     /// <summary>Gets or sets the number of files whose most recent scan ended in an error.</summary>
     public int ErroredFiles { get; set; }
 
-    /// <summary>Gets or sets the number of files pending scan.</summary>
-    public int PendingFiles { get; set; }
+    /// <summary>
+    /// Gets or sets the number of files still pending a Header (light/quick) scan.
+    /// </summary>
+    public int PendingHeaderFiles { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of files still pending a FullDecode (deep) scan.
+    /// A file already scanned at the Header phase but not yet deep-scanned
+    /// counts here, even though it does not count toward <see cref="PendingHeaderFiles"/>.
+    /// </summary>
+    public int PendingDeepFiles { get; set; }
 
     /// <summary>Gets or sets the timestamp of the last scan.</summary>
     public string? LastScanTimestamp { get; set; }

@@ -254,6 +254,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         var stats = await _db.GetStatisticsAsync();
 
         Assert.Equal(0, stats.ScannedFiles);
+        Assert.Equal(0, stats.DeepScannedFiles);
         Assert.Equal(0, stats.PassedFiles);
         Assert.Equal(0, stats.FailedFiles);
         Assert.Equal(0, stats.ErroredFiles);
@@ -268,6 +269,8 @@ public class SqliteDatabaseManagerTests : IDisposable
         var stats = await _db.GetStatisticsAsync();
 
         Assert.Equal(1, stats.ScannedFiles);
+        // MakeRecord defaults to Header phase, so this item has not been deep-scanned.
+        Assert.Equal(0, stats.DeepScannedFiles);
         Assert.Equal(1, stats.PassedFiles);
         Assert.Equal(0, stats.FailedFiles);
         Assert.Equal(0, stats.ErroredFiles);
@@ -283,6 +286,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         var stats = await _db.GetStatisticsAsync();
 
         Assert.Equal(1, stats.ScannedFiles);
+        Assert.Equal(1, stats.DeepScannedFiles);
         Assert.Equal(0, stats.PassedFiles);
         Assert.Equal(1, stats.FailedFiles);
     }
@@ -301,6 +305,26 @@ public class SqliteDatabaseManagerTests : IDisposable
         Assert.Equal(2, stats.PassedFiles);
         Assert.Equal(1, stats.FailedFiles);
         Assert.Equal(1, stats.ErroredFiles);
+    }
+
+    [Fact]
+    public async Task GetStatisticsAsync_DeepScannedFiles_CountsOnlyItemsWithAFullDecodeRecord()
+    {
+        // Regression test for the bug where the dashboard showed "0 pending"
+        // during an active Deep Scan because ScannedFiles counted any item with
+        // ANY prior record (e.g. an old Header-phase result) as fully "scanned".
+        // header-only: has a record, but never deep-scanned.
+        await _db.SaveResultAsync(MakeRecord("header-only", phase: (int)ScanPhase.Header, status: (int)ScanStatus.Pass));
+        // deep-only: went straight to a deep scan with no prior header record.
+        await _db.SaveResultAsync(MakeRecord("deep-only", phase: (int)ScanPhase.FullDecode, status: (int)ScanStatus.Pass));
+        // both: scanned at both phases -- the deep record is the "latest" (highest phase) one.
+        await _db.SaveResultAsync(MakeRecord("both", phase: (int)ScanPhase.Header, status: (int)ScanStatus.Pass));
+        await _db.SaveResultAsync(MakeRecord("both", phase: (int)ScanPhase.FullDecode, status: (int)ScanStatus.Pass));
+
+        var stats = await _db.GetStatisticsAsync();
+
+        Assert.Equal(3, stats.ScannedFiles); // all 3 items have at least a Header record
+        Assert.Equal(2, stats.DeepScannedFiles); // only deep-only and both
     }
 
     [Fact]

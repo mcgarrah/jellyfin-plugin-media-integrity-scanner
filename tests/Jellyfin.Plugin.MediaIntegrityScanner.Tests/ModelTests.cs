@@ -113,6 +113,7 @@ public class ModelTests
         var stats = new ScanStatistics();
 
         Assert.Equal(0, stats.ScannedFiles);
+        Assert.Equal(0, stats.DeepScannedFiles);
         Assert.Equal(0, stats.PassedFiles);
         Assert.Equal(0, stats.FailedFiles);
         Assert.Equal(0, stats.ErroredFiles);
@@ -140,7 +141,8 @@ public class ModelTests
             PassedFiles = 70,
             FailedFiles = 5,
             ErroredFiles = 5,
-            PendingFiles = 20,
+            PendingHeaderFiles = 20,
+            PendingDeepFiles = 45,
             LastScanTimestamp = "2026-01-01T00:00:00.0000000Z",
             HealthPercentage = 87.5
         };
@@ -151,7 +153,8 @@ public class ModelTests
         Assert.Equal(70, response.PassedFiles);
         Assert.Equal(5, response.FailedFiles);
         Assert.Equal(5, response.ErroredFiles);
-        Assert.Equal(20, response.PendingFiles);
+        Assert.Equal(20, response.PendingHeaderFiles);
+        Assert.Equal(45, response.PendingDeepFiles);
         Assert.Equal("2026-01-01T00:00:00.0000000Z", response.LastScanTimestamp);
         Assert.Equal(87.5, response.HealthPercentage);
     }
