@@ -28,6 +28,9 @@ test.describe('Media Integrity Scanner settings', () => {
     await expect(page.locator('#ScanOnItemAdded')).toBeChecked();
     await expect(page.locator('#EnableAutoUpdate')).not.toBeChecked();
     await expect(page.locator('#AutoRestartAfterUpdate')).not.toBeChecked();
+    // Both default to true/none respectively -- see PluginConfiguration.cs.
+    await expect(page.locator('#EnableAutoDatabaseMaintenance')).toBeChecked();
+    await expect(page.locator('#HardwareAccelerationType')).toHaveValue('none');
     await expect(page.locator('#QuietHoursStart')).toHaveValue('02:00');
     await expect(page.locator('#QuietHoursEnd')).toHaveValue('06:00');
     await expect(page.locator('#error-msg')).toBeHidden();
@@ -56,6 +59,25 @@ test.describe('Media Integrity Scanner settings', () => {
     await expect(page.locator('#btn-save')).toBeEnabled({ timeout: 10000 });
     await page.reload({ waitUntil: 'load' });
     await expect(page.locator('#MaxConcurrentScans')).toHaveValue(original, { timeout: 15000 });
+  });
+
+  test('saving a changed <select> value persists across a reload, then restores it', async ({ page }) => {
+    // The numeric-input round trip above doesn't exercise a <select>, which
+    // has its own real failure mode (e.g. loadConfig() using the wrong
+    // property name and silently leaving the browser default selected).
+    await page.locator('#HardwareAccelerationType').selectOption('nvenc');
+    await page.locator('#btn-save').click();
+    await expect(page.locator('#btn-save')).toBeEnabled({ timeout: 10000 });
+    await expect(page.locator('#error-msg')).toBeHidden();
+
+    await page.reload({ waitUntil: 'load' });
+    await expect(page.locator('#HardwareAccelerationType')).toHaveValue('nvenc', { timeout: 15000 });
+
+    await page.locator('#HardwareAccelerationType').selectOption('none');
+    await page.locator('#btn-save').click();
+    await expect(page.locator('#btn-save')).toBeEnabled({ timeout: 10000 });
+    await page.reload({ waitUntil: 'load' });
+    await expect(page.locator('#HardwareAccelerationType')).toHaveValue('none', { timeout: 15000 });
   });
 
   test('"<< Back to Dashboard" navigates via the SPA router without a full reload', async ({ page }) => {
