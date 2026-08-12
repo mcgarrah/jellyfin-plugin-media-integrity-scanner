@@ -177,6 +177,20 @@
                     </div>
                 </div>
 
+                <div class="settings-section">
+                    <h2>Database Maintenance</h2>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="EnableAutoDatabaseMaintenance">
+                        <label for="EnableAutoDatabaseMaintenance">Automatically check integrity and reclaim space weekly</label>
+                    </div>
+                    <div class="field-hint">
+                        On by default. Runs an integrity check against this plugin's own scan-history
+                        database, then a VACUUM if it passes, on a weekly schedule -- always skipped
+                        automatically while a scan is in progress. Also available as a manual "Run
+                        Maintenance Now" button on the dashboard.
+                    </div>
+                </div>
+
                 <button type="submit" class="btn btn-primary" id="btn-save">Save</button>
             </form>
         </div>
@@ -206,6 +220,7 @@
                     document.getElementById('DevManifestUrl').value = config.DevManifestUrl || '';
                     document.getElementById('EnableAutoUpdate').checked = !!config.EnableAutoUpdate;
                     document.getElementById('AutoRestartAfterUpdate').checked = !!config.AutoRestartAfterUpdate;
+                    document.getElementById('EnableAutoDatabaseMaintenance').checked = config.EnableAutoDatabaseMaintenance !== false;
                     hideMessages();
                 }).catch(function (err) {
                     showError('Failed to load configuration: ' + err.message);
@@ -237,6 +252,7 @@
                     config.DevManifestUrl = document.getElementById('DevManifestUrl').value || '';
                     config.EnableAutoUpdate = document.getElementById('EnableAutoUpdate').checked;
                     config.AutoRestartAfterUpdate = document.getElementById('AutoRestartAfterUpdate').checked;
+                    config.EnableAutoDatabaseMaintenance = document.getElementById('EnableAutoDatabaseMaintenance').checked;
 
                     return ApiClient.updatePluginConfiguration(PLUGIN_ID, config);
                 }).then(function (result) {

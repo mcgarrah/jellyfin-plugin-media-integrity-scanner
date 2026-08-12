@@ -456,4 +456,59 @@ public class MediaIntegrityControllerTests : IDisposable
         Assert.NotNull(await _dbFactory.Database.GetItemDetailAsync("before-backup"));
         Assert.Null(await _dbFactory.Database.GetItemDetailAsync("after-backup"));
     }
+
+    // --- GetDatabaseInfo / RunDatabaseMaintenance ---
+
+    [Fact]
+    public async Task GetDatabaseInfo_ReturnsRealSizesFromTheDatabase()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "item-1",
+            FilePath = "/media/a.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = DateTime.UtcNow.ToString("O")
+        });
+
+        var controller = CreateController();
+        var result = await controller.GetDatabaseInfo();
+
+        var info = Assert.IsType<DatabaseMaintenanceInfo>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.True(info.FileSizeBytes > 0);
+        Assert.True(info.LogicalSizeBytes > 0);
+    }
+
+    [Fact]
+    public async Task RunDatabaseMaintenance_ReturnsConflict_AndDoesNotRun_WhenScanning()
+    {
+        _scanner.SetupGet(s => s.IsScanning).Returns(true);
+        var controller = CreateController();
+
+        var result = await controller.RunDatabaseMaintenance();
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task RunDatabaseMaintenance_ReturnsOk_AndActuallyRunsMaintenance_WhenNotScanning()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "item-1",
+            FilePath = "/media/a.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = DateTime.UtcNow.ToString("O")
+        });
+        _scanner.SetupGet(s => s.IsScanning).Returns(false);
+        var controller = CreateController();
+
+        var result = await controller.RunDatabaseMaintenance();
+
+        var maintenanceResult = Assert.IsType<DatabaseMaintenanceResult>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.True(maintenanceResult.IntegrityCheckOk);
+        Assert.Equal("ok", maintenanceResult.IntegrityCheckMessage);
+        Assert.True(maintenanceResult.VacuumRan);
+    }
 }

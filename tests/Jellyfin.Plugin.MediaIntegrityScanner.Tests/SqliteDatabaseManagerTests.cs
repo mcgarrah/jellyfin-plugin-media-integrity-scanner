@@ -22,6 +22,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
@@ -597,6 +598,106 @@ public class SqliteDatabaseManagerTests : IDisposable
     public async Task RestoreAsync_ThrowsArgumentException_ForNonBareFileNames(string maliciousFileName)
     {
         await Assert.ThrowsAsync<ArgumentException>(() => _db.RestoreAsync(maliciousFileName));
+    }
+
+    // --- GetMaintenanceInfoAsync / RunMaintenanceAsync ---
+
+    [Fact]
+    public async Task GetMaintenanceInfoAsync_ReportsNonZeroSizes_ForAnInitializedDatabase()
+    {
+        var info = await _db.GetMaintenanceInfoAsync();
+
+        Assert.True(info.FileSizeBytes > 0);
+        Assert.True(info.LogicalSizeBytes > 0);
+        Assert.True(info.ReclaimableBytes >= 0);
+    }
+
+    [Fact]
+    public async Task RunMaintenanceAsync_OnAHealthyDatabase_PassesIntegrityCheckAndRunsVacuum()
+    {
+        await _db.SaveResultAsync(MakeRecord("item-1"));
+
+        var result = await _db.RunMaintenanceAsync();
+
+        Assert.True(result.IntegrityCheckOk);
+        Assert.Equal("ok", result.IntegrityCheckMessage);
+        Assert.True(result.VacuumRan);
+        Assert.True(result.SizeBeforeBytes > 0);
+        Assert.True(result.SizeAfterBytes > 0);
+    }
+
+    [Fact]
+    public async Task RunMaintenanceAsync_ReclaimsSpaceFreedByDeletedRows()
+    {
+        // Insert enough rows with sizable content to span multiple SQLite
+        // pages, then delete most of them -- this is the exact scenario
+        // VACUUM exists for: freed pages sitting inside the file, not yet
+        // returned to the OS.
+        var bulkyError = new string('x', 4000);
+        for (var i = 0; i < 200; i++)
+        {
+            await _db.SaveResultAsync(MakeRecord($"item-{i}", error: bulkyError));
+        }
+
+        for (var i = 0; i < 180; i++)
+        {
+            await _db.PurgeItemAsync($"item-{i}");
+        }
+
+        var infoBefore = await _db.GetMaintenanceInfoAsync();
+        Assert.True(infoBefore.ReclaimableBytes > 0);
+
+        var result = await _db.RunMaintenanceAsync();
+
+        Assert.True(result.VacuumRan);
+        Assert.True(result.SizeAfterBytes < result.SizeBeforeBytes);
+
+        var infoAfter = await _db.GetMaintenanceInfoAsync();
+        Assert.Equal(0, infoAfter.ReclaimableBytes);
+    }
+
+    [Fact]
+    public async Task RunMaintenanceAsync_OnACorruptedDatabase_FailsIntegrityCheckAndSkipsVacuum()
+    {
+        await _db.SaveResultAsync(MakeRecord("item-1"));
+
+        // Run maintenance once first, purely so its own WAL checkpoint puts
+        // all committed content into the main .db file on disk -- otherwise
+        // corrupting the main file's bytes below could miss data that's still
+        // only present in the -wal file, and integrity_check would see the
+        // (uncorrupted) WAL version instead of what we actually broke.
+        var baseline = await _db.RunMaintenanceAsync();
+        Assert.True(baseline.IntegrityCheckOk);
+
+        // Overwrite real page content with garbage, well past the 100-byte
+        // header, so SQLite can still open the file (valid header) but
+        // integrity_check finds real corruption inside -- not just a
+        // malformed/unopenable file. Scattered rather than contiguous bytes,
+        // to raise the odds of actually hitting structurally-significant
+        // b-tree fields rather than incidental padding.
+        var bytes = await File.ReadAllBytesAsync(_factory.DbPath);
+        Assert.True(bytes.Length > 1000, "expected the database file to span more than one page");
+        for (var i = 100; i < bytes.Length; i += 11)
+        {
+            bytes[i] = 0xFF;
+        }
+
+        await File.WriteAllBytesAsync(_factory.DbPath, bytes);
+
+        // Microsoft.Data.Sqlite pools connections by connection string, so the
+        // next RunMaintenanceAsync() call below could otherwise reuse the same
+        // native handle as the baseline call above -- with page 1 still cached
+        // in memory from before the corruption, masking it entirely. This is
+        // the same pooling gotcha RestoreAsync's own implementation already
+        // guards against for the same reason.
+        SqliteConnection.ClearAllPools();
+
+        var result = await _db.RunMaintenanceAsync();
+
+        Assert.False(result.IntegrityCheckOk);
+        Assert.NotEqual("ok", result.IntegrityCheckMessage);
+        Assert.False(result.VacuumRan);
+        Assert.Equal(result.SizeBeforeBytes, result.SizeAfterBytes);
     }
 
     // --- Dispose ---
