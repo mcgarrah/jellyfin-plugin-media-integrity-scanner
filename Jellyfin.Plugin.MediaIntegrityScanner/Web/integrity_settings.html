@@ -86,6 +86,26 @@
                         <input type="checkbox" id="EnableDeepScan">
                         <label for="EnableDeepScan">Enable deep scan (Phase 2 full byte-stream decode)</label>
                     </div>
+                    <div class="field-row">
+                        <label for="HardwareAccelerationType">Deep Scan Hardware Acceleration</label>
+                        <select id="HardwareAccelerationType">
+                            <option value="none">None (CPU software decode)</option>
+                            <option value="nvenc">NVIDIA (NVDEC via CUDA)</option>
+                            <option value="vaapi">VAAPI (Intel/AMD, Linux)</option>
+                            <option value="qsv">Intel Quick Sync Video</option>
+                            <option value="videotoolbox">Apple VideoToolbox (macOS)</option>
+                        </select>
+                        <div class="field-hint">
+                            Only affects Phase 2 (deep scan) decoding -- Phase 1's header check uses ffprobe,
+                            which never decodes the file. Requires the corresponding GPU to actually be passed
+                            through to this Jellyfin instance with its driver installed; not yet verified
+                            against real hardware in this deployment, including whether ffmpeg falls back to
+                            software cleanly or errors out if the device isn't actually available -- test
+                            against a single file before relying on it for a full library scan. Every scan
+                            result records which mode (software/hardware, and which backend) actually decoded
+                            it, so results from before and after enabling this stay distinguishable.
+                        </div>
+                    </div>
                     <div class="checkbox-row">
                         <input type="checkbox" id="ScanOnItemAdded">
                         <label for="ScanOnItemAdded">Scan newly added items automatically</label>
@@ -207,6 +227,7 @@
                     document.getElementById('DelayBetweenFilesMs').value = config.DelayBetweenFilesMs;
                     document.getElementById('PauseDuringPlayback').checked = !!config.PauseDuringPlayback;
                     document.getElementById('EnableDeepScan').checked = !!config.EnableDeepScan;
+                    document.getElementById('HardwareAccelerationType').value = config.HardwareAccelerationType || 'none';
                     document.getElementById('ScanOnItemAdded').checked = !!config.ScanOnItemAdded;
                     document.getElementById('PurgeOnItemRemoved').checked = !!config.PurgeOnItemRemoved;
                     document.getElementById('MaxReadRateMbPerSec').value = config.MaxReadRateMbPerSec;
@@ -239,6 +260,7 @@
                     config.DelayBetweenFilesMs = parseInt(document.getElementById('DelayBetweenFilesMs').value, 10) || 0;
                     config.PauseDuringPlayback = document.getElementById('PauseDuringPlayback').checked;
                     config.EnableDeepScan = document.getElementById('EnableDeepScan').checked;
+                    config.HardwareAccelerationType = document.getElementById('HardwareAccelerationType').value || 'none';
                     config.ScanOnItemAdded = document.getElementById('ScanOnItemAdded').checked;
                     config.PurgeOnItemRemoved = document.getElementById('PurgeOnItemRemoved').checked;
                     config.MaxReadRateMbPerSec = parseInt(document.getElementById('MaxReadRateMbPerSec').value, 10) || 0;

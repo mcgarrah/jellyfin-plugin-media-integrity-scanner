@@ -143,7 +143,9 @@ public partial class ScanEngine : IScanEngine, IDisposable
                     : (int)ScanStatus.Fail,
                 ScanTimestamp = DateTime.UtcNow.ToString("O"),
                 ErrorOutput = result.ErrorOutput,
-                ScanDurationMs = result.DurationMs
+                ScanDurationMs = result.DurationMs,
+                DecodeMode = (int)result.DecodeMode,
+                HardwareAccelType = result.HardwareAccelType
             }).ConfigureAwait(false);
 
             if (result.Success)
@@ -165,7 +167,19 @@ public partial class ScanEngine : IScanEngine, IDisposable
         {
             LogScanError(ex, item.Path);
 
-            // Record the error
+            // Record the error. For a FullDecode attempt, record which decode
+            // mode was in play at the time -- same resolution FfmpegWrapper
+            // itself would have used -- so a hardware-decode-related failure
+            // isn't indistinguishable from a software one after the fact.
+            var attemptedHwAccelFlag = phase == ScanPhase.FullDecode
+                ? FfmpegWrapper.ResolveHwAccelFlag(Plugin.Instance?.Configuration?.HardwareAccelerationType ?? MediaBrowser.Model.Entities.HardwareAccelerationType.none)
+                : null;
+            var attemptedDecodeMode = phase switch
+            {
+                ScanPhase.FullDecode => attemptedHwAccelFlag is null ? DecodeMode.Software : DecodeMode.Hardware,
+                _ => DecodeMode.NotApplicable
+            };
+
             await _db.SaveResultAsync(new ScanRecord
             {
                 ItemId = item.Id.ToString(),
@@ -173,7 +187,9 @@ public partial class ScanEngine : IScanEngine, IDisposable
                 ScanPhase = (int)phase,
                 ScanStatus = (int)ScanStatus.Error,
                 ScanTimestamp = DateTime.UtcNow.ToString("O"),
-                ErrorOutput = ex.Message
+                ErrorOutput = ex.Message,
+                DecodeMode = (int)attemptedDecodeMode,
+                HardwareAccelType = attemptedHwAccelFlag
             }).ConfigureAwait(false);
         }
         finally

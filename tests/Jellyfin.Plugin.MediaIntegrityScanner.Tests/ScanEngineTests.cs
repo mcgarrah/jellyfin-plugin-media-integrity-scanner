@@ -177,6 +177,106 @@ public class ScanEngineTests : IDisposable
         wrapper.Verify(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task ScanItemAsync_FullDecode_PersistsDecodeModeAndHardwareAccelType_FromTheResult()
+    {
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.DecodeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult
+            {
+                Success = true,
+                DurationMs = 10,
+                DecodeMode = DecodeMode.Hardware,
+                HardwareAccelType = "cuda"
+            });
+
+        var db = new Mock<IDatabaseManager>();
+        ScanRecord? saved = null;
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>()))
+            .Callback<ScanRecord>(r => saved = r)
+            .Returns(Task.CompletedTask);
+
+        var engine = CreateEngine(wrapper, db);
+
+        await engine.ScanItemAsync(MakeItem(), ScanPhase.FullDecode, CancellationToken.None);
+
+        Assert.NotNull(saved);
+        Assert.Equal((int)DecodeMode.Hardware, saved!.DecodeMode);
+        Assert.Equal("cuda", saved.HardwareAccelType);
+    }
+
+    [Fact]
+    public async Task ScanItemAsync_FullDecode_WhenDecodeThrows_RecordsAttemptedDecodeModeFromConfig()
+    {
+        // Even though DecodeAsync itself threw before returning a ScanResult, the
+        // saved error record should still reflect which mode was actually in play
+        // at attempt time -- same resolution FfmpegWrapper.ResolveHwAccelFlag would
+        // have used -- so a hardware-decode-related crash isn't indistinguishable
+        // from a software one after the fact.
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            MaxConcurrentScans = 1,
+            DelayBetweenFilesMs = 0,
+            PauseDuringPlayback = false,
+            UseQuietHoursOnly = false,
+            MaxReadRateMbPerSec = 0,
+            HardwareAccelerationType = MediaBrowser.Model.Entities.HardwareAccelerationType.nvenc
+        });
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.DecodeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("decoder crashed"));
+
+        var db = new Mock<IDatabaseManager>();
+        ScanRecord? saved = null;
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>()))
+            .Callback<ScanRecord>(r => saved = r)
+            .Returns(Task.CompletedTask);
+
+        var engine = CreateEngine(wrapper, db);
+
+        await engine.ScanItemAsync(MakeItem(), ScanPhase.FullDecode, CancellationToken.None);
+
+        Assert.NotNull(saved);
+        Assert.Equal((int)ScanStatus.Error, saved!.ScanStatus);
+        Assert.Equal((int)DecodeMode.Hardware, saved.DecodeMode);
+        Assert.Equal("cuda", saved.HardwareAccelType);
+    }
+
+    [Fact]
+    public async Task ScanItemAsync_Header_WhenProbeThrows_RecordsNotApplicableDecodeMode()
+    {
+        // A Header-phase failure should never claim a decode mode -- ffprobe
+        // never decodes, regardless of what hardware acceleration is configured.
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            MaxConcurrentScans = 1,
+            DelayBetweenFilesMs = 0,
+            PauseDuringPlayback = false,
+            UseQuietHoursOnly = false,
+            MaxReadRateMbPerSec = 0,
+            HardwareAccelerationType = MediaBrowser.Model.Entities.HardwareAccelerationType.nvenc
+        });
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("ffprobe not found"));
+
+        var db = new Mock<IDatabaseManager>();
+        ScanRecord? saved = null;
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>()))
+            .Callback<ScanRecord>(r => saved = r)
+            .Returns(Task.CompletedTask);
+
+        var engine = CreateEngine(wrapper, db);
+
+        await engine.ScanItemAsync(MakeItem(), ScanPhase.Header, CancellationToken.None);
+
+        Assert.NotNull(saved);
+        Assert.Equal((int)DecodeMode.NotApplicable, saved!.DecodeMode);
+        Assert.Null(saved.HardwareAccelType);
+    }
+
     // --- IsScanning ---
 
     [Fact]

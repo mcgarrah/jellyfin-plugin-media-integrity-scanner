@@ -203,7 +203,7 @@ public partial class MediaIntegrityController : ControllerBase
         var records = await _db.GetAllResultsAsync(status).ConfigureAwait(false);
 
         var sb = new StringBuilder();
-        sb.Append(string.Join(delimiter, "FilePath", "Status", "Phase", "Timestamp", "DurationMs", "Error")).Append("\r\n");
+        sb.Append(string.Join(delimiter, "FilePath", "Status", "Phase", "Timestamp", "DurationMs", "DecodeMode", "HardwareAccelType", "Error")).Append("\r\n");
         foreach (var record in records)
         {
             sb.Append(string.Join(
@@ -213,6 +213,8 @@ public partial class MediaIntegrityController : ControllerBase
                 ((ScanPhase)record.ScanPhase).ToString(),
                 record.ScanTimestamp,
                 record.ScanDurationMs?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                ((DecodeMode)record.DecodeMode).ToString(),
+                record.HardwareAccelType ?? string.Empty,
                 FormatField(record.ErrorOutput ?? string.Empty, isTsv)));
             sb.Append("\r\n");
         }

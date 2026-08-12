@@ -35,6 +35,21 @@ public class ScanResult
     /// Gets or sets the scan duration in milliseconds.
     /// </summary>
     public int DurationMs { get; set; }
+
+    /// <summary>
+    /// Gets or sets how the file was decoded, for a Phase 2 (FullDecode) result.
+    /// <see cref="Scanner.DecodeMode.NotApplicable"/> for Phase 1 (Header) results,
+    /// which use ffprobe and never decode the file at all.
+    /// </summary>
+    public DecodeMode DecodeMode { get; set; }
+
+    /// <summary>
+    /// Gets or sets the specific hardware backend used, when
+    /// <see cref="DecodeMode"/> is <see cref="Scanner.DecodeMode.Hardware"/> --
+    /// the exact ffmpeg <c>-hwaccel</c> value (e.g. <c>"cuda"</c>, <c>"vaapi"</c>).
+    /// Null otherwise.
+    /// </summary>
+    public string? HardwareAccelType { get; set; }
 }
 
 /// <summary>
@@ -51,6 +66,30 @@ public enum ScanPhase
     /// Phase 2: Full byte-stream decode via ffmpeg.
     /// </summary>
     FullDecode = 2
+}
+
+/// <summary>
+/// How a Phase 2 (FullDecode) scan was actually performed. Recorded per result
+/// so hardware- and software-decoded verdicts can be told apart later -- useful
+/// once real GPU decode is available, to check whether it agrees with the
+/// software baseline on failure detection rather than just assuming it does.
+/// </summary>
+public enum DecodeMode
+{
+    /// <summary>
+    /// Not applicable -- Phase 1 (Header) results use ffprobe, which never decodes.
+    /// </summary>
+    NotApplicable = 0,
+
+    /// <summary>
+    /// Decoded entirely on CPU, via ffmpeg's default software decoders.
+    /// </summary>
+    Software = 1,
+
+    /// <summary>
+    /// Decoded using a GPU/hardware decoder, via ffmpeg's <c>-hwaccel</c>.
+    /// </summary>
+    Hardware = 2
 }
 
 /// <summary>

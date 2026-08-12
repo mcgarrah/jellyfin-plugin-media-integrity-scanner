@@ -15,6 +15,7 @@
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
 using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.MediaIntegrityScanner;
@@ -139,4 +140,17 @@ public class PluginConfiguration : BasePluginConfiguration
     /// of this setting.
     /// </summary>
     public bool EnableAutoDatabaseMaintenance { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the hardware acceleration backend to request via ffmpeg's
+    /// <c>-hwaccel</c> flag for Phase 2 (FullDecode) scans. Reuses Jellyfin's own
+    /// <see cref="HardwareAccelerationType"/> so this setting reads the same as
+    /// Jellyfin's own Playback transcoding settings. <c>none</c> (the default)
+    /// means pure CPU software decode, matching this plugin's behavior before
+    /// this setting existed. Has no effect on Phase 1 (Header) scans, which use
+    /// ffprobe and never decode the file. Types with no supported decode-only
+    /// mapping (<c>amf</c>, <c>v4l2m2m</c>, <c>rkmpp</c>) silently fall back to
+    /// software decode rather than passing an unverified flag to ffmpeg.
+    /// </summary>
+    public HardwareAccelerationType HardwareAccelerationType { get; set; } = HardwareAccelerationType.none;
 }
