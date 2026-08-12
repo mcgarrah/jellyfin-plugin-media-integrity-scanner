@@ -822,6 +822,19 @@ public class SqliteDatabaseManagerTests : IDisposable
         var baseline = await _db.RunMaintenanceAsync();
         Assert.True(baseline.IntegrityCheckOk);
 
+        // Microsoft.Data.Sqlite pools connections by connection string, so
+        // without this the baseline call above could still be holding a
+        // native handle open on _factory.DbPath. On Linux that doesn't stop a
+        // second, independent handle from reading/writing the same file, but
+        // Windows' default file-sharing rules do enforce that exclusivity --
+        // the raw File.ReadAllBytesAsync below would fail with "the process
+        // cannot access the file because it is being used by another
+        // process." Clearing pools here, before that read, releases the
+        // pooled handle so the corruption below can actually take the file.
+        // (This is also why RestoreAsync's own implementation clears pools
+        // before its own raw file swap, for the same reason.)
+        SqliteConnection.ClearAllPools();
+
         // Overwrite real page content with garbage, well past the 100-byte
         // header, so SQLite can still open the file (valid header) but
         // integrity_check finds real corruption inside -- not just a
@@ -837,12 +850,10 @@ public class SqliteDatabaseManagerTests : IDisposable
 
         await File.WriteAllBytesAsync(_factory.DbPath, bytes);
 
-        // Microsoft.Data.Sqlite pools connections by connection string, so the
-        // next RunMaintenanceAsync() call below could otherwise reuse the same
-        // native handle as the baseline call above -- with page 1 still cached
-        // in memory from before the corruption, masking it entirely. This is
-        // the same pooling gotcha RestoreAsync's own implementation already
-        // guards against for the same reason.
+        // Clear pools again: the next RunMaintenanceAsync() call below could
+        // otherwise reuse the same native handle as the baseline call above --
+        // with page 1 still cached in memory from before the corruption,
+        // masking it entirely.
         SqliteConnection.ClearAllPools();
 
         var result = await _db.RunMaintenanceAsync();

@@ -91,7 +91,15 @@ public class FfmpegResolverTests : IDisposable
     [InlineData("/opt/tools/custom-ffmpeg", "/opt/tools/ffprobe")]
     public void DeriveProbeFromFfmpeg_ReplacesBinaryNameKeepingDirectory(string ffmpegPath, string expected)
     {
-        Assert.Equal(expected, FfmpegResolver.DeriveProbeFromFfmpeg(ffmpegPath));
+        // Inputs are deliberately Unix-style forward-slash paths -- what
+        // matters here is the directory-preservation/extension logic, not
+        // which separator Path.GetDirectoryName/Path.Combine normalize to.
+        // On Windows those two calls rewrite the separator to '\', so the
+        // actual result is normalized back to '/' before comparing rather
+        // than asserting an OS-native convention this test isn't about
+        // (GetPlatformCandidates_ReturnsExpectedPaths already covers that).
+        var actual = FfmpegResolver.DeriveProbeFromFfmpeg(ffmpegPath).Replace('\\', '/');
+        Assert.Equal(expected, actual);
     }
 
     [Fact]
