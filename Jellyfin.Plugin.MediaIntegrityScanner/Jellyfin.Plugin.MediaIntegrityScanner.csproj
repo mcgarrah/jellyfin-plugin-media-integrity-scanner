@@ -23,7 +23,7 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.*" />
     <!-- Pin SQLitePCLRaw to 3.0+ to resolve CVE in SQLitePCLRaw.lib.e_sqlite3 <= 2.1.11.
          Version 3.0 replaces the vulnerable native lib with SourceGear.sqlite3 (SQLite 3.50.3+). -->
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.2" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
   </ItemGroup>
 
   <ItemGroup>
