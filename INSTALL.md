@@ -95,6 +95,29 @@ If your Jellyfin runs in a Proxmox LXC container:
   systemctl restart jellyfin
   ```
 
+### Unprivileged containers reading a shared-storage media library
+
+If your media library is bind-mounted into the container from shared storage (NFS, CephFS, a SAN, etc.) that's owned by a **fixed host UID/GID shared across multiple containers or hosts** — rather than a UID that belongs to this one container alone — the default unprivileged-container UID shift can silently deny read access even when everything *looks* correctly mounted.
+
+**Why the default shift isn't enough here:** an unprivileged LXC/container typically maps its internal UIDs to host UIDs via a fixed offset (e.g. container UID `N` → host UID `100000 + N`). That's fine when a directory belongs to one container's own private data. It breaks down when a directory needs to be readable by *several* containers that don't share the same UID offset — which is exactly the case for a media library one host UID owns and multiple Jellyfin instances (or a production instance plus a disposable test instance) all need to read.
+
+**The fix:** give the container's `jellyfin` user a custom UID/GID mapping that punches through to the storage's actual owning UID, instead of relying on the default offset. On Proxmox this is a custom `lxc.idmap` entry (three ranges: below the target UID, the target UID itself, above it); other container runtimes have an equivalent (e.g. Docker's `--userns-remap` with a custom subuid/subgid map, or LXD's `raw.idmap`). Concretely, for a media library owned by host UID/GID `501`:
+
+```
+lxc.idmap: u 0 100000 5001
+lxc.idmap: g 0 100000 5001
+lxc.idmap: u 5001 501 1
+lxc.idmap: g 5001 501 1
+lxc.idmap: u 5002 105002 60534
+lxc.idmap: g 5002 105002 60534
+```
+
+This requires the `jellyfin` user's UID/GID *inside* the container to actually match the punch-through target (here, `5001`) — `usermod -u 5001 jellyfin` / `groupmod -g 5001 jellyfin` after stopping the service — and the host to permit delegating that specific UID into an unprivileged container (`/etc/subuid`/`/etc/subgid` needs an entry like `root:501:1` alongside the normal bulk delegation).
+
+**A real footgun worth flagging explicitly:** if you need both the UID change *and* the custom idmap, do the `chown` of Jellyfin's own data directories (`/var/lib/jellyfin`, `/etc/jellyfin`, `/var/log/jellyfin`, `/var/cache/jellyfin`) **after** the idmap is active, not before. Chowning under the *old* mapping and then switching mappings can orphan those files onto a host UID that isn't covered by *either* the old or new range — invisible and inaccessible to every UID inside the container, including root, since container root has no special privilege over a host file it doesn't own. If this happens, the fix has to come from outside the container: stop it, `pct mount <vmid>` (or the equivalent for your runtime) to access the rootfs directly as real host root with no UID translation, `chown` the affected paths to the correct raw host UID there, then unmount and restart.
+
+This exact pattern — read-only media mount owned by a fixed shared UID, a second Jellyfin instance needing the same access as production — is documented end-to-end, including the live incident that prompted writing it down, at [`CEPHFS-LXC-PERMISSIONS.md` in the author's homelab infrastructure repo](https://github.com/mcgarrah/k8s-proxmox/blob/main/docs/CEPHFS-LXC-PERMISSIONS.md).
+
 ## Backing Up Your Data
 
 **Jellyfin's own Dashboard → Advanced → Backups (Database / Metadata / Subtitles / Trickplay) does not cover this plugin's data, no matter which options are checked.** Confirmed by reading the real Jellyfin server source, not assumed: the backup feature's code has a fixed, hardcoded list of paths it copies, and none of them ever reference a plugin's own data directory. This is a Jellyfin-wide limitation affecting every third-party plugin's persisted data, not something specific to this plugin.
