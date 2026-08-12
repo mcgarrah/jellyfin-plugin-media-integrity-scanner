@@ -23,6 +23,7 @@ using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
+using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
@@ -42,6 +43,16 @@ public class MediaIntegrityControllerTests : IDisposable
 
     public void Dispose() => _dbFactory.Dispose();
 
+    private static FfmpegWrapper CreateFfmpegWrapper()
+    {
+        var resolverMock = new Mock<FfmpegResolver>(
+            Mock.Of<IServerConfigurationManager>(), NullLogger<FfmpegResolver>.Instance);
+        resolverMock.Setup(r => r.ResolveFfmpegPath()).Returns("/fake/ffmpeg");
+        resolverMock.Setup(r => r.ResolveFfprobePath()).Returns("/fake/ffprobe");
+
+        return new FfmpegWrapper(resolverMock.Object, NullLogger<FfmpegWrapper>.Instance);
+    }
+
     private MediaIntegrityController CreateController()
     {
         var controller = new MediaIntegrityController(
@@ -49,6 +60,7 @@ public class MediaIntegrityControllerTests : IDisposable
             _scanner.Object,
             _library.Object,
             _updateChecker.Object,
+            CreateFfmpegWrapper(),
             NullLogger<MediaIntegrityController>.Instance);
 
         // A controller constructed directly (not through the real ASP.NET Core
@@ -520,6 +532,21 @@ public class MediaIntegrityControllerTests : IDisposable
         Assert.True(maintenanceResult.IntegrityCheckOk);
         Assert.Equal("ok", maintenanceResult.IntegrityCheckMessage);
         Assert.True(maintenanceResult.VacuumRan);
+    }
+
+    // --- RefreshFfmpegPaths ---
+
+    [Fact]
+    public void RefreshFfmpegPaths_ReturnsOk_WithCurrentlyResolvedPaths()
+    {
+        var controller = CreateController();
+
+        var result = controller.RefreshFfmpegPaths();
+
+        var refreshResult = Assert.IsType<FfmpegRefreshResult>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.False(refreshResult.Changed);
+        Assert.Equal("/fake/ffmpeg", refreshResult.FfmpegPath);
+        Assert.Equal("/fake/ffprobe", refreshResult.FfprobePath);
     }
 
     // --- ExportResults ---

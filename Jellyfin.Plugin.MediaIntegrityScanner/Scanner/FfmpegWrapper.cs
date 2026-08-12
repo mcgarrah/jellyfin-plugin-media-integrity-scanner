@@ -28,9 +28,16 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 /// </summary>
 public partial class FfmpegWrapper
 {
-    private readonly string _ffmpegPath;
-    private readonly string _ffprobePath;
+    private readonly FfmpegResolver _resolver;
     private readonly ILogger<FfmpegWrapper> _logger;
+    private volatile string _ffmpegPath;
+    private volatile string _ffprobePath;
+
+    /// <summary>Gets the currently resolved ffmpeg binary path.</summary>
+    public string FfmpegPath => _ffmpegPath;
+
+    /// <summary>Gets the currently resolved ffprobe binary path.</summary>
+    public string FfprobePath => _ffprobePath;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FfmpegWrapper"/> class.
@@ -41,12 +48,65 @@ public partial class FfmpegWrapper
         FfmpegResolver resolver,
         ILogger<FfmpegWrapper> logger)
     {
+        _resolver = resolver;
+        _logger = logger;
         _ffmpegPath = resolver.ResolveFfmpegPath();
         _ffprobePath = resolver.ResolveFfprobePath();
-        _logger = logger;
 
         LogFfmpegResolved(_ffmpegPath);
         LogFfprobeResolved(_ffprobePath);
+
+        // Baseline cadence is restart/upgrade (the constructor runs again on
+        // either), plus this live path: react to Jellyfin's own config saves,
+        // skipping the work entirely once both binaries are pinned to a valid
+        // override -- there's nothing for a global ffmpeg-path change to
+        // invalidate at that point. See RefreshPaths() for the manual path
+        // (a settings-page button), which is never gated this way since it's
+        // explicitly user-initiated and harmless to run regardless.
+        _resolver.ServerConfigurationChanged += OnServerConfigurationChanged;
+    }
+
+    /// <summary>
+    /// Handles <see cref="FfmpegResolver.ServerConfigurationChanged"/>. Internal
+    /// (rather than private) so tests can invoke it directly instead of needing
+    /// to raise the event through Moq, which requires virtual events on a class
+    /// mock -- not worth the CA1070 trade-off for a single subscriber.
+    /// </summary>
+    internal void OnServerConfigurationChanged(object? sender, EventArgs e)
+    {
+        if (_resolver.IsUsingCustomOverride())
+        {
+            return;
+        }
+
+        RefreshPaths();
+    }
+
+    /// <summary>
+    /// Re-resolves both the ffmpeg and ffprobe binary paths and swaps them in
+    /// if either changed. Safe to call at any time, including mid-scan -- the
+    /// fields are read by reference for each new process launch, so an
+    /// in-flight scan keeps using whatever path it already started with.
+    /// </summary>
+    /// <returns>True if either path actually changed.</returns>
+    public bool RefreshPaths()
+    {
+        var newFfmpegPath = _resolver.ResolveFfmpegPath();
+        var newFfprobePath = _resolver.ResolveFfprobePath();
+
+        var changed = !string.Equals(newFfmpegPath, _ffmpegPath, StringComparison.Ordinal)
+            || !string.Equals(newFfprobePath, _ffprobePath, StringComparison.Ordinal);
+
+        _ffmpegPath = newFfmpegPath;
+        _ffprobePath = newFfprobePath;
+
+        if (changed)
+        {
+            LogFfmpegResolved(_ffmpegPath);
+            LogFfprobeResolved(_ffprobePath);
+        }
+
+        return changed;
     }
 
     /// <summary>
