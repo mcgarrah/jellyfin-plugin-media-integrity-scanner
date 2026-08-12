@@ -152,17 +152,19 @@ public class LibraryMonitorTests : IDisposable
     }
 
     [Fact]
-    public async Task OnItemUpdated_RescansItem_WhenScanOnItemUpdatedTrue_AndIsMediaItem()
+    public async Task OnItemUpdated_RescansItem_WhenScanOnItemUpdatedTrue_AndFileActuallyChanged()
     {
         TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemUpdated = true });
 
         var library = new Mock<ILibraryManager>();
         var scanner = new Mock<IScanEngine>();
         var db = new Mock<IDatabaseManager>();
+        var item = MakeMediaItem();
+        db.Setup(d => d.IsCurrentAsync(item.Id.ToString(), item.Path, (int)ScanPhase.Header))
+            .ReturnsAsync(false);
         var monitor = CreateMonitor(library, scanner, db);
         await monitor.StartAsync(CancellationToken.None);
 
-        var item = MakeMediaItem();
         var tcs = new TaskCompletionSource();
         scanner.Setup(s => s.ScanItemAsync(item, ScanPhase.Header, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
@@ -172,6 +174,35 @@ public class LibraryMonitorTests : IDisposable
 
         await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
         scanner.Verify(s => s.ScanItemAsync(item, ScanPhase.Header, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OnItemUpdated_DoesNotRescan_WhenExistingScanIsAlreadyCurrent()
+    {
+        // Real scenario this guards against: Jellyfin's metadata refresh fires
+        // ItemUpdated right after ItemAdded once technical info is populated,
+        // with the file itself unchanged -- rescanning here would double the
+        // event-driven scan load for every newly added file.
+        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemUpdated = true });
+
+        var library = new Mock<ILibraryManager>();
+        var scanner = new Mock<IScanEngine>();
+        var db = new Mock<IDatabaseManager>();
+        var item = MakeMediaItem();
+        var tcs = new TaskCompletionSource();
+        db.Setup(d => d.IsCurrentAsync(item.Id.ToString(), item.Path, (int)ScanPhase.Header))
+            .ReturnsAsync(true)
+            .Callback(() => tcs.TrySetResult());
+        var monitor = CreateMonitor(library, scanner, db);
+        await monitor.StartAsync(CancellationToken.None);
+
+        library.Raise(l => l.ItemUpdated += null, library.Object, new ItemChangeEventArgs { Item = item });
+
+        // Wait for the (async, fire-and-forget) currency check to actually
+        // run -- once it has, the "return early" branch is a synchronous
+        // continuation, so there's nothing further to race.
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        scanner.Verify(s => s.ScanItemAsync(item, ScanPhase.Header, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

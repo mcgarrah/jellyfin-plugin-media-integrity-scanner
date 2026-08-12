@@ -134,17 +134,29 @@ public partial class LibraryMonitor : IHostedService, IDisposable
             return;
         }
 
-        LogItemUpdateQueuedForScan(item.Name, item.Path);
-
         // Fire-and-forget with error logging, same shape as OnItemAdded. A
         // Header-phase rescan is deliberately used here, not FullDecode --
         // matches the cost of the other event-driven path and is enough to
         // pick up the new mtime/size immediately; a full deep rescan still
         // happens on its own schedule if deep scanning is enabled.
+        //
+        // Unlike OnItemAdded (a genuinely new item can never have an existing
+        // record), ItemUpdated fires for reasons that have nothing to do with
+        // the file's own bytes -- Jellyfin's metadata refresh commonly raises
+        // it right after ItemAdded once technical info (duration, codecs) is
+        // populated, with the file itself unchanged. IsCurrentAsync's mtime
+        // check filters those out, so this only actually rescans a file whose
+        // content genuinely changed.
         _ = Task.Run(async () =>
         {
             try
             {
+                if (await _db.IsCurrentAsync(item.Id.ToString(), item.Path, (int)ScanPhase.Header).ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                LogItemUpdateQueuedForScan(item.Name, item.Path);
                 await _scanner.ScanItemAsync(item, ScanPhase.Header, CancellationToken.None)
                     .ConfigureAwait(false);
             }
