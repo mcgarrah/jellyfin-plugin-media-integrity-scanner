@@ -7,6 +7,12 @@ name: Playwright E2E
 # -- a Playwright failure here does not fail the build/integration-test
 # checks. (Whether this workflow shows as a "required" check on PR merge is
 # a GitHub branch-protection setting, not something this file controls.)
+#
+# ubuntu-latest only, deliberately, for the same reason as integration-test.yml:
+# this suite depends on Docker Compose to run a real Jellyfin server, which
+# windows-latest/macos-latest either lack a usable daemon for or would behave
+# too differently on. See build.yml's dotnet-test matrix for the actual
+# cross-platform coverage, and its comment for the full scoping rationale.
 
 on:
   push:

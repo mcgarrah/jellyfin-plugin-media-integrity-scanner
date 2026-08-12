@@ -50,12 +50,19 @@ public class FfmpegWrapperHardwareAccelTests : IDisposable
         _fakeBinaryPath = Path.Combine(Path.GetTempPath(), $"fake-ffmpeg-{id}.sh");
         _argvLogPath = Path.Combine(Path.GetTempPath(), $"fake-ffmpeg-{id}.argv");
 
-        File.WriteAllText(_fakeBinaryPath, $"#!/bin/sh\necho \"$@\" > \"{_argvLogPath}\"\nexit 0\n");
-        File.SetUnixFileMode(
-            _fakeBinaryPath,
-            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
-            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
-            | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        // The [UnixOnlyFact] tests below never actually run this fake binary on
+        // Windows, but the constructor still runs regardless -- File.SetUnixFileMode
+        // throws PlatformNotSupportedException there, so this whole block is
+        // skipped defensively rather than relying on xUnit's skip timing.
+        if (!OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(_fakeBinaryPath, $"#!/bin/sh\necho \"$@\" > \"{_argvLogPath}\"\nexit 0\n");
+            File.SetUnixFileMode(
+                _fakeBinaryPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
     }
 
     public void Dispose()
@@ -104,7 +111,7 @@ public class FfmpegWrapperHardwareAccelTests : IDisposable
         Assert.Equal(expected, FfmpegWrapper.ResolveHwAccelFlag(type));
     }
 
-    [Fact]
+    [UnixOnlyFact]
     public async Task DecodeAsync_ConfiguredForSoftware_ReportsSoftwareAndNoHardwareType()
     {
         TestPluginContext.SetConfiguration(new PluginConfiguration { HardwareAccelerationType = HardwareAccelerationType.none });
@@ -116,7 +123,7 @@ public class FfmpegWrapperHardwareAccelTests : IDisposable
         Assert.Null(result.HardwareAccelType);
     }
 
-    [Fact]
+    [UnixOnlyFact]
     public async Task DecodeAsync_ConfiguredForNvidia_ActuallyPassesHwaccelCudaOnTheRealCommandLine()
     {
         TestPluginContext.SetConfiguration(new PluginConfiguration { HardwareAccelerationType = HardwareAccelerationType.nvenc });
@@ -133,7 +140,7 @@ public class FfmpegWrapperHardwareAccelTests : IDisposable
         Assert.Contains("-hwaccel cuda", argv, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [UnixOnlyFact]
     public async Task DecodeAsync_ConfiguredForUnsupportedType_FallsBackToSoftware()
     {
         // amf has no decode-only -hwaccel mapping here (see ResolveHwAccelFlag) --
@@ -150,7 +157,7 @@ public class FfmpegWrapperHardwareAccelTests : IDisposable
         Assert.DoesNotContain("-hwaccel", argv, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [UnixOnlyFact]
     public async Task ProbeAsync_AlwaysReportsNotApplicable_RegardlessOfHardwareAccelConfig()
     {
         TestPluginContext.SetConfiguration(new PluginConfiguration { HardwareAccelerationType = HardwareAccelerationType.nvenc });

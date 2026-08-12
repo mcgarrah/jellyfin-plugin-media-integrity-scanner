@@ -1,5 +1,12 @@
 name: Integration Test
 
+# ubuntu-latest only, deliberately: this suite runs a real Jellyfin server via
+# Docker Compose, which windows-latest/macos-latest either lack a usable
+# daemon for or would behave too differently on (Windows containers vs. Linux
+# containers) to just retarget the same compose file. Cross-platform coverage
+# lives in build.yml's dotnet-test matrix instead, which has no such
+# dependency -- see that file's comment for the full scoping rationale.
+
 on:
   push:
     branches: [main, dev]

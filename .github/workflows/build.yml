@@ -7,7 +7,44 @@ on:
     branches: [main]
 
 jobs:
+  # Cross-platform unit-test matrix. Deliberately just dotnet build/test, not
+  # the whole build/publish/upload pipeline below: the integration and
+  # Playwright suites both depend on Docker Compose to run a real Jellyfin
+  # server, and windows-latest/macos-latest either lack a usable Docker
+  # daemon for this or behave too differently (Windows containers vs. Linux
+  # containers) to just point the same compose file at a different runner --
+  # a much bigger lift than adding an OS to this matrix, and out of scope
+  # here. The unit test project has no such dependency, so this is the
+  # actual, real gap to close: FfmpegResolver's Windows/macOS candidate-path
+  # branches, and FindInPath's PATH-separator/extension handling, previously
+  # only ever compiled, never executed on the platforms they're written for.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore --verbosity normal
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore --verbosity normal
+
+      - name: Test
+        run: dotnet test --configuration Release --no-restore --no-build --verbosity normal
+
   build:
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
@@ -27,9 +64,6 @@ jobs:
 
       - name: Build
         run: dotnet build --configuration Release --no-restore --verbosity normal
-
-      - name: Test
-        run: dotnet test --configuration Release --no-restore --no-build --verbosity normal
 
       - name: Publish
         run: dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./artifacts --no-build
