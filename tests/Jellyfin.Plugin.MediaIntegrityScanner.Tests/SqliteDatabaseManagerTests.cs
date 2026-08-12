@@ -64,7 +64,9 @@ public class SqliteDatabaseManagerTests : IDisposable
         string? lastModified = "2026-01-01T00:00:00.0000000Z",
         string? timestamp = null,
         string? error = null,
-        int? durationMs = 50)
+        int? durationMs = 50,
+        int decodeMode = 0,
+        string? hardwareAccelType = null)
     {
         return new ScanRecord
         {
@@ -76,6 +78,8 @@ public class SqliteDatabaseManagerTests : IDisposable
             ScanStatus = status,
             ScanTimestamp = timestamp ?? DateTime.UtcNow.ToString("O"),
             ErrorOutput = error,
+            DecodeMode = decodeMode,
+            HardwareAccelType = hardwareAccelType,
             ScanDurationMs = durationMs
         };
     }
@@ -159,6 +163,35 @@ public class SqliteDatabaseManagerTests : IDisposable
         var results = await _db.GetResultsAsync(status: null, page: 1, pageSize: 50, itemIds: null);
 
         Assert.Equal(2, results.TotalCount);
+    }
+
+    [Fact]
+    public async Task SaveResultAsync_PersistsHardwareDecodeMode_AndSurvivesGetResultsAsyncToo()
+    {
+        await _db.SaveResultAsync(MakeRecord(
+            "item-1", phase: (int)ScanPhase.FullDecode, decodeMode: (int)DecodeMode.Hardware, hardwareAccelType: "cuda"));
+
+        var detail = await _db.GetItemDetailAsync("item-1");
+        Assert.NotNull(detail);
+        Assert.Equal((int)DecodeMode.Hardware, detail!.DecodeMode);
+        Assert.Equal("cuda", detail.HardwareAccelType);
+
+        var results = await _db.GetResultsAsync(status: null, page: 1, pageSize: 50, itemIds: null);
+        var fromResults = Assert.Single(results.Items);
+        Assert.Equal((int)DecodeMode.Hardware, fromResults.DecodeMode);
+        Assert.Equal("cuda", fromResults.HardwareAccelType);
+    }
+
+    [Fact]
+    public async Task SaveResultAsync_HeaderPhase_DefaultsToNotApplicableDecodeMode()
+    {
+        await _db.SaveResultAsync(MakeRecord("item-1", phase: (int)ScanPhase.Header));
+
+        var detail = await _db.GetItemDetailAsync("item-1");
+
+        Assert.NotNull(detail);
+        Assert.Equal((int)DecodeMode.NotApplicable, detail!.DecodeMode);
+        Assert.Null(detail.HardwareAccelType);
     }
 
     // --- IsCurrentAsync ---

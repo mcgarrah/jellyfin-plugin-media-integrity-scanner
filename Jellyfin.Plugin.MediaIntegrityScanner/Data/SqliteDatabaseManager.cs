@@ -94,7 +94,55 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         ";
 
         await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+
+        // Migration: decode_mode/hardware_accel_type were added after this
+        // table's original CREATE TABLE, so existing databases need an
+        // idempotent ALTER TABLE rather than relying on CREATE TABLE IF NOT
+        // EXISTS (which is a no-op once the table already exists).
+        await EnsureColumnExistsAsync(connection, "scan_results", "decode_mode", "INTEGER NOT NULL DEFAULT 0").ConfigureAwait(false);
+        await EnsureColumnExistsAsync(connection, "scan_results", "hardware_accel_type", "TEXT").ConfigureAwait(false);
+
+        // Backfill: FullDecode rows written before this migration were always
+        // software-decoded (hardware decode support didn't exist yet), but
+        // defaulted to 0 (NotApplicable) by the ALTER TABLE above -- correct
+        // them to Software (1) so historical rows aren't misleadingly
+        // indistinguishable from Header-phase rows. Safe to run every startup:
+        // a no-op once no phase=2 row is still at the default.
+        await using (var backfillCommand = connection.CreateCommand())
+        {
+            backfillCommand.CommandText = "UPDATE scan_results SET decode_mode = 1 WHERE scan_phase = 2 AND decode_mode = 0;";
+            await backfillCommand.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+
         LogSchemaInitialized();
+    }
+
+    /// <summary>
+    /// Adds <paramref name="column"/> to <paramref name="table"/> if it doesn't
+    /// already exist. SQLite has no <c>ADD COLUMN IF NOT EXISTS</c>, so this
+    /// checks <c>PRAGMA table_info</c> first -- <see cref="InitializeAsync"/>
+    /// runs on every plugin startup, and an unconditional <c>ALTER TABLE</c>
+    /// would throw "duplicate column name" on every run after the first.
+    /// </summary>
+    private static async Task EnsureColumnExistsAsync(SqliteConnection connection, string table, string column, string columnDefinition)
+    {
+        await using (var checkCommand = connection.CreateCommand())
+        {
+            checkCommand.CommandText = $"PRAGMA table_info({table});";
+            await using var reader = await checkCommand.ExecuteReaderAsync().ConfigureAwait(false);
+            while (await reader.ReadAsync().ConfigureAwait(false))
+            {
+                // PRAGMA table_info's result set has the column name at index 1.
+                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+        }
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {columnDefinition};";
+        await alterCommand.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -111,11 +159,11 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
                 INSERT INTO scan_results
                     (item_id, file_path, file_size, last_modified,
                      scan_phase, scan_status, scan_timestamp,
-                     error_output, scan_duration_ms)
+                     error_output, scan_duration_ms, decode_mode, hardware_accel_type)
                 VALUES
                     (@itemId, @filePath, @fileSize, @lastModified,
                      @scanPhase, @scanStatus, @scanTimestamp,
-                     @errorOutput, @scanDurationMs)
+                     @errorOutput, @scanDurationMs, @decodeMode, @hardwareAccelType)
                 ON CONFLICT(item_id, scan_phase) DO UPDATE SET
                     file_path = excluded.file_path,
                     file_size = excluded.file_size,
@@ -123,7 +171,9 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
                     scan_status = excluded.scan_status,
                     scan_timestamp = excluded.scan_timestamp,
                     error_output = excluded.error_output,
-                    scan_duration_ms = excluded.scan_duration_ms;
+                    scan_duration_ms = excluded.scan_duration_ms,
+                    decode_mode = excluded.decode_mode,
+                    hardware_accel_type = excluded.hardware_accel_type;
             ";
 
             command.Parameters.AddWithValue("@itemId", record.ItemId);
@@ -135,6 +185,8 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
             command.Parameters.AddWithValue("@scanTimestamp", record.ScanTimestamp);
             command.Parameters.AddWithValue("@errorOutput", (object?)record.ErrorOutput ?? DBNull.Value);
             command.Parameters.AddWithValue("@scanDurationMs", (object?)record.ScanDurationMs ?? DBNull.Value);
+            command.Parameters.AddWithValue("@decodeMode", record.DecodeMode);
+            command.Parameters.AddWithValue("@hardwareAccelType", (object?)record.HardwareAccelType ?? DBNull.Value);
 
             await command.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
@@ -259,7 +311,7 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         queryCmd.CommandText = $@"
             SELECT item_id, file_path, file_size, last_modified,
                    scan_phase, scan_status, scan_timestamp,
-                   error_output, scan_duration_ms
+                   error_output, scan_duration_ms, decode_mode, hardware_accel_type
             FROM scan_results
             {whereClause}
             ORDER BY scan_timestamp DESC
@@ -284,7 +336,9 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
                 ScanStatus = reader.GetInt32(5),
                 ScanTimestamp = reader.GetString(6),
                 ErrorOutput = reader.IsDBNull(7) ? null : reader.GetString(7),
-                ScanDurationMs = reader.IsDBNull(8) ? null : reader.GetInt32(8)
+                ScanDurationMs = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                DecodeMode = reader.GetInt32(9),
+                HardwareAccelType = reader.IsDBNull(10) ? null : reader.GetString(10)
             });
         }
 
@@ -307,7 +361,7 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         queryCmd.CommandText = $@"
             SELECT item_id, file_path, file_size, last_modified,
                    scan_phase, scan_status, scan_timestamp,
-                   error_output, scan_duration_ms
+                   error_output, scan_duration_ms, decode_mode, hardware_accel_type
             FROM scan_results
             {whereClause}
             ORDER BY scan_timestamp DESC;
@@ -328,7 +382,9 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
                 ScanStatus = reader.GetInt32(5),
                 ScanTimestamp = reader.GetString(6),
                 ErrorOutput = reader.IsDBNull(7) ? null : reader.GetString(7),
-                ScanDurationMs = reader.IsDBNull(8) ? null : reader.GetInt32(8)
+                ScanDurationMs = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                DecodeMode = reader.GetInt32(9),
+                HardwareAccelType = reader.IsDBNull(10) ? null : reader.GetString(10)
             });
         }
 
@@ -388,7 +444,7 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         command.CommandText = @"
             SELECT item_id, file_path, file_size, last_modified,
                    scan_phase, scan_status, scan_timestamp,
-                   error_output, scan_duration_ms
+                   error_output, scan_duration_ms, decode_mode, hardware_accel_type
             FROM scan_results
             WHERE item_id = @itemId
             ORDER BY scan_phase DESC
@@ -409,7 +465,9 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
                 ScanStatus = reader.GetInt32(5),
                 ScanTimestamp = reader.GetString(6),
                 ErrorOutput = reader.IsDBNull(7) ? null : reader.GetString(7),
-                ScanDurationMs = reader.IsDBNull(8) ? null : reader.GetInt32(8)
+                ScanDurationMs = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                DecodeMode = reader.GetInt32(9),
+                HardwareAccelType = reader.IsDBNull(10) ? null : reader.GetString(10)
             };
         }
 

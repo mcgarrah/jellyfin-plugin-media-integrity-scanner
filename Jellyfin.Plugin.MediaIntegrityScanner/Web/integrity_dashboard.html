@@ -304,6 +304,10 @@
                         <div class="modal-field-value" id="detail-duration"></div>
                     </div>
                     <div class="modal-field">
+                        <div class="modal-field-label">Decode Mode</div>
+                        <div class="modal-field-value" id="detail-decode-mode"></div>
+                    </div>
+                    <div class="modal-field">
                         <div class="modal-field-label">Full Error / Output</div>
                         <div class="modal-field-value" id="detail-error"></div>
                     </div>
@@ -434,6 +438,7 @@
                 document.getElementById('detail-timestamp').textContent = formatDate(item.ScanTimestamp);
                 document.getElementById('detail-duration').textContent =
                     item.ScanDurationMs ? (item.ScanDurationMs / 1000).toFixed(1) + 's' : '—';
+                document.getElementById('detail-decode-mode').textContent = formatDecodeMode(item.DecodeMode, item.HardwareAccelType);
                 document.getElementById('detail-error').textContent = item.ErrorOutput || '—';
 
                 document.getElementById('detail-modal-overlay').classList.add('open');
@@ -514,6 +519,20 @@
                 if (bytes < 1024) return bytes + ' B';
                 if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
                 return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            }
+
+            // DecodeMode: 0 = NotApplicable (Header phase, ffprobe never decodes),
+            // 1 = Software, 2 = Hardware.
+            function formatDecodeMode(decodeMode, hardwareAccelType) {
+                if (decodeMode === 2) {
+                    return 'Hardware (' + (hardwareAccelType || 'unknown') + ')';
+                }
+
+                if (decodeMode === 1) {
+                    return 'Software';
+                }
+
+                return 'N/A (header scan)';
             }
 
             function loadBackups() {

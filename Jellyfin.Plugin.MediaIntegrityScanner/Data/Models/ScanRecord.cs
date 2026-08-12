@@ -71,4 +71,16 @@ public class ScanRecord
     /// Gets or sets the scan duration in milliseconds.
     /// </summary>
     public int? ScanDurationMs { get; set; }
+
+    /// <summary>
+    /// Gets or sets how the file was decoded (0 = not applicable/Header phase,
+    /// 1 = software, 2 = hardware). See <see cref="Scanner.DecodeMode"/>.
+    /// </summary>
+    public int DecodeMode { get; set; }
+
+    /// <summary>
+    /// Gets or sets the specific hardware backend used (e.g. "cuda", "vaapi"),
+    /// when <see cref="DecodeMode"/> is Hardware. Null otherwise.
+    /// </summary>
+    public string? HardwareAccelType { get; set; }
 }

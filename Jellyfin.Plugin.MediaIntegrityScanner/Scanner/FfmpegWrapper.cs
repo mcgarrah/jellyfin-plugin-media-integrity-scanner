@@ -18,6 +18,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
@@ -77,12 +78,16 @@ public partial class FfmpegWrapper
         {
             Success = success,
             ErrorOutput = string.IsNullOrWhiteSpace(stderr) ? null : stderr,
-            DurationMs = (int)sw.ElapsedMilliseconds
+            DurationMs = (int)sw.ElapsedMilliseconds,
+            DecodeMode = DecodeMode.NotApplicable,
+            HardwareAccelType = null
         };
     }
 
     /// <summary>
-    /// Phase 2: Full decode — reads every frame, outputs nothing.
+    /// Phase 2: Full decode — reads every frame, outputs nothing. Uses hardware
+    /// decode via ffmpeg's <c>-hwaccel</c> if <see cref="PluginConfiguration.HardwareAccelerationType"/>
+    /// is set to a supported type, otherwise pure CPU software decode.
     /// </summary>
     /// <param name="filePath">Path to the media file.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -91,9 +96,15 @@ public partial class FfmpegWrapper
     {
         var sw = Stopwatch.StartNew();
 
+        var configuredType = Plugin.Instance?.Configuration?.HardwareAccelerationType ?? HardwareAccelerationType.none;
+        var hwAccelFlag = ResolveHwAccelFlag(configuredType);
+        var args = hwAccelFlag is null
+            ? new[] { "-v", "error", "-i", filePath, "-f", "null", "-" }
+            : new[] { "-v", "error", "-hwaccel", hwAccelFlag, "-i", filePath, "-f", "null", "-" };
+
         var (exitCode, _, stderr) = await RunProcessAsync(
             _ffmpegPath,
-            new[] { "-v", "error", "-i", filePath, "-f", "null", "-" },
+            args,
             cancellationToken).ConfigureAwait(false);
 
         sw.Stop();
@@ -108,9 +119,33 @@ public partial class FfmpegWrapper
         {
             Success = success,
             ErrorOutput = string.IsNullOrWhiteSpace(stderr) ? null : stderr,
-            DurationMs = (int)sw.ElapsedMilliseconds
+            DurationMs = (int)sw.ElapsedMilliseconds,
+            DecodeMode = hwAccelFlag is null ? DecodeMode.Software : DecodeMode.Hardware,
+            HardwareAccelType = hwAccelFlag
         };
     }
+
+    /// <summary>
+    /// Maps a configured <see cref="HardwareAccelerationType"/> to the ffmpeg
+    /// <c>-hwaccel</c> value that actually requests it for decoding, using the
+    /// same backend names Jellyfin's own <c>EncodingHelper</c> passes to ffmpeg
+    /// (confirmed against the real Jellyfin server source, not guessed --
+    /// notably NVIDIA decode is requested as <c>"cuda"</c>, not <c>"nvenc"</c>,
+    /// which is an encode-only name). Types with no direct decode-only
+    /// <c>-hwaccel</c> equivalent handled here (<c>amf</c>, <c>v4l2m2m</c>,
+    /// <c>rkmpp</c>) return null -- callers treat that the same as <c>none</c>
+    /// and fall back to software decode, rather than passing an unverified flag.
+    /// </summary>
+    /// <param name="type">The configured hardware acceleration type.</param>
+    /// <returns>The ffmpeg <c>-hwaccel</c> value, or null for software decode.</returns>
+    internal static string? ResolveHwAccelFlag(HardwareAccelerationType type) => type switch
+    {
+        HardwareAccelerationType.nvenc => "cuda",
+        HardwareAccelerationType.vaapi => "vaapi",
+        HardwareAccelerationType.qsv => "qsv",
+        HardwareAccelerationType.videotoolbox => "videotoolbox",
+        _ => null
+    };
 
     internal static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
         string exe, string[] args, CancellationToken cancellationToken)

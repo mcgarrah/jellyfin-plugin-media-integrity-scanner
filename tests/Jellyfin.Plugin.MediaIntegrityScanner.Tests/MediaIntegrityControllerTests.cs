@@ -511,4 +511,41 @@ public class MediaIntegrityControllerTests : IDisposable
         Assert.Equal("ok", maintenanceResult.IntegrityCheckMessage);
         Assert.True(maintenanceResult.VacuumRan);
     }
+
+    // --- ExportResults ---
+
+    [Fact]
+    public async Task ExportResults_Csv_IncludesDecodeModeAndHardwareAccelTypeColumns()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "hw-item",
+            FilePath = "/media/hw.mkv",
+            ScanPhase = (int)ScanPhase.FullDecode,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = "2026-01-01T00:00:00.0000000Z",
+            DecodeMode = (int)DecodeMode.Hardware,
+            HardwareAccelType = "cuda"
+        });
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "header-item",
+            FilePath = "/media/header.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = "2026-01-01T00:00:01.0000000Z",
+            DecodeMode = (int)DecodeMode.NotApplicable
+        });
+
+        var controller = CreateController();
+        var result = await controller.ExportResults();
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        var lines = csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Equal("FilePath,Status,Phase,Timestamp,DurationMs,DecodeMode,HardwareAccelType,Error", lines[0]);
+        Assert.Contains(lines, l => l.Contains("Hardware", StringComparison.Ordinal) && l.Contains("cuda", StringComparison.Ordinal));
+        Assert.Contains(lines, l => l.Contains("NotApplicable", StringComparison.Ordinal));
+    }
 }
