@@ -111,15 +111,26 @@ public class DatabaseBackupInfo
 /// one scan record — the database has no notion of a library's total item
 /// count or truly "pending" (never-scanned) items; callers with access to
 /// <c>ILibraryManager</c> should derive those from the real library count.
-/// Each distinct item is counted once, using its most authoritative (highest
-/// scan phase) result, even if it was scanned in both phases.
+/// Pass/fail/error counts use each item's most authoritative (highest scan
+/// phase) result, even if it was scanned in both phases. <see cref="ScannedFiles"/>
+/// and <see cref="DeepScannedFiles"/> are phase-specific, since a header scan and
+/// a deep scan are independent passes over the library and a file can be
+/// "current" for one while still pending the other.
 /// </summary>
 public class ScanStatistics
 {
     /// <summary>
-    /// Gets or sets the number of distinct items that have at least one scan result.
+    /// Gets or sets the number of distinct items that have at least a Header-phase
+    /// scan result (a FullDecode result also satisfies this, since it implies the
+    /// header was read successfully too).
     /// </summary>
     public int ScannedFiles { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of distinct items that have a FullDecode-phase
+    /// (deep) scan result specifically.
+    /// </summary>
+    public int DeepScannedFiles { get; set; }
 
     /// <summary>
     /// Gets or sets the number of items whose most recent scan passed.

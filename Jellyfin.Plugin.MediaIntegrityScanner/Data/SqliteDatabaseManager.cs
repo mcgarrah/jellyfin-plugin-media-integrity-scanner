@@ -194,12 +194,13 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         await using var command = connection.CreateCommand();
         command.CommandText = @"
             WITH latest AS (
-                SELECT item_id, scan_status,
+                SELECT item_id, scan_status, scan_phase,
                        ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY scan_phase DESC) AS rn
                 FROM scan_results
             )
             SELECT
                 COUNT(*) AS total,
+                SUM(CASE WHEN scan_phase >= 2 THEN 1 ELSE 0 END) AS deep_scanned,
                 SUM(CASE WHEN scan_status = 1 THEN 1 ELSE 0 END) AS passed,
                 SUM(CASE WHEN scan_status = 2 THEN 1 ELSE 0 END) AS failed,
                 SUM(CASE WHEN scan_status = 3 THEN 1 ELSE 0 END) AS errored,
@@ -212,10 +213,11 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         if (await reader.ReadAsync().ConfigureAwait(false))
         {
             stats.ScannedFiles = reader.IsDBNull(0) ? 0 : reader.GetInt32(0);
-            stats.PassedFiles = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
-            stats.FailedFiles = reader.IsDBNull(2) ? 0 : reader.GetInt32(2);
-            stats.ErroredFiles = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
-            stats.LastScanTimestamp = reader.IsDBNull(4) ? null : reader.GetString(4);
+            stats.DeepScannedFiles = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+            stats.PassedFiles = reader.IsDBNull(2) ? 0 : reader.GetInt32(2);
+            stats.FailedFiles = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
+            stats.ErroredFiles = reader.IsDBNull(4) ? 0 : reader.GetInt32(4);
+            stats.LastScanTimestamp = reader.IsDBNull(5) ? null : reader.GetString(5);
         }
 
         return stats;
