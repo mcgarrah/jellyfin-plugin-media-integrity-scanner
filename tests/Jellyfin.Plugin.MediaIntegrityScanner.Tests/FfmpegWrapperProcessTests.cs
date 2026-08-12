@@ -24,15 +24,19 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
 
 /// <summary>
 /// Tests for FfmpegWrapper's internal RunProcessAsync helper. Uses /bin/sh (present
-/// on any Linux CI runner or dev environment) instead of real ffmpeg/ffprobe binaries,
-/// since RunProcessAsync's process-execution semantics (exit code, stream capture,
-/// cancellation) don't depend on what executable is run.
+/// on Linux and macOS runners) instead of real ffmpeg/ffprobe binaries, since
+/// RunProcessAsync's process-execution semantics (exit code, stream capture,
+/// cancellation) don't depend on what executable is run. Skipped on Windows via
+/// <see cref="UnixOnlyFactAttribute"/> -- .NET's own Process class already
+/// abstracts these mechanics consistently across platforms, so this isn't a real
+/// coverage gap, just a shell-syntax one (rewriting every case's command line to
+/// an equivalent cmd.exe/PowerShell form isn't worth it for that reason).
 /// </summary>
 public class FfmpegWrapperProcessTests
 {
     private const string Shell = "/bin/sh";
 
-    [Fact]
+    [UnixOnlyFact]
     public async Task RunProcessAsync_CapturesExitCodeAndStdout()
     {
         var (exitCode, stdout, _) = await Scanner.FfmpegWrapper.RunProcessAsync(
@@ -42,7 +46,7 @@ public class FfmpegWrapperProcessTests
         Assert.Contains("hello-world", stdout);
     }
 
-    [Fact]
+    [UnixOnlyFact]
     public async Task RunProcessAsync_CapturesNonZeroExitCode()
     {
         var (exitCode, _, _) = await Scanner.FfmpegWrapper.RunProcessAsync(
@@ -51,7 +55,7 @@ public class FfmpegWrapperProcessTests
         Assert.Equal(3, exitCode);
     }
 
-    [Fact]
+    [UnixOnlyFact]
     public async Task RunProcessAsync_CapturesStderr()
     {
         var (_, _, stderr) = await Scanner.FfmpegWrapper.RunProcessAsync(
@@ -60,7 +64,7 @@ public class FfmpegWrapperProcessTests
         Assert.Contains("error-message", stderr);
     }
 
-    [Fact]
+    [UnixOnlyFact]
     public async Task RunProcessAsync_PassesMultipleArguments()
     {
         var (exitCode, stdout, _) = await Scanner.FfmpegWrapper.RunProcessAsync(
@@ -70,7 +74,7 @@ public class FfmpegWrapperProcessTests
         Assert.Contains("foo bar", stdout);
     }
 
-    [Fact]
+    [UnixOnlyFact]
     public async Task RunProcessAsync_LargeStderrOutput_DoesNotDeadlock()
     {
         // Regression test for the pipe-buffer deadlock this method was rewritten to avoid:
@@ -85,7 +89,7 @@ public class FfmpegWrapperProcessTests
         Assert.True(stderr.Length > 1_000_000, $"Expected ~2MB of stderr, got {stderr.Length} bytes");
     }
 
-    [Fact]
+    [UnixOnlyFact]
     public async Task RunProcessAsync_Cancellation_KillsProcessPromptly()
     {
         using var cts = new CancellationTokenSource();

@@ -25,10 +25,12 @@ using Xunit;
 namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
 
 /// <summary>
-/// Tests for FfmpegResolver's pure, dependency-free static helpers. CI (and this
-/// dev environment) runs on Linux only, so only the Linux branch of the
-/// OS-conditional GetPlatformCandidates is exercised here — Windows/macOS branches
-/// aren't reachable without running on those platforms.
+/// Tests for FfmpegResolver's pure, dependency-free static helpers.
+/// GetPlatformCandidates_ReturnsExpectedPaths asserts a different candidate
+/// list per <see cref="OperatingSystem"/> branch, so which one actually runs
+/// depends on the CI runner's OS -- CI now runs this suite on ubuntu-latest,
+/// windows-latest, and macos-latest (see build.yml's test-matrix job) so all
+/// three branches genuinely execute somewhere, not just get compiled.
 /// </summary>
 [Collection("PluginInstance")]
 public class FfmpegResolverTests : IDisposable
@@ -44,22 +46,43 @@ public class FfmpegResolverTests : IDisposable
 
 
     [Fact]
-    public void GetPlatformCandidates_Linux_ReturnsExpectedPaths()
+    public void GetPlatformCandidates_ReturnsExpectedPaths()
     {
-        // This assembly's tests only run on Linux (CI is ubuntu-latest; this dev
-        // environment is Linux too), so the Linux branch is what's reachable here.
-        Assert.True(OperatingSystem.IsLinux(), "This test suite only runs on Linux; Windows/macOS branches are not covered.");
-
         var candidates = FfmpegResolver.GetPlatformCandidates("ffmpeg").ToList();
 
-        Assert.Equal(
-            new[]
-            {
-                "/usr/lib/jellyfin-ffmpeg/ffmpeg",
-                "/usr/bin/ffmpeg",
-                "/usr/local/bin/ffmpeg"
-            },
-            candidates);
+        if (OperatingSystem.IsLinux())
+        {
+            Assert.Equal(
+                new[]
+                {
+                    "/usr/lib/jellyfin-ffmpeg/ffmpeg",
+                    "/usr/bin/ffmpeg",
+                    "/usr/local/bin/ffmpeg"
+                },
+                candidates);
+        }
+        else if (OperatingSystem.IsWindows())
+        {
+            var expectedFirst = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "Jellyfin", "Server", "ffmpeg.exe");
+
+            Assert.Equal(new[] { expectedFirst, @"C:\ffmpeg\bin\ffmpeg.exe" }, candidates);
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            Assert.Equal(
+                new[] { "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg" },
+                candidates);
+        }
+        else
+        {
+            // A platform GetPlatformCandidates has no branch for at all -- the
+            // real production behavior is an empty candidate list (falls straight
+            // through to the PATH-lookup fallback in ResolveBinary), so that's
+            // what a genuinely unhandled OS should assert here too.
+            Assert.Empty(candidates);
+        }
     }
 
     [Theory]
@@ -68,7 +91,15 @@ public class FfmpegResolverTests : IDisposable
     [InlineData("/opt/tools/custom-ffmpeg", "/opt/tools/ffprobe")]
     public void DeriveProbeFromFfmpeg_ReplacesBinaryNameKeepingDirectory(string ffmpegPath, string expected)
     {
-        Assert.Equal(expected, FfmpegResolver.DeriveProbeFromFfmpeg(ffmpegPath));
+        // Inputs are deliberately Unix-style forward-slash paths -- what
+        // matters here is the directory-preservation/extension logic, not
+        // which separator Path.GetDirectoryName/Path.Combine normalize to.
+        // On Windows those two calls rewrite the separator to '\', so the
+        // actual result is normalized back to '/' before comparing rather
+        // than asserting an OS-native convention this test isn't about
+        // (GetPlatformCandidates_ReturnsExpectedPaths already covers that).
+        var actual = FfmpegResolver.DeriveProbeFromFfmpeg(ffmpegPath).Replace('\\', '/');
+        Assert.Equal(expected, actual);
     }
 
     [Fact]
@@ -80,10 +111,13 @@ public class FfmpegResolverTests : IDisposable
     [Fact]
     public void FindInPath_FindsRealExecutableOnPath()
     {
-        var result = FfmpegResolver.FindInPath("ls");
+        // "dotnet" rather than a Unix tool like "ls": guaranteed on PATH on every
+        // OS this suite now runs on (actions/setup-dotnet puts it there), unlike
+        // "ls", which doesn't exist on Windows at all.
+        var result = FfmpegResolver.FindInPath("dotnet");
 
         Assert.NotNull(result);
-        Assert.EndsWith("/ls", result);
+        Assert.Contains("dotnet", result, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
