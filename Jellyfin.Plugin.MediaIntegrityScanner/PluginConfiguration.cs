@@ -86,6 +86,33 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool PurgeOnItemRemoved { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether a changed/replaced item (same
+    /// Jellyfin item ID, different file contents) triggers an immediate
+    /// Header-phase rescan, the same way <see cref="ScanOnItemAdded"/> does
+    /// for genuinely new items. On by default, decoupled from
+    /// <see cref="ScanOnItemAdded"/> so the two behaviors can be toggled
+    /// independently. Even when off, a changed file still eventually gets
+    /// caught by <c>IsCurrentAsync</c>'s mtime comparison on the next
+    /// scheduled sweep -- this setting only controls whether it happens
+    /// immediately via the library event.
+    /// </summary>
+    public bool ScanOnItemUpdated { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a weekly scheduled task
+    /// reconciles this plugin's scan-history database against the real
+    /// library contents, purging rows for items no longer present. On by
+    /// default -- this is cleanup, not something that changes running code,
+    /// in the same spirit as <see cref="EnableAutoDatabaseMaintenance"/>.
+    /// Independent of <see cref="PurgeOnItemRemoved"/>'s event-driven purge:
+    /// this catches whatever that event-driven path missed (plugin offline
+    /// at removal time, the setting was off, an unverified Jellyfin removal
+    /// path that doesn't fire <c>ItemRemoved</c>). Always skips itself while
+    /// a scan is in progress, regardless of this setting.
+    /// </summary>
+    public bool EnableAutoReconciliation { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets which release channel to check for updates against.
     /// </summary>
     public UpdateChannel UpdateChannel { get; set; } = UpdateChannel.Stable;

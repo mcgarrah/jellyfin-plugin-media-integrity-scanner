@@ -595,6 +595,60 @@ public class SqliteDatabaseManagerTests : IDisposable
         Assert.Null(exception);
     }
 
+    // --- ReconcileAsync ---
+
+    [Fact]
+    public async Task ReconcileAsync_PurgesItemsNotInCurrentSet()
+    {
+        await _db.SaveResultAsync(MakeRecord("still-here"));
+        await _db.SaveResultAsync(MakeRecord("orphaned"));
+
+        var purged = await _db.ReconcileAsync(new[] { "still-here" });
+
+        Assert.Equal(1, purged);
+        Assert.NotNull(await _db.GetItemDetailAsync("still-here"));
+        Assert.Null(await _db.GetItemDetailAsync("orphaned"));
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_PurgesAllPhasesForAnOrphanedItem()
+    {
+        await _db.SaveResultAsync(MakeRecord("orphaned", phase: (int)ScanPhase.Header));
+        await _db.SaveResultAsync(MakeRecord("orphaned", phase: (int)ScanPhase.FullDecode));
+
+        var purged = await _db.ReconcileAsync(new[] { "unrelated-item" });
+
+        Assert.Equal(2, purged);
+        Assert.Null(await _db.GetItemDetailAsync("orphaned"));
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_ReturnsZero_WhenNothingIsOrphaned()
+    {
+        await _db.SaveResultAsync(MakeRecord("item-1"));
+        await _db.SaveResultAsync(MakeRecord("item-2"));
+
+        var purged = await _db.ReconcileAsync(new[] { "item-1", "item-2" });
+
+        Assert.Equal(0, purged);
+        Assert.NotNull(await _db.GetItemDetailAsync("item-1"));
+        Assert.NotNull(await _db.GetItemDetailAsync("item-2"));
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_ReturnsZero_AndPurgesNothing_WhenCurrentItemIdsIsEmpty()
+    {
+        // Safety guard: an empty set is treated as "don't reconcile" (e.g. a
+        // failed library query), not "the library is genuinely empty" -- a
+        // real bug upstream should never be able to wipe the whole table.
+        await _db.SaveResultAsync(MakeRecord("item-1"));
+
+        var purged = await _db.ReconcileAsync(Array.Empty<string>());
+
+        Assert.Equal(0, purged);
+        Assert.NotNull(await _db.GetItemDetailAsync("item-1"));
+    }
+
     // --- BackupAsync / ListBackupsAsync / RestoreAsync ---
 
     [Fact]

@@ -111,6 +111,17 @@
                         <label for="ScanOnItemAdded">Scan newly added items automatically</label>
                     </div>
                     <div class="checkbox-row">
+                        <input type="checkbox" id="ScanOnItemUpdated">
+                        <label for="ScanOnItemUpdated">Rescan changed/replaced items automatically</label>
+                    </div>
+                    <div class="field-hint">
+                        Triggers an immediate Header-phase rescan when a file is replaced (same
+                        item, different bytes) -- independent of "Scan newly added items" above.
+                        Even with this off, a changed file still gets caught on the next scheduled
+                        sweep via its changed modification time; this only controls whether it
+                        happens right away.
+                    </div>
+                    <div class="checkbox-row">
                         <input type="checkbox" id="PurgeOnItemRemoved">
                         <label for="PurgeOnItemRemoved">Purge scan records when items are removed</label>
                     </div>
@@ -221,6 +232,18 @@
                         automatically while a scan is in progress. Also available as a manual "Run
                         Maintenance Now" button on the dashboard.
                     </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="EnableAutoReconciliation">
+                        <label for="EnableAutoReconciliation">Automatically reconcile scan history against the library weekly</label>
+                    </div>
+                    <div class="field-hint">
+                        On by default. Purges scan-history rows for items no longer in the library --
+                        the periodic counterpart to "Purge scan records when items are removed" above,
+                        catching anything that event-driven purge missed (plugin offline at removal
+                        time, that setting was off, etc.). Runs weekly, Sunday 2:30 AM by default
+                        (retarget via Dashboard &gt; Scheduled Tasks); always skipped automatically
+                        while a scan is in progress, regardless of this setting.
+                    </div>
                 </div>
 
                 <button type="submit" class="btn btn-primary" id="btn-save">Save</button>
@@ -282,6 +305,7 @@
                     document.getElementById('EnableDeepScan').checked = !!config.EnableDeepScan;
                     document.getElementById('HardwareAccelerationType').value = config.HardwareAccelerationType || 'none';
                     document.getElementById('ScanOnItemAdded').checked = !!config.ScanOnItemAdded;
+                    document.getElementById('ScanOnItemUpdated').checked = config.ScanOnItemUpdated !== false;
                     document.getElementById('PurgeOnItemRemoved').checked = !!config.PurgeOnItemRemoved;
                     document.getElementById('MaxReadRateMbPerSec').value = config.MaxReadRateMbPerSec;
                     document.getElementById('UseQuietHoursOnly').checked = !!config.UseQuietHoursOnly;
@@ -295,6 +319,7 @@
                     document.getElementById('EnableAutoUpdate').checked = !!config.EnableAutoUpdate;
                     document.getElementById('AutoRestartAfterUpdate').checked = !!config.AutoRestartAfterUpdate;
                     document.getElementById('EnableAutoDatabaseMaintenance').checked = config.EnableAutoDatabaseMaintenance !== false;
+                    document.getElementById('EnableAutoReconciliation').checked = config.EnableAutoReconciliation !== false;
                     hideMessages();
                 }).catch(function (err) {
                     showError('Failed to load configuration: ' + err.message);
@@ -315,6 +340,7 @@
                     config.EnableDeepScan = document.getElementById('EnableDeepScan').checked;
                     config.HardwareAccelerationType = document.getElementById('HardwareAccelerationType').value || 'none';
                     config.ScanOnItemAdded = document.getElementById('ScanOnItemAdded').checked;
+                    config.ScanOnItemUpdated = document.getElementById('ScanOnItemUpdated').checked;
                     config.PurgeOnItemRemoved = document.getElementById('PurgeOnItemRemoved').checked;
                     config.MaxReadRateMbPerSec = parseInt(document.getElementById('MaxReadRateMbPerSec').value, 10) || 0;
                     config.UseQuietHoursOnly = document.getElementById('UseQuietHoursOnly').checked;
@@ -328,6 +354,7 @@
                     config.EnableAutoUpdate = document.getElementById('EnableAutoUpdate').checked;
                     config.AutoRestartAfterUpdate = document.getElementById('AutoRestartAfterUpdate').checked;
                     config.EnableAutoDatabaseMaintenance = document.getElementById('EnableAutoDatabaseMaintenance').checked;
+                    config.EnableAutoReconciliation = document.getElementById('EnableAutoReconciliation').checked;
 
                     return ApiClient.updatePluginConfiguration(PLUGIN_ID, config);
                 }).then(function (result) {
