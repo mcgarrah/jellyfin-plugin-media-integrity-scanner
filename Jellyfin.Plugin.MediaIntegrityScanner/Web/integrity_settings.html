@@ -71,7 +71,11 @@
                     <div class="field-row">
                         <label for="MaxConcurrentScans">Max Concurrent Scans</label>
                         <input type="number" id="MaxConcurrentScans" min="1" max="16" step="1" required>
-                        <div class="field-hint">Number of files scanned simultaneously.</div>
+                        <div class="field-hint">
+                            Number of files scanned simultaneously. Defaults to half this host's vCPU
+                            count on a fresh install; once saved (including if left at that default),
+                            this value sticks across restarts and upgrades rather than being recomputed.
+                        </div>
                     </div>
                     <div class="field-row">
                         <label for="DelayBetweenFilesMs">Delay Between Files (ms)</label>
@@ -132,7 +136,12 @@
                     <div class="field-row">
                         <label for="MaxReadRateMbPerSec">Max Read Rate (MB/s)</label>
                         <input type="number" id="MaxReadRateMbPerSec" min="0" step="1" required>
-                        <div class="field-hint">Average read-rate cap per file; 0 disables throttling.</div>
+                        <div class="field-hint">
+                            Shared aggregate cap across all concurrent scans (Header and Deep alike),
+                            not a per-file limit -- running more scans at once divides this budget
+                            rather than multiplying total throughput past it. Deep scans get priority
+                            over Header scans when both are contending for it. 0 disables throttling.
+                        </div>
                     </div>
                     <div class="checkbox-row">
                         <input type="checkbox" id="UseQuietHoursOnly">

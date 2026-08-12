@@ -20,9 +20,11 @@ using System.Globalization;
 namespace Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 
 /// <summary>
-/// Pure, dependency-free helpers for scan pacing: quiet-hours window checks
-/// and read-rate throttling delay calculations. Kept free of Jellyfin server
-/// types so the logic can be unit tested directly.
+/// Pure, dependency-free helper for scan pacing: quiet-hours window checks.
+/// Read-rate throttling now lives in <see cref="SharedBandwidthLimiter"/> --
+/// see that type for why a per-file-independent calculation here was
+/// retired. Kept free of Jellyfin server types so the logic can be unit
+/// tested directly.
 /// </summary>
 public static class ScanThrottle
 {
@@ -53,30 +55,5 @@ public static class ScanThrottle
         return startTime < endTime
             ? timeOfDay >= startTime && timeOfDay < endTime
             : timeOfDay >= startTime || timeOfDay < endTime;
-    }
-
-    /// <summary>
-    /// Computes the additional delay needed after a scan so the average
-    /// read rate for that file does not exceed the configured cap. Pads
-    /// wall-clock time after the fact rather than throttling the ffmpeg/ffprobe
-    /// read itself, so it never risks breaking non-seekable-input edge cases
-    /// (e.g., MP4/MOV files with the moov atom at the end).
-    /// </summary>
-    /// <param name="fileSizeBytes">Size of the scanned file in bytes.</param>
-    /// <param name="maxReadRateMbPerSec">Configured cap in MB/s. Zero or negative disables throttling.</param>
-    /// <param name="actualDurationMs">How long the scan actually took.</param>
-    /// <returns>The additional delay to wait, or <see cref="TimeSpan.Zero"/> if none is needed.</returns>
-    public static TimeSpan ComputeReadRateDelay(long fileSizeBytes, int maxReadRateMbPerSec, int actualDurationMs)
-    {
-        if (maxReadRateMbPerSec <= 0 || fileSizeBytes <= 0)
-        {
-            return TimeSpan.Zero;
-        }
-
-        var fileSizeMb = fileSizeBytes / (1024.0 * 1024.0);
-        var minDurationMs = fileSizeMb / maxReadRateMbPerSec * 1000.0;
-        var extraMs = minDurationMs - actualDurationMs;
-
-        return extraMs > 0 ? TimeSpan.FromMilliseconds(extraMs) : TimeSpan.Zero;
     }
 }

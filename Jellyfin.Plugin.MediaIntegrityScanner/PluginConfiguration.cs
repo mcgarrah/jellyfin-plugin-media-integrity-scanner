@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License along
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
+using System;
 using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Plugins;
@@ -26,9 +27,18 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner;
 public class PluginConfiguration : BasePluginConfiguration
 {
     /// <summary>
-    /// Gets or sets the maximum number of files scanned concurrently.
+    /// Gets or sets the maximum number of files scanned concurrently. Defaults
+    /// to half the host's vCPU count (floored at 1) rather than a flat value,
+    /// since a single-core-friendly default undersells a large host and a
+    /// large flat default could overwhelm a small one. This default is only
+    /// ever applied to a genuinely fresh install with no saved configuration
+    /// file yet -- an existing installation's saved value (including this
+    /// exact number, if it happens to match) always wins over recomputing it,
+    /// since XML deserialization overwrites this property's initializer for
+    /// every install that already has a config file on disk. In other words:
+    /// once set, an explicit choice here sticks across restarts/upgrades.
     /// </summary>
-    public int MaxConcurrentScans { get; set; } = 1;
+    public int MaxConcurrentScans { get; set; } = Math.Max(1, Environment.ProcessorCount / 2);
 
     /// <summary>
     /// Gets or sets the delay in milliseconds between scanning each file.
@@ -46,7 +56,14 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool EnableDeepScan { get; set; }
 
     /// <summary>
-    /// Gets or sets the maximum read rate in MB/s for scanning I/O.
+    /// Gets or sets the maximum aggregate read rate in MB/s across all
+    /// scanning I/O -- a single shared budget every concurrent scan draws
+    /// from (see <see cref="Scanner.SharedBandwidthLimiter"/>), not a
+    /// per-file-independent cap. Running more concurrent scans divides this
+    /// budget among them rather than multiplying total throughput past it.
+    /// Header and Deep-phase scans share the same budget; Deep scans get
+    /// priority when both are contending for it, since a full decode carries
+    /// the larger combined I/O and CPU footprint.
     /// </summary>
     public int MaxReadRateMbPerSec { get; set; } = 10;
 

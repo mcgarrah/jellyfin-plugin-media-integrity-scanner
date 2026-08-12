@@ -3,8 +3,14 @@
 // standard ApiClient.getPluginConfiguration/updatePluginConfiguration flow,
 // not a custom route.
 const { test, expect } = require('@playwright/test');
+const os = require('os');
 
 const SETTINGS_URL = '/web/#/configurationpage?name=Media+Integrity+Scanner+Settings';
+
+// PluginConfiguration.MaxConcurrentScans now defaults to half this host's
+// vCPU count (floored at 1), not a flat 1 -- computed here rather than
+// hardcoded so this assertion doesn't depend on the runner's core count.
+const EXPECTED_DEFAULT_MAX_CONCURRENT_SCANS = String(Math.max(1, Math.floor(os.cpus().length / 2)));
 
 test.describe('Media Integrity Scanner settings', () => {
   test.beforeEach(async ({ page }) => {
@@ -15,7 +21,7 @@ test.describe('Media Integrity Scanner settings', () => {
   });
 
   test('pre-populates all fields from the real plugin configuration', async ({ page }) => {
-    await expect(page.locator('#MaxConcurrentScans')).toHaveValue('1');
+    await expect(page.locator('#MaxConcurrentScans')).toHaveValue(EXPECTED_DEFAULT_MAX_CONCURRENT_SCANS);
     await expect(page.locator('#DelayBetweenFilesMs')).toHaveValue('5000');
     await expect(page.locator('#PauseDuringPlayback')).toBeChecked();
     await expect(page.locator('#EnableDeepScan')).not.toBeChecked();
