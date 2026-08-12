@@ -127,4 +127,16 @@ public class PluginConfiguration : BasePluginConfiguration
     /// effect unless <see cref="EnableAutoUpdate"/> is also on.
     /// </summary>
     public bool AutoRestartAfterUpdate { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a weekly scheduled task should
+    /// run an integrity check and (if it passes) a VACUUM against the
+    /// plugin's own SQLite database. On by default -- unlike
+    /// <see cref="EnableAutoUpdate"/>, this doesn't change any running code,
+    /// and the plugin's whole purpose is catching corruption early, so its
+    /// own database getting a periodic integrity check is in the same
+    /// spirit. Always skips itself while a scan is in progress, regardless
+    /// of this setting.
+    /// </summary>
+    public bool EnableAutoDatabaseMaintenance { get; set; } = true;
 }

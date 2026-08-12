@@ -110,6 +110,16 @@ What's actually at risk is the scan-history database (`media-integrity.db` under
 
 Restore (not Backup) requires no scan to be in progress — the dashboard will show an error if you try mid-scan.
 
+## Database Maintenance
+
+The same `media-integrity.db` also gets an integrity check and space reclamation, separate from backup/restore:
+
+1. Open the plugin's **Dashboard** page → **Database Maintenance** section to see its current on-disk size and how much space is reclaimable
+2. Click **Run Maintenance Now** to run `PRAGMA integrity_check` immediately, followed by a `VACUUM` if that check passes (skipped automatically if the check fails, rather than rewriting a database already known to be corrupt)
+3. This also runs automatically on a weekly schedule (Sundays) unless disabled under **Settings → Database Maintenance** — always skipped for that week if a scan happens to be running at the time
+
+Requires no scan to be in progress, same as Restore — the dashboard will show an error if you try mid-scan.
+
 ## Uninstalling
 
 ### Via Jellyfin UI

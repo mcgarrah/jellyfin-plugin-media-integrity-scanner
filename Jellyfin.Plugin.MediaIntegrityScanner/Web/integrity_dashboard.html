@@ -256,6 +256,28 @@
                 </table>
             </div>
 
+            <!-- Database Maintenance -->
+            <div class="backup-section">
+                <h2>Database Maintenance</h2>
+                <p class="field-hint">
+                    Checks this database's own integrity, then reclaims space left behind
+                    by deleted rows. Safe to run at any time except mid-scan -- also runs
+                    automatically on a weekly schedule unless disabled in Settings.
+                </p>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">On-Disk Size</div>
+                        <div class="stat-value" id="db-file-size">&mdash;</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Reclaimable</div>
+                        <div class="stat-value" id="db-reclaimable-size">&mdash;</div>
+                    </div>
+                </div>
+                <button class="btn btn-primary" id="btn-maintenance-now" onclick="runDatabaseMaintenance()">Run Maintenance Now</button>
+                <p class="field-hint" id="maintenance-result"></p>
+            </div>
+
             <!-- Result Detail Modal -->
             <div class="modal-overlay" id="detail-modal-overlay" onclick="if (event.target === this) closeDetail();">
                 <div class="modal-box">
@@ -565,6 +587,50 @@
                 });
             }
 
+            function loadDatabaseInfo() {
+                apiFetch('Database/Info').then(function(info) {
+                    document.getElementById('db-file-size').textContent = formatBytes(info.FileSizeBytes);
+                    document.getElementById('db-reclaimable-size').textContent = formatBytes(info.ReclaimableBytes);
+                }).catch(function(err) {
+                    showError('Failed to load database info: ' + err.message);
+                });
+            }
+
+            function runDatabaseMaintenance() {
+                var btn = document.getElementById('btn-maintenance-now');
+                var resultEl = document.getElementById('maintenance-result');
+                btn.disabled = true;
+                resultEl.textContent = 'Running...';
+
+                apiFetch('Database/Maintenance', {
+                    method: 'POST',
+                    headers: {
+                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Content-Type': 'application/json'
+                    }
+                }).then(function(result) {
+                    if (result.IntegrityCheckOk) {
+                        resultEl.textContent = 'Integrity check passed. ' +
+                            formatBytes(result.SizeBeforeBytes) + ' -> ' + formatBytes(result.SizeAfterBytes) + '.';
+                    } else {
+                        resultEl.textContent = 'Integrity check FAILED: ' + result.IntegrityCheckMessage;
+                    }
+
+                    loadDatabaseInfo();
+                    hideError();
+                }).catch(function(err) {
+                    if (err.message.indexOf('409') >= 0) {
+                        showError('Cannot run database maintenance while a scan is in progress.');
+                    } else {
+                        showError('Failed to run database maintenance: ' + err.message);
+                    }
+
+                    resultEl.textContent = '';
+                }).then(function() {
+                    btn.disabled = false;
+                });
+            }
+
             function triggerScan(deep) {
                 apiFetch('Scan', {
                     method: 'POST',
@@ -710,6 +776,7 @@
             loadResults();
             loadUpdateStatus();
             loadBackups();
+            loadDatabaseInfo();
 
             // Auto-refresh status every 10 seconds
             refreshInterval = setInterval(loadStatus, 10000);

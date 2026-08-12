@@ -364,6 +364,37 @@ public partial class MediaIntegrityController : ControllerBase
     }
 
     /// <summary>
+    /// Get current size/health information for the plugin's own SQLite database.
+    /// </summary>
+    /// <returns>Database maintenance info.</returns>
+    [HttpGet("Database/Info")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<DatabaseMaintenanceInfo>> GetDatabaseInfo()
+    {
+        var info = await _db.GetMaintenanceInfoAsync().ConfigureAwait(false);
+        return Ok(info);
+    }
+
+    /// <summary>
+    /// Runs an integrity check, then (if it passes) a VACUUM, against the
+    /// plugin's own SQLite database.
+    /// </summary>
+    /// <returns>The maintenance result.</returns>
+    [HttpPost("Database/Maintenance")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DatabaseMaintenanceResult>> RunDatabaseMaintenance()
+    {
+        if (_scanner.IsScanning)
+        {
+            return Conflict(new { message = "Cannot run database maintenance while a scan is in progress." });
+        }
+
+        var result = await _db.RunMaintenanceAsync().ConfigureAwait(false);
+        return Ok(result);
+    }
+
+    /// <summary>
     /// Get the current plugin version against the latest available versions
     /// on the stable and (if registered) development channels.
     /// </summary>

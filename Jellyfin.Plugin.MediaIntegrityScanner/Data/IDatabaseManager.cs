@@ -152,3 +152,72 @@ public class ScanStatistics
     /// </summary>
     public string? LastScanTimestamp { get; set; }
 }
+
+/// <summary>
+/// Point-in-time size/health information for the plugin's own SQLite database.
+/// </summary>
+public class DatabaseMaintenanceInfo
+{
+    /// <summary>
+    /// Gets or sets the total on-disk size in bytes, including the main
+    /// database file and its WAL/SHM sidecar files -- WAL mode keeps data in
+    /// those between checkpoints, so the main file alone can understate the
+    /// database's real footprint on disk.
+    /// </summary>
+    public long FileSizeBytes { get; set; }
+
+    /// <summary>
+    /// Gets or sets SQLite's own logical size (<c>page_count * page_size</c>),
+    /// the size a successful <c>VACUUM</c> would shrink the main file to.
+    /// </summary>
+    public long LogicalSizeBytes { get; set; }
+
+    /// <summary>
+    /// Gets or sets the estimated space a <c>VACUUM</c> would reclaim
+    /// (<c>freelist_count * page_size</c>) -- pages SQLite has already freed
+    /// internally (e.g. from deletes) but not yet returned to the OS.
+    /// </summary>
+    public long ReclaimableBytes { get; set; }
+}
+
+/// <summary>
+/// Result of a manually or automatically triggered database maintenance pass:
+/// an integrity check, followed by a <c>VACUUM</c> if that check passes.
+/// </summary>
+public class DatabaseMaintenanceResult
+{
+    /// <summary>
+    /// Gets or sets a value indicating whether <c>PRAGMA integrity_check</c>
+    /// reported the database as healthy.
+    /// </summary>
+    public bool IntegrityCheckOk { get; set; }
+
+    /// <summary>
+    /// Gets or sets the raw message from <c>PRAGMA integrity_check</c> --
+    /// <c>"ok"</c> when healthy, otherwise one line per corruption issue found.
+    /// </summary>
+    public string? IntegrityCheckMessage { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether <c>VACUUM</c> actually ran.
+    /// Skipped when the integrity check fails, to avoid rewriting a database
+    /// already known to be corrupt.
+    /// </summary>
+    public bool VacuumRan { get; set; }
+
+    /// <summary>
+    /// Gets or sets the on-disk size in bytes before this maintenance pass.
+    /// </summary>
+    public long SizeBeforeBytes { get; set; }
+
+    /// <summary>
+    /// Gets or sets the on-disk size in bytes after this maintenance pass.
+    /// Equal to <see cref="SizeBeforeBytes"/> when <see cref="VacuumRan"/> is <c>false</c>.
+    /// </summary>
+    public long SizeAfterBytes { get; set; }
+
+    /// <summary>
+    /// Gets or sets how long the maintenance pass took, in milliseconds.
+    /// </summary>
+    public long DurationMs { get; set; }
+}

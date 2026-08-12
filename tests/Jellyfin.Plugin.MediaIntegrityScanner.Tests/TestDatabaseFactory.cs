@@ -45,6 +45,14 @@ internal sealed class TestDatabaseFactory : IDisposable
 
     public SqliteDatabaseManager Database { get; }
 
+    /// <summary>
+    /// Gets the underlying SQLite file's path, for tests that need to
+    /// inspect or mutate the raw file directly (e.g. simulating corruption).
+    /// Mirrors the exact join <see cref="SqliteDatabaseManager"/>'s own
+    /// constructor uses.
+    /// </summary>
+    public string DbPath => Path.Combine(_tempDir, "MediaIntegrityScanner", "media-integrity.db");
+
     public void Dispose()
     {
         if (_disposed)
