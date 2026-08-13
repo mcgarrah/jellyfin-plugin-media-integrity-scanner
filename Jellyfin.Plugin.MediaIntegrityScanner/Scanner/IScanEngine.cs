@@ -32,6 +32,14 @@ public interface IScanEngine
     bool IsScanning { get; }
 
     /// <summary>
+    /// Gets the <see cref="ScanPhase"/> (as an int) the current library scan is running,
+    /// or <c>null</c> when idle. Only ever set for a whole-library scan (<see cref="ScanLibraryAsync"/>)
+    /// -- single-item scans via <see cref="ScanItemAsync"/> don't drive this, since "Scanning..."
+    /// in the dashboard's status card is about the background library scan, not one-off item checks.
+    /// </summary>
+    int? CurrentPhase { get; }
+
+    /// <summary>
     /// Scans a single item for media integrity.
     /// </summary>
     /// <param name="item">The Jellyfin library item to scan.</param>

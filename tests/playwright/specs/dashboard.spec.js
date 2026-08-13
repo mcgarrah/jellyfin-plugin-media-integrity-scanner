@@ -31,10 +31,10 @@ test.describe('Media Integrity Scanner dashboard', () => {
   test('running a header scan updates stats to match the known test-media matrix', async ({ page }) => {
     await page.locator('#btn-scan-headers').click();
 
-    // Buttons disable and status flips to "Scanning..." while a scan is active.
+    // Buttons disable and status flips to "Scanning (Header)..." while a scan is active.
     await expect(page.locator('#btn-scan-headers')).toBeDisabled();
     await expect(page.locator('#btn-scan-deep')).toBeDisabled();
-    await expect(page.locator('#scan-status')).toHaveText('Scanning...');
+    await expect(page.locator('#scan-status')).toHaveText('Scanning (Header)...');
 
     // loadStatus() only polls every 10s; wait out a full scan-and-settle cycle.
     await expect(page.locator('#scan-status')).toHaveText('Idle', { timeout: 60000 });

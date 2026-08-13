@@ -197,6 +197,11 @@
                     <option value="1">Passed Only</option>
                     <option value="3">Errors Only</option>
                 </select>
+                <select id="filter-phase" onchange="loadResults()">
+                    <option value="">All Phases</option>
+                    <option value="1">Header Only</option>
+                    <option value="2">Deep Only</option>
+                </select>
                 <select id="page-size-select" onchange="changePageSize()">
                     <option value="25">25 / page</option>
                     <option value="50" selected>50 / page</option>
@@ -357,8 +362,9 @@
                         data.PendingHeaderFiles;
                     document.getElementById('pending-deep-files').textContent =
                         data.PendingDeepFiles;
+                    var phaseLabel = data.CurrentPhase === 1 ? ' (Header)' : data.CurrentPhase === 2 ? ' (Deep)' : '';
                     document.getElementById('scan-status').textContent =
-                        data.IsScanning ? 'Scanning...' : 'Idle';
+                        data.IsScanning ? 'Scanning' + phaseLabel + '...' : 'Idle';
                     document.getElementById('health-bar').style.width =
                         data.HealthPercentage + '%';
 
@@ -385,8 +391,10 @@
 
             function loadResults() {
                 var status = document.getElementById('filter-status').value;
+                var phase = document.getElementById('filter-phase').value;
                 var params = 'Results?page=' + currentPage + '&pageSize=' + pageSize;
                 if (status) params += '&status=' + status;
+                if (phase) params += '&phase=' + phase;
 
                 apiFetch(params).then(function(data) {
                     renderResults(data);
@@ -494,11 +502,15 @@
 
             function exportResults() {
                 var status = document.getElementById('filter-status').value;
+                var phase = document.getElementById('filter-phase').value;
                 var format = document.getElementById('export-format').value;
                 var path = 'Export?format=' + encodeURIComponent(format) +
                     '&ApiKey=' + encodeURIComponent(ApiClient.accessToken());
                 if (status) {
                     path += '&status=' + encodeURIComponent(status);
+                }
+                if (phase) {
+                    path += '&phase=' + encodeURIComponent(phase);
                 }
                 // A plain navigation (not fetch) is what triggers the browser's
                 // download flow for the server's Content-Disposition: attachment
