@@ -46,6 +46,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
     private CancellationTokenSource? _cts;
     private int _activeScanCount;
     private int _isLibraryScanning;
+    private int _currentLibraryScanPhase;
     private bool _disposed;
 
     /// <summary>
@@ -83,6 +84,11 @@ public partial class ScanEngine : IScanEngine, IDisposable
 
     /// <inheritdoc />
     public bool IsScanning => Volatile.Read(ref _activeScanCount) > 0 || Volatile.Read(ref _isLibraryScanning) > 0;
+
+    /// <inheritdoc />
+    public int? CurrentPhase => Volatile.Read(ref _isLibraryScanning) > 0
+        ? Volatile.Read(ref _currentLibraryScanPhase)
+        : (int?)null;
 
     /// <inheritdoc />
     public async Task ScanItemAsync(BaseItem item, ScanPhase phase, CancellationToken cancellationToken)
@@ -240,6 +246,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
             cancellationToken, (_cts ??= new CancellationTokenSource()).Token);
         var token = linkedCts.Token;
 
+        Interlocked.Exchange(ref _currentLibraryScanPhase, (int)phase);
         Interlocked.Exchange(ref _isLibraryScanning, 1);
 
         try

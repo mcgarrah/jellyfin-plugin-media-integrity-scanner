@@ -138,6 +138,7 @@ public partial class MediaIntegrityController : ControllerBase
         return Ok(new ScanStatusResponse
         {
             IsScanning = _scanner.IsScanning,
+            CurrentPhase = _scanner.CurrentPhase,
             TotalFiles = totalFiles,
             ScannedFiles = stats.ScannedFiles,
             PassedFiles = stats.PassedFiles,
@@ -177,6 +178,7 @@ public partial class MediaIntegrityController : ControllerBase
     /// Get scan results with filtering and pagination.
     /// </summary>
     /// <param name="status">Optional status filter (0=pending, 1=pass, 2=fail, 3=error).</param>
+    /// <param name="phase">Optional scan phase filter (1=header, 2=full decode).</param>
     /// <param name="page">Page number (1-based).</param>
     /// <param name="pageSize">Results per page.</param>
     /// <param name="libraryId">Optional library ID filter.</param>
@@ -185,6 +187,7 @@ public partial class MediaIntegrityController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<PagedResultResponse>> GetResults(
         [FromQuery] int? status = null,
+        [FromQuery] int? phase = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
         [FromQuery] string? libraryId = null)
@@ -207,7 +210,7 @@ public partial class MediaIntegrityController : ControllerBase
                 : Array.Empty<string>();
         }
 
-        var results = await _db.GetResultsAsync(status, page, pageSize, itemIds)
+        var results = await _db.GetResultsAsync(status, phase, page, pageSize, itemIds)
             .ConfigureAwait(false);
 
         return Ok(new PagedResultResponse
@@ -243,15 +246,16 @@ public partial class MediaIntegrityController : ControllerBase
     /// as a downloadable CSV or TSV file.
     /// </summary>
     /// <param name="status">Optional status filter, matching <see cref="GetResults"/>'s values.</param>
+    /// <param name="phase">Optional scan phase filter, matching <see cref="GetResults"/>'s values.</param>
     /// <param name="format">"csv" (default) or "tsv".</param>
     /// <returns>A downloadable file.</returns>
     [HttpGet("Export")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult> ExportResults([FromQuery] int? status = null, [FromQuery] string format = "csv")
+    public async Task<ActionResult> ExportResults([FromQuery] int? status = null, [FromQuery] int? phase = null, [FromQuery] string format = "csv")
     {
         var isTsv = string.Equals(format, "tsv", StringComparison.OrdinalIgnoreCase);
         var delimiter = isTsv ? "\t" : ",";
-        var records = await _db.GetAllResultsAsync(status).ConfigureAwait(false);
+        var records = await _db.GetAllResultsAsync(status, phase).ConfigureAwait(false);
 
         var sb = new StringBuilder();
         sb.Append(string.Join(delimiter, "FilePath", "Status", "Phase", "Timestamp", "DurationMs", "DecodeMode", "HardwareAccelType", "Error")).Append("\r\n");
@@ -588,6 +592,9 @@ public class ScanStatusResponse
 {
     /// <summary>Gets or sets a value indicating whether a scan is in progress.</summary>
     public bool IsScanning { get; set; }
+
+    /// <summary>Gets or sets the <see cref="Scanner.ScanPhase"/> (as an int) the current library scan is running, or null when idle or between library scans.</summary>
+    public int? CurrentPhase { get; set; }
 
     /// <summary>Gets or sets the total number of tracked files.</summary>
     public int TotalFiles { get; set; }

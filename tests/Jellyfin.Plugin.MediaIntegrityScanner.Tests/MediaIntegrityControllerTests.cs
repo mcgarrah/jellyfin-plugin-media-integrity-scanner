@@ -198,6 +198,31 @@ public class MediaIntegrityControllerTests : IDisposable
         Assert.True(response.IsScanning);
     }
 
+    [Fact]
+    public async Task GetStatus_ReflectsCurrentPhaseFromScanEngine()
+    {
+        SetLibraryItems();
+        _scanner.SetupGet(s => s.CurrentPhase).Returns((int)ScanPhase.FullDecode);
+
+        var controller = CreateController();
+        var result = await controller.GetStatus();
+
+        var response = Assert.IsType<ScanStatusResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal((int)ScanPhase.FullDecode, response.CurrentPhase);
+    }
+
+    [Fact]
+    public async Task GetStatus_CurrentPhaseIsNull_WhenIdle()
+    {
+        SetLibraryItems();
+
+        var controller = CreateController();
+        var result = await controller.GetStatus();
+
+        var response = Assert.IsType<ScanStatusResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Null(response.CurrentPhase);
+    }
+
     // --- GetDiagnostics ---
 
     [Fact]
@@ -353,6 +378,72 @@ public class MediaIntegrityControllerTests : IDisposable
 
         var response = Assert.IsType<PagedResultResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
         Assert.Equal(0, response.TotalCount);
+    }
+
+    [Fact]
+    public async Task GetResults_FiltersByPhase()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "header-item",
+            FilePath = "/media/header.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = "2026-01-01T00:00:00.0000000Z"
+        });
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "deep-item",
+            FilePath = "/media/deep.mkv",
+            ScanPhase = (int)ScanPhase.FullDecode,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = "2026-01-01T00:00:01.0000000Z"
+        });
+
+        var controller = CreateController();
+        var result = await controller.GetResults(phase: (int)ScanPhase.FullDecode);
+
+        var response = Assert.IsType<PagedResultResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(1, response.TotalCount);
+        Assert.Equal("deep-item", response.Items[0].ItemId);
+    }
+
+    [Fact]
+    public async Task GetResults_CombinesStatusAndPhaseFilters()
+    {
+        // Same item_id/phase pair can't coexist twice (upsert key), so use
+        // different items to exercise all four status x phase combinations.
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "header-pass",
+            FilePath = "/media/a.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = "2026-01-01T00:00:00.0000000Z"
+        });
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "header-fail",
+            FilePath = "/media/b.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Fail,
+            ScanTimestamp = "2026-01-01T00:00:01.0000000Z"
+        });
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "deep-fail",
+            FilePath = "/media/c.mkv",
+            ScanPhase = (int)ScanPhase.FullDecode,
+            ScanStatus = (int)ScanStatus.Fail,
+            ScanTimestamp = "2026-01-01T00:00:02.0000000Z"
+        });
+
+        var controller = CreateController();
+        var result = await controller.GetResults(status: (int)ScanStatus.Fail, phase: (int)ScanPhase.FullDecode);
+
+        var response = Assert.IsType<PagedResultResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(1, response.TotalCount);
+        Assert.Equal("deep-fail", response.Items[0].ItemId);
     }
 
     // --- GetItemDetail ---
@@ -747,6 +838,36 @@ public class MediaIntegrityControllerTests : IDisposable
 
         Assert.Contains("fail.mkv", csv, StringComparison.Ordinal);
         Assert.DoesNotContain("pass.mkv", csv, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportResults_FiltersByPhase()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "header-item",
+            FilePath = "/media/header.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Fail,
+            ScanTimestamp = "2026-01-01T00:00:00.0000000Z"
+        });
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "deep-item",
+            FilePath = "/media/deep.mkv",
+            ScanPhase = (int)ScanPhase.FullDecode,
+            ScanStatus = (int)ScanStatus.Fail,
+            ScanTimestamp = "2026-01-01T00:00:01.0000000Z"
+        });
+
+        var controller = CreateController();
+        var result = await controller.ExportResults(phase: (int)ScanPhase.FullDecode);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+
+        Assert.Contains("deep.mkv", csv, StringComparison.Ordinal);
+        Assert.DoesNotContain("header.mkv", csv, StringComparison.Ordinal);
     }
 
     [Fact]

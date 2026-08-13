@@ -310,6 +310,52 @@ public class ScanEngineTests : IDisposable
         Assert.False(engine.IsScanning);
     }
 
+    // --- CurrentPhase ---
+
+    [Fact]
+    public void CurrentPhase_IsNull_WhenIdle()
+    {
+        var engine = CreateEngine(CreateFakeWrapper());
+
+        Assert.Null(engine.CurrentPhase);
+    }
+
+    [Fact]
+    public async Task CurrentPhase_ReflectsPhase_DuringLibraryScan_AndIsNullAfter()
+    {
+        var gate = new TaskCompletionSource();
+        var item = MakeItem();
+
+        var library = new Mock<ILibraryManager>();
+        library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(new List<BaseItem> { item });
+
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.IsCurrentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync(false);
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.DecodeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                await gate.Task;
+                return new ScanResult { Success = true, DurationMs = 1 };
+            });
+
+        var engine = CreateEngine(wrapper, db, library: library);
+        Assert.Null(engine.CurrentPhase);
+
+        var libraryScanTask = engine.ScanLibraryAsync(null, ScanPhase.FullDecode, CancellationToken.None);
+        await Task.Delay(50);
+
+        Assert.Equal((int)ScanPhase.FullDecode, engine.CurrentPhase);
+
+        gate.SetResult();
+        await libraryScanTask;
+
+        Assert.Null(engine.CurrentPhase);
+    }
+
     // --- Concurrency ---
 
     [Fact]

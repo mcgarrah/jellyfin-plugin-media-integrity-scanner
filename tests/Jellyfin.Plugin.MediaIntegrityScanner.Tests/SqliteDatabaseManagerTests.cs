@@ -147,7 +147,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Pass, error: null));
         await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Fail, error: "now failing"));
 
-        var results = await _db.GetResultsAsync(status: null, page: 1, pageSize: 50, itemIds: null);
+        var results = await _db.GetResultsAsync(status: null, phase: null, page: 1, pageSize: 50, itemIds: null);
 
         Assert.Equal(1, results.TotalCount);
         Assert.Equal((int)ScanStatus.Fail, results.Items.Single().ScanStatus);
@@ -160,7 +160,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord("item-1", phase: (int)ScanPhase.Header));
         await _db.SaveResultAsync(MakeRecord("item-1", phase: (int)ScanPhase.FullDecode));
 
-        var results = await _db.GetResultsAsync(status: null, page: 1, pageSize: 50, itemIds: null);
+        var results = await _db.GetResultsAsync(status: null, phase: null, page: 1, pageSize: 50, itemIds: null);
 
         Assert.Equal(2, results.TotalCount);
     }
@@ -176,7 +176,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         Assert.Equal((int)DecodeMode.Hardware, detail!.DecodeMode);
         Assert.Equal("cuda", detail.HardwareAccelType);
 
-        var results = await _db.GetResultsAsync(status: null, page: 1, pageSize: 50, itemIds: null);
+        var results = await _db.GetResultsAsync(status: null, phase: null, page: 1, pageSize: 50, itemIds: null);
         var fromResults = Assert.Single(results.Items);
         Assert.Equal((int)DecodeMode.Hardware, fromResults.DecodeMode);
         Assert.Equal("cuda", fromResults.HardwareAccelType);
@@ -289,7 +289,7 @@ public class SqliteDatabaseManagerTests : IDisposable
             new List<(string ItemId, string FilePath)> { ("item-1", "/media/item-1.mkv"), ("item-2", "/media/item-2.mkv") },
             (int)ScanPhase.Header);
 
-        var results = await _db.GetResultsAsync(status: (int)ScanStatus.Pending, page: 1, pageSize: 10, itemIds: null);
+        var results = await _db.GetResultsAsync(status: (int)ScanStatus.Pending, phase: null, page: 1, pageSize: 10, itemIds: null);
 
         Assert.Equal(2, results.TotalCount);
         Assert.All(results.Items, r => Assert.Equal((int)ScanStatus.Pending, r.ScanStatus));
@@ -506,7 +506,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord("item-1"));
         await _db.SaveResultAsync(MakeRecord("item-2"));
 
-        var results = await _db.GetResultsAsync(status: null, page: 1, pageSize: 50, itemIds: null);
+        var results = await _db.GetResultsAsync(status: null, phase: null, page: 1, pageSize: 50, itemIds: null);
 
         Assert.Equal(2, results.TotalCount);
         Assert.Equal(2, results.Items.Count);
@@ -518,10 +518,36 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Pass));
         await _db.SaveResultAsync(MakeRecord("item-2", status: (int)ScanStatus.Fail));
 
-        var results = await _db.GetResultsAsync(status: (int)ScanStatus.Fail, page: 1, pageSize: 50, itemIds: null);
+        var results = await _db.GetResultsAsync(status: (int)ScanStatus.Fail, phase: null, page: 1, pageSize: 50, itemIds: null);
 
         Assert.Equal(1, results.TotalCount);
         Assert.Equal("item-2", results.Items.Single().ItemId);
+    }
+
+    [Fact]
+    public async Task GetResultsAsync_FiltersByPhase()
+    {
+        await _db.SaveResultAsync(MakeRecord("item-1", phase: (int)ScanPhase.Header));
+        await _db.SaveResultAsync(MakeRecord("item-2", phase: (int)ScanPhase.FullDecode));
+
+        var results = await _db.GetResultsAsync(status: null, phase: (int)ScanPhase.FullDecode, page: 1, pageSize: 50, itemIds: null);
+
+        Assert.Equal(1, results.TotalCount);
+        Assert.Equal("item-2", results.Items.Single().ItemId);
+    }
+
+    [Fact]
+    public async Task GetResultsAsync_CombinesStatusAndPhaseFilters()
+    {
+        await _db.SaveResultAsync(MakeRecord("header-pass", phase: (int)ScanPhase.Header, status: (int)ScanStatus.Pass));
+        await _db.SaveResultAsync(MakeRecord("header-fail", phase: (int)ScanPhase.Header, status: (int)ScanStatus.Fail));
+        await _db.SaveResultAsync(MakeRecord("deep-fail", phase: (int)ScanPhase.FullDecode, status: (int)ScanStatus.Fail));
+
+        var results = await _db.GetResultsAsync(
+            status: (int)ScanStatus.Fail, phase: (int)ScanPhase.FullDecode, page: 1, pageSize: 50, itemIds: null);
+
+        Assert.Equal(1, results.TotalCount);
+        Assert.Equal("deep-fail", results.Items.Single().ItemId);
     }
 
     [Fact]
@@ -531,7 +557,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord("item-2"));
         await _db.SaveResultAsync(MakeRecord("item-3"));
 
-        var results = await _db.GetResultsAsync(status: null, page: 1, pageSize: 50, itemIds: new[] { "item-1", "item-3" });
+        var results = await _db.GetResultsAsync(status: null, phase: null, page: 1, pageSize: 50, itemIds: new[] { "item-1", "item-3" });
 
         Assert.Equal(2, results.TotalCount);
         Assert.All(results.Items, r => Assert.Contains(r.ItemId, new[] { "item-1", "item-3" }));
@@ -543,7 +569,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord("item-1"));
         await _db.SaveResultAsync(MakeRecord("weird'id;--"));
 
-        var results = await _db.GetResultsAsync(status: null, page: 1, pageSize: 50, itemIds: new[] { "weird'id;--" });
+        var results = await _db.GetResultsAsync(status: null, phase: null, page: 1, pageSize: 50, itemIds: new[] { "weird'id;--" });
 
         Assert.Equal(1, results.TotalCount);
         Assert.Equal("weird'id;--", results.Items.Single().ItemId);
@@ -554,7 +580,7 @@ public class SqliteDatabaseManagerTests : IDisposable
     {
         await _db.SaveResultAsync(MakeRecord("item-1"));
 
-        var results = await _db.GetResultsAsync(status: null, page: 1, pageSize: 50, itemIds: Array.Empty<string>());
+        var results = await _db.GetResultsAsync(status: null, phase: null, page: 1, pageSize: 50, itemIds: Array.Empty<string>());
 
         Assert.Equal(0, results.TotalCount);
         Assert.Empty(results.Items);
@@ -568,7 +594,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord("item-3", status: (int)ScanStatus.Fail));
 
         var results = await _db.GetResultsAsync(
-            status: (int)ScanStatus.Fail, page: 1, pageSize: 50, itemIds: new[] { "item-1", "item-2" });
+            status: (int)ScanStatus.Fail, phase: null, page: 1, pageSize: 50, itemIds: new[] { "item-1", "item-2" });
 
         Assert.Equal(1, results.TotalCount);
         Assert.Equal("item-2", results.Items.Single().ItemId);
@@ -582,9 +608,9 @@ public class SqliteDatabaseManagerTests : IDisposable
             await _db.SaveResultAsync(MakeRecord($"item-{i}", timestamp: DateTime.UtcNow.AddSeconds(i).ToString("O")));
         }
 
-        var page1 = await _db.GetResultsAsync(status: null, page: 1, pageSize: 2, itemIds: null);
-        var page2 = await _db.GetResultsAsync(status: null, page: 2, pageSize: 2, itemIds: null);
-        var page3 = await _db.GetResultsAsync(status: null, page: 3, pageSize: 2, itemIds: null);
+        var page1 = await _db.GetResultsAsync(status: null, phase: null, page: 1, pageSize: 2, itemIds: null);
+        var page2 = await _db.GetResultsAsync(status: null, phase: null, page: 2, pageSize: 2, itemIds: null);
+        var page3 = await _db.GetResultsAsync(status: null, phase: null, page: 3, pageSize: 2, itemIds: null);
 
         Assert.Equal(5, page1.TotalCount);
         Assert.Equal(2, page1.Items.Count);
@@ -608,7 +634,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord("item-2", status: (int)ScanStatus.Fail));
         await _db.SaveResultAsync(MakeRecord("item-3", status: (int)ScanStatus.Error));
 
-        var results = await _db.GetAllResultsAsync(status: null);
+        var results = await _db.GetAllResultsAsync(status: null, phase: null);
 
         Assert.Equal(3, results.Count);
     }
@@ -620,10 +646,21 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord("item-2", status: (int)ScanStatus.Fail));
         await _db.SaveResultAsync(MakeRecord("item-3", status: (int)ScanStatus.Fail));
 
-        var results = await _db.GetAllResultsAsync(status: (int)ScanStatus.Fail);
+        var results = await _db.GetAllResultsAsync(status: (int)ScanStatus.Fail, phase: null);
 
         Assert.Equal(2, results.Count);
         Assert.All(results, r => Assert.Equal((int)ScanStatus.Fail, r.ScanStatus));
+    }
+
+    [Fact]
+    public async Task GetAllResultsAsync_FiltersByPhase()
+    {
+        await _db.SaveResultAsync(MakeRecord("item-1", phase: (int)ScanPhase.Header));
+        await _db.SaveResultAsync(MakeRecord("item-2", phase: (int)ScanPhase.FullDecode));
+
+        var results = await _db.GetAllResultsAsync(status: null, phase: (int)ScanPhase.FullDecode);
+
+        Assert.Equal("item-2", Assert.Single(results).ItemId);
     }
 
     [Fact]
@@ -631,7 +668,7 @@ public class SqliteDatabaseManagerTests : IDisposable
     {
         await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Pass));
 
-        var results = await _db.GetAllResultsAsync(status: (int)ScanStatus.Fail);
+        var results = await _db.GetAllResultsAsync(status: (int)ScanStatus.Fail, phase: null);
 
         Assert.Empty(results);
     }
@@ -646,7 +683,7 @@ public class SqliteDatabaseManagerTests : IDisposable
             await _db.SaveResultAsync(MakeRecord($"item-{i}"));
         }
 
-        var results = await _db.GetAllResultsAsync(status: null);
+        var results = await _db.GetAllResultsAsync(status: null, phase: null);
 
         Assert.Equal(60, results.Count);
     }
@@ -658,7 +695,7 @@ public class SqliteDatabaseManagerTests : IDisposable
         await _db.SaveResultAsync(MakeRecord("newest", timestamp: "2026-01-03T00:00:00.0000000Z"));
         await _db.SaveResultAsync(MakeRecord("middle", timestamp: "2026-01-02T00:00:00.0000000Z"));
 
-        var results = await _db.GetAllResultsAsync(status: null);
+        var results = await _db.GetAllResultsAsync(status: null, phase: null);
 
         Assert.Equal(new[] { "newest", "middle", "oldest" }, results.Select(r => r.ItemId));
     }
