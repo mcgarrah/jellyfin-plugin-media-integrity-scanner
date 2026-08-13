@@ -26,7 +26,7 @@ test.describe('Media Integrity Scanner database maintenance', () => {
 
   test('is blocked with an error while a scan is in progress', async ({ page }) => {
     await page.locator('#btn-scan-headers').click();
-    await expect(page.locator('#scan-status')).toHaveText('Scanning...');
+    await expect(page.locator('#scan-status')).toHaveText('Scanning (Header)...');
 
     await page.locator('#btn-maintenance-now').click();
 

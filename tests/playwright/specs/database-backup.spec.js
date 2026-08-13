@@ -47,7 +47,7 @@ test.describe('Media Integrity Scanner database backup/restore', () => {
     // Idle resolved in ~1s instead of the ~35s+ seven files at
     // DelayBetweenFilesMs=5000 genuinely takes).
     await page.locator('#btn-scan-headers').click();
-    await expect(page.locator('#scan-status')).toHaveText('Scanning...');
+    await expect(page.locator('#scan-status')).toHaveText('Scanning (Header)...');
     await expect(page.locator('#scan-status')).toHaveText('Idle', { timeout: 60000 });
     await expect(page.locator('#passed-files')).toHaveText('4');
     await expect(page.locator('#failed-files')).toHaveText('3');
@@ -58,7 +58,7 @@ test.describe('Media Integrity Scanner database backup/restore', () => {
 
     // Mutate: Deep Scan is the known, real 4/3 -> 2/5 state change.
     await page.locator('#btn-scan-deep').click();
-    await expect(page.locator('#scan-status')).toHaveText('Scanning...');
+    await expect(page.locator('#scan-status')).toHaveText('Scanning (Deep)...');
     await expect(page.locator('#scan-status')).toHaveText('Idle', { timeout: 60000 });
     await expect(page.locator('#passed-files')).toHaveText('2');
     await expect(page.locator('#failed-files')).toHaveText('5');
@@ -79,7 +79,7 @@ test.describe('Media Integrity Scanner database backup/restore', () => {
     const backupFileName = await page.locator('#backups-body tr').first().locator('td').first().textContent();
 
     await page.locator('#btn-scan-deep').click();
-    await expect(page.locator('#scan-status')).toHaveText('Scanning...');
+    await expect(page.locator('#scan-status')).toHaveText('Scanning (Deep)...');
 
     page.once('dialog', (dialog) => dialog.accept());
     await page
