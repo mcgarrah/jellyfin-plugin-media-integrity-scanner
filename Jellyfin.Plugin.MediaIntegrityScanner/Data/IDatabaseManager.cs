@@ -43,6 +43,21 @@ public interface IDatabaseManager
     Task<bool> IsCurrentAsync(string itemId, string filePath, int minPhase);
 
     /// <summary>
+    /// Marks a batch of items <see cref="Scanner.ScanStatus.Pending"/> for a given phase --
+    /// queued but not yet scanned. Called once, upfront, before a library scan actually starts
+    /// processing items, so the results table (and the "Pending Only" filter) reflect the real,
+    /// currently in-flight queue immediately rather than only ever showing scans that have
+    /// already completed. Upserts the same way <see cref="SaveResultAsync"/> does: an item that
+    /// already has a stale Fail/Error record for this phase gets overwritten with Pending, since
+    /// a rescan is about to supersede it anyway. Callers are expected to only pass items
+    /// <see cref="IsCurrentAsync"/> has already said need scanning -- this does not check that itself.
+    /// </summary>
+    /// <param name="items">The items to mark pending, as (item ID, file path) pairs.</param>
+    /// <param name="phase">The <see cref="Scanner.ScanPhase"/> (as an int) being queued.</param>
+    /// <returns>A task representing the async operation.</returns>
+    Task MarkPendingAsync(IReadOnlyList<(string ItemId, string FilePath)> items, int phase);
+
+    /// <summary>
     /// Gets a summary of scan statistics.
     /// </summary>
     /// <returns>Scan statistics.</returns>
@@ -123,11 +138,14 @@ public class DatabaseBackupInfo
 
 /// <summary>
 /// Summary statistics for scan results. Reflects only items that have at least
-/// one scan record — the database has no notion of a library's total item
-/// count or truly "pending" (never-scanned) items; callers with access to
-/// <c>ILibraryManager</c> should derive those from the real library count.
+/// one *completed* scan record — a <see cref="Scanner.ScanStatus.Pending"/> row
+/// (queued via <see cref="IDatabaseManager.MarkPendingAsync"/> but not yet actually
+/// scanned) never counts toward any field here, so a large in-flight queue doesn't
+/// make these numbers look more complete than they really are. The database also has
+/// no notion of a library's total item count; callers with access to
+/// <c>ILibraryManager</c> should derive that from the real library count.
 /// Pass/fail/error counts use each item's most authoritative (highest scan
-/// phase) result, even if it was scanned in both phases. <see cref="ScannedFiles"/>
+/// phase) *completed* result, even if it was scanned in both phases. <see cref="ScannedFiles"/>
 /// and <see cref="DeepScannedFiles"/> are phase-specific, since a header scan and
 /// a deep scan are independent passes over the library and a file can be
 /// "current" for one while still pending the other.

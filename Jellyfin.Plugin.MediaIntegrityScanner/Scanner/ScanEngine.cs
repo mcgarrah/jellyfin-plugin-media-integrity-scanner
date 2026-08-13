@@ -260,6 +260,28 @@ public partial class ScanEngine : IScanEngine, IDisposable
             var processed = 0;
             LogLibraryScanStarting(total, phase);
 
+            // Pre-seed the whole not-yet-current backlog as Pending, upfront, before any
+            // actual scanning starts -- so the results table (and "Pending Only" filter)
+            // show the full in-flight queue immediately, rather than only ever reflecting
+            // scans that have already completed. This is a separate pass from the
+            // Parallel.ForEachAsync loop below on purpose: that loop is bounded by
+            // MaxConcurrentScans and only reaches later items once earlier ones finish, so
+            // seeding inline there would only reveal the queue a few items at a time instead
+            // of showing the real backlog size right away. The per-item IsCurrentAsync check
+            // below still runs again regardless -- cheap, and guards against a race where
+            // something else (a manual trigger, the other phase's own scan) completed an
+            // item in the gap between this pass and its actual turn.
+            var pendingBatch = new List<(string ItemId, string FilePath)>();
+            foreach (var item in items)
+            {
+                if (!await _db.IsCurrentAsync(item.Id.ToString(), item.Path, (int)phase).ConfigureAwait(false))
+                {
+                    pendingBatch.Add((item.Id.ToString(), item.Path));
+                }
+            }
+
+            await _db.MarkPendingAsync(pendingBatch, (int)phase).ConfigureAwait(false);
+
             var maxConcurrent = Math.Max(1, Plugin.Instance?.Configuration?.MaxConcurrentScans ?? 1);
             await Parallel.ForEachAsync(
                 items,

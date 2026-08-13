@@ -448,6 +448,66 @@ public class ScanEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task ScanLibraryAsync_PreSeedsPending_ForNotCurrentItemsOnly()
+    {
+        var current = MakeItem();
+        var stale = MakeItem();
+
+        var library = new Mock<ILibraryManager>();
+        library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(new List<BaseItem> { current, stale });
+
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.IsCurrentAsync(current.Id.ToString(), current.Path, (int)ScanPhase.Header)).ReturnsAsync(true);
+        db.Setup(d => d.IsCurrentAsync(stale.Id.ToString(), stale.Path, (int)ScanPhase.Header)).ReturnsAsync(false);
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+
+        IReadOnlyList<(string ItemId, string FilePath)>? markedPending = null;
+        db.Setup(d => d.MarkPendingAsync(It.IsAny<IReadOnlyList<(string ItemId, string FilePath)>>(), (int)ScanPhase.Header))
+            .Callback<IReadOnlyList<(string ItemId, string FilePath)>, int>((items, _) => markedPending = items)
+            .Returns(Task.CompletedTask);
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 1 });
+
+        var engine = CreateEngine(wrapper, db, library: library);
+
+        await engine.ScanLibraryAsync(null, ScanPhase.Header, CancellationToken.None);
+
+        Assert.NotNull(markedPending);
+        var markedItem = Assert.Single(markedPending!);
+        Assert.Equal(stale.Id.ToString(), markedItem.ItemId);
+        Assert.Equal(stale.Path, markedItem.FilePath);
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_CallsMarkPendingAsync_WithAnEmptyBatch_WhenEverythingIsAlreadyCurrent()
+    {
+        var current = MakeItem();
+
+        var library = new Mock<ILibraryManager>();
+        library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(new List<BaseItem> { current });
+
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.IsCurrentAsync(current.Id.ToString(), current.Path, (int)ScanPhase.Header)).ReturnsAsync(true);
+
+        IReadOnlyList<(string ItemId, string FilePath)>? markedPending = null;
+        db.Setup(d => d.MarkPendingAsync(It.IsAny<IReadOnlyList<(string ItemId, string FilePath)>>(), (int)ScanPhase.Header))
+            .Callback<IReadOnlyList<(string ItemId, string FilePath)>, int>((items, _) => markedPending = items)
+            .Returns(Task.CompletedTask);
+
+        var wrapper = CreateFakeWrapper();
+        var engine = CreateEngine(wrapper, db, library: library);
+
+        await engine.ScanLibraryAsync(null, ScanPhase.Header, CancellationToken.None);
+
+        Assert.NotNull(markedPending);
+        Assert.Empty(markedPending!);
+    }
+
+    [Fact]
     public async Task ScanLibraryAsync_PassesParsedLibraryIdAsParentId()
     {
         var libraryId = Guid.NewGuid();
