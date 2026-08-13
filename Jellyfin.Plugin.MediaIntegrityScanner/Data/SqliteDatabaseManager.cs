@@ -197,6 +197,80 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task MarkPendingAsync(IReadOnlyList<(string ItemId, string FilePath)> items, int phase)
+    {
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync().ConfigureAwait(false);
+
+            // Same upsert shape as SaveResultAsync, batched in one transaction with a
+            // single reused parameterized command -- avoids one round-trip per item on
+            // a large library, matching the pattern ReconcileAsync already established.
+            // Deliberately does not touch file_size/last_modified/error_output/duration/
+            // decode_mode/hardware_accel_type -- those stay whatever they were (or null,
+            // for a brand-new row) until the real scan result overwrites this placeholder.
+            await using var transaction = connection.BeginTransaction();
+            await using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = @"
+                    INSERT INTO scan_results (item_id, file_path, scan_phase, scan_status, scan_timestamp)
+                    VALUES (@itemId, @filePath, @scanPhase, @scanStatus, @scanTimestamp)
+                    ON CONFLICT(item_id, scan_phase) DO UPDATE SET
+                        scan_status = excluded.scan_status,
+                        scan_timestamp = excluded.scan_timestamp
+                    WHERE scan_status != 1;
+                ";
+
+                var itemIdParam = command.CreateParameter();
+                itemIdParam.ParameterName = "@itemId";
+                command.Parameters.Add(itemIdParam);
+
+                var filePathParam = command.CreateParameter();
+                filePathParam.ParameterName = "@filePath";
+                command.Parameters.Add(filePathParam);
+
+                var phaseParam = command.CreateParameter();
+                phaseParam.ParameterName = "@scanPhase";
+                phaseParam.Value = phase;
+                command.Parameters.Add(phaseParam);
+
+                var statusParam = command.CreateParameter();
+                statusParam.ParameterName = "@scanStatus";
+                statusParam.Value = (int)Scanner.ScanStatus.Pending;
+                command.Parameters.Add(statusParam);
+
+                var timestampParam = command.CreateParameter();
+                timestampParam.ParameterName = "@scanTimestamp";
+                command.Parameters.Add(timestampParam);
+
+                var now = DateTime.UtcNow.ToString("O");
+                foreach (var (itemId, filePath) in items)
+                {
+                    itemIdParam.Value = itemId;
+                    filePathParam.Value = filePath;
+                    timestampParam.Value = now;
+                    await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+                }
+            }
+
+            await transaction.CommitAsync().ConfigureAwait(false);
+            LogMarkedPending(items.Count, phase);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<bool> IsCurrentAsync(string itemId, string filePath, int minPhase)
     {
         await using var connection = new SqliteConnection(_connectionString);
@@ -250,6 +324,7 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
                 SELECT item_id, scan_status, scan_phase,
                        ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY scan_phase DESC) AS rn
                 FROM scan_results
+                WHERE scan_status != 0
             )
             SELECT
                 COUNT(*) AS total,
@@ -257,7 +332,7 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
                 SUM(CASE WHEN scan_status = 1 THEN 1 ELSE 0 END) AS passed,
                 SUM(CASE WHEN scan_status = 2 THEN 1 ELSE 0 END) AS failed,
                 SUM(CASE WHEN scan_status = 3 THEN 1 ELSE 0 END) AS errored,
-                (SELECT MAX(scan_timestamp) FROM scan_results) AS last_scan
+                (SELECT MAX(scan_timestamp) FROM scan_results WHERE scan_status != 0) AS last_scan
             FROM latest
             WHERE rn = 1;
         ";
@@ -851,6 +926,9 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 
     [LoggerMessage(EventId = 9, Level = LogLevel.Warning, Message = "Reconciliation skipped -- empty current-item-ids set (treated as a failed library query, not an empty library)")]
     private partial void LogReconcileSkippedEmptySet();
+
+    [LoggerMessage(EventId = 10, Level = LogLevel.Debug, Message = "Marked {Count} items pending for phase {Phase}")]
+    private partial void LogMarkedPending(int count, int phase);
 }
 
 /// <summary>

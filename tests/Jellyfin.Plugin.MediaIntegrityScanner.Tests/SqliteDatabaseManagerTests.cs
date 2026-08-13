@@ -280,6 +280,64 @@ public class SqliteDatabaseManagerTests : IDisposable
         Assert.False(await _db.IsCurrentAsync("item-1", path, (int)ScanPhase.FullDecode));
     }
 
+    // --- MarkPendingAsync ---
+
+    [Fact]
+    public async Task MarkPendingAsync_InsertsNewPendingRows()
+    {
+        await _db.MarkPendingAsync(
+            new List<(string ItemId, string FilePath)> { ("item-1", "/media/item-1.mkv"), ("item-2", "/media/item-2.mkv") },
+            (int)ScanPhase.Header);
+
+        var results = await _db.GetResultsAsync(status: (int)ScanStatus.Pending, page: 1, pageSize: 10, itemIds: null);
+
+        Assert.Equal(2, results.TotalCount);
+        Assert.All(results.Items, r => Assert.Equal((int)ScanStatus.Pending, r.ScanStatus));
+    }
+
+    [Fact]
+    public async Task MarkPendingAsync_NoOp_WhenListIsEmpty()
+    {
+        await _db.MarkPendingAsync(new List<(string ItemId, string FilePath)>(), (int)ScanPhase.Header);
+
+        var stats = await _db.GetStatisticsAsync();
+        Assert.Equal(0, stats.ScannedFiles);
+    }
+
+    [Fact]
+    public async Task MarkPendingAsync_OverwritesAStaleFailRecordForTheSamePhase()
+    {
+        // A file that failed last time and is now queued for a rescan should show
+        // Pending, not its stale Fail status, while the rescan is in flight.
+        await _db.SaveResultAsync(MakeRecord("item-1", phase: (int)ScanPhase.Header, status: (int)ScanStatus.Fail));
+
+        await _db.MarkPendingAsync(
+            new List<(string ItemId, string FilePath)> { ("item-1", "/media/item-1.mkv") },
+            (int)ScanPhase.Header);
+
+        var detail = await _db.GetItemDetailAsync("item-1");
+        Assert.NotNull(detail);
+        Assert.Equal((int)ScanStatus.Pending, detail!.ScanStatus);
+    }
+
+    [Fact]
+    public async Task MarkPendingAsync_DoesNotDowngradeAGenuinelyCurrentPassRecord()
+    {
+        // Defense-in-depth: callers are only supposed to pass items IsCurrentAsync
+        // has already said need scanning, but a race (another trigger completing
+        // the same item between that check and this batch call) should not be able
+        // to regress a real Pass back to Pending.
+        await _db.SaveResultAsync(MakeRecord("item-1", phase: (int)ScanPhase.Header, status: (int)ScanStatus.Pass));
+
+        await _db.MarkPendingAsync(
+            new List<(string ItemId, string FilePath)> { ("item-1", "/media/item-1.mkv") },
+            (int)ScanPhase.Header);
+
+        var detail = await _db.GetItemDetailAsync("item-1");
+        Assert.NotNull(detail);
+        Assert.Equal((int)ScanStatus.Pass, detail!.ScanStatus);
+    }
+
     // --- GetStatisticsAsync ---
 
     [Fact]
@@ -362,6 +420,51 @@ public class SqliteDatabaseManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task GetStatisticsAsync_ExcludesPendingRows_FromEveryCount()
+    {
+        // Regression test for the exact interaction MarkPendingAsync introduces:
+        // a Pending row is a queue placeholder, not a real result, and must never
+        // count toward ScannedFiles/DeepScannedFiles/Passed/Failed/Errored or
+        // LastScanTimestamp -- otherwise a large in-flight queue would make the
+        // dashboard look more "done" than it actually is, silently re-breaking the
+        // exact bug item #49 already fixed once for a different root cause.
+        await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Pass));
+        await _db.MarkPendingAsync(
+            new List<(string ItemId, string FilePath)> { ("item-2", "/media/item-2.mkv") },
+            (int)ScanPhase.Header);
+
+        var stats = await _db.GetStatisticsAsync();
+
+        Assert.Equal(1, stats.ScannedFiles); // only item-1, not the pending item-2
+        Assert.Equal(0, stats.DeepScannedFiles);
+        Assert.Equal(1, stats.PassedFiles);
+        Assert.Equal(0, stats.FailedFiles);
+        Assert.Equal(0, stats.ErroredFiles);
+    }
+
+    [Fact]
+    public async Task GetStatisticsAsync_PendingDeepScanRow_DoesNotHideAnAlreadyCompletedHeaderResult()
+    {
+        // A subtler version of the same interaction: an item can have a real,
+        // completed Header Pass AND a freshly pre-seeded Pending row for a Deep
+        // scan that hasn't run yet. The "latest per item" logic here orders by
+        // scan_phase DESC, so without excluding Pending rows first, the Pending
+        // phase-2 placeholder would outrank and hide the completed phase-1 Pass --
+        // making this item vanish from ScannedFiles even though it genuinely has
+        // a completed Header result.
+        await _db.SaveResultAsync(MakeRecord("item-1", phase: (int)ScanPhase.Header, status: (int)ScanStatus.Pass));
+        await _db.MarkPendingAsync(
+            new List<(string ItemId, string FilePath)> { ("item-1", "/media/item-1.mkv") },
+            (int)ScanPhase.FullDecode);
+
+        var stats = await _db.GetStatisticsAsync();
+
+        Assert.Equal(1, stats.ScannedFiles); // the completed Header result still counts
+        Assert.Equal(0, stats.DeepScannedFiles); // the Deep scan is genuinely still pending
+        Assert.Equal(1, stats.PassedFiles);
+    }
+
+    [Fact]
     public async Task GetStatisticsAsync_LastScanTimestamp_ReflectsMaxAcrossAllRows()
     {
         var older = DateTime.UtcNow.AddDays(-1).ToString("O");
@@ -375,6 +478,24 @@ public class SqliteDatabaseManagerTests : IDisposable
         var stats = await _db.GetStatisticsAsync();
 
         Assert.Equal(newer, stats.LastScanTimestamp);
+    }
+
+    [Fact]
+    public async Task GetStatisticsAsync_LastScanTimestamp_IgnoresAMoreRecentPendingRow()
+    {
+        // A file just queued for scanning (Pending, timestamped "now") is not a
+        // completed scan -- LastScanTimestamp must keep reflecting the last actual
+        // completed result, not the moment something was merely added to the queue.
+        var completedAt = DateTime.UtcNow.AddMinutes(-5).ToString("O");
+        await _db.SaveResultAsync(MakeRecord("item-1", status: (int)ScanStatus.Pass, timestamp: completedAt));
+
+        await _db.MarkPendingAsync(
+            new List<(string ItemId, string FilePath)> { ("item-2", "/media/item-2.mkv") },
+            (int)ScanPhase.Header);
+
+        var stats = await _db.GetStatisticsAsync();
+
+        Assert.Equal(completedAt, stats.LastScanTimestamp);
     }
 
     // --- GetResultsAsync ---
