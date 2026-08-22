@@ -594,6 +594,33 @@ public class ScanEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task ScanLibraryAsync_AlwaysSetsRecursiveTrue_SoLibraryScopedTvShowsAreActuallyFound()
+    {
+        // Regression test: Jellyfin's LibraryManager only descends into a
+        // library folder's Series -> Season -> Episode hierarchy when
+        // Recursive is true *and* ParentId is set. Without Recursive, a
+        // library-scoped scan silently found 0 items for any TV library
+        // (its direct children are Series, not the Video-typed episodes the
+        // MediaTypes filter requires) -- caught via a live report ("set
+        // library + name filter, Deep Scan button never changed state") that
+        // traced back to this exact query.
+        InternalItemsQuery? capturedQuery = null;
+
+        var library = new Mock<ILibraryManager>();
+        library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Callback<InternalItemsQuery>(q => capturedQuery = q)
+            .Returns(new List<BaseItem>());
+
+        var wrapper = CreateFakeWrapper();
+        var engine = CreateEngine(wrapper, library: library);
+
+        await engine.ScanLibraryAsync(Guid.NewGuid().ToString(), ScanPhase.Header, CancellationToken.None);
+
+        Assert.NotNull(capturedQuery);
+        Assert.True(capturedQuery!.Recursive);
+    }
+
+    [Fact]
     public async Task ScanLibraryAsync_NameFilter_MatchesMoviesByTitle_CaseInsensitive()
     {
         var wanted = MakeMovie("Dune: Part Two");

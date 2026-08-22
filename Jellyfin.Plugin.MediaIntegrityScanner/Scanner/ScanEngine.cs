@@ -262,7 +262,19 @@ public partial class ScanEngine : IScanEngine, IDisposable
             var query = new InternalItemsQuery
             {
                 MediaTypes = new[] { MediaType.Video, MediaType.Audio },
-                IsVirtualItem = false
+                IsVirtualItem = false,
+                // Jellyfin's own LibraryManager only descends into a folder's
+                // Series -> Season -> Episode hierarchy when Recursive is set
+                // *and* ParentId is non-empty (see Emby.Server.Implementations
+                // .Library.LibraryManager, gated on `query.Recursive &&
+                // !query.ParentId.IsEmpty()`). Without this, scoping to a TV
+                // library returns only its direct children -- the Series items
+                // themselves, not Video-typed episodes -- so the MediaTypes
+                // filter above silently excludes everything and the scan
+                // finds 0 items. Always recursive: with no ParentId this is a
+                // no-op (there's no folder to descend from), so it's safe
+                // regardless of whether a library scope is set.
+                Recursive = true
             };
 
             if (!string.IsNullOrEmpty(libraryId) && Guid.TryParse(libraryId, out var parentId))
