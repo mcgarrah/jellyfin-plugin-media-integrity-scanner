@@ -15,6 +15,7 @@
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -23,6 +24,7 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Logging;
@@ -240,7 +242,13 @@ public partial class ScanEngine : IScanEngine, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task ScanLibraryAsync(string? libraryId, ScanPhase phase, CancellationToken cancellationToken, IProgress<double>? progress = null)
+    public async Task ScanLibraryAsync(
+        string? libraryId,
+        ScanPhase phase,
+        CancellationToken cancellationToken,
+        IProgress<double>? progress = null,
+        string? nameFilter = null,
+        IReadOnlyCollection<int>? seasons = null)
     {
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, (_cts ??= new CancellationTokenSource()).Token);
@@ -262,7 +270,19 @@ public partial class ScanEngine : IScanEngine, IDisposable
                 query.ParentId = parentId;
             }
 
-            var items = _library.GetItemList(query);
+            IReadOnlyList<BaseItem> items = _library.GetItemList(query);
+
+            if (!string.IsNullOrWhiteSpace(nameFilter))
+            {
+                items = items.Where(item => MatchesNameFilter(item, nameFilter)).ToList();
+            }
+
+            if (seasons is { Count: > 0 })
+            {
+                var seasonSet = new HashSet<int>(seasons);
+                items = items.Where(item => item is not Episode episode || (episode.ParentIndexNumber.HasValue && seasonSet.Contains(episode.ParentIndexNumber.Value))).ToList();
+            }
+
             var total = items.Count;
             var processed = 0;
             LogLibraryScanStarting(total, phase);
@@ -359,6 +379,19 @@ public partial class ScanEngine : IScanEngine, IDisposable
         {
             await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Checks whether an item matches a scan-scope name filter. Episodes are
+    /// matched against their series title, not their own episode title --
+    /// admins scoping a scan by name mean "just this show", and an episode's
+    /// own <see cref="BaseItem.Name"/> would only ever match one specific
+    /// episode by coincidence.
+    /// </summary>
+    private static bool MatchesNameFilter(BaseItem item, string nameFilter)
+    {
+        var name = item is Episode episode ? episode.SeriesName : item.Name;
+        return !string.IsNullOrEmpty(name) && name.Contains(nameFilter, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? GetFirstLine(string? text)

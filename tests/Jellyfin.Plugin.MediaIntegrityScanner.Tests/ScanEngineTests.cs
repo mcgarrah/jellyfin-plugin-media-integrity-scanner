@@ -26,6 +26,7 @@ using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -94,6 +95,25 @@ public class ScanEngineTests : IDisposable
     {
         var id = Guid.NewGuid();
         return new Movie { Id = id, Path = $"/media/{id:N}.mkv" };
+    }
+
+    private static Movie MakeMovie(string name)
+    {
+        var id = Guid.NewGuid();
+        return new Movie { Id = id, Name = name, Path = $"/media/{id:N}.mkv" };
+    }
+
+    private static Episode MakeEpisode(string seriesName, int? seasonNumber)
+    {
+        var id = Guid.NewGuid();
+        return new Episode
+        {
+            Id = id,
+            Name = "Episode " + id,
+            SeriesName = seriesName,
+            ParentIndexNumber = seasonNumber,
+            Path = $"/media/{id:N}.mkv"
+        };
     }
 
     // --- Basic scan + persistence ---
@@ -571,6 +591,145 @@ public class ScanEngineTests : IDisposable
 
         Assert.NotNull(capturedQuery);
         Assert.Equal(libraryId, capturedQuery!.ParentId);
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_NameFilter_MatchesMoviesByTitle_CaseInsensitive()
+    {
+        var wanted = MakeMovie("Dune: Part Two");
+        var unwanted = MakeMovie("The Matrix");
+
+        var library = new Mock<ILibraryManager>();
+        library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(new List<BaseItem> { wanted, unwanted });
+
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.IsCurrentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync(false);
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 1 });
+
+        var engine = CreateEngine(wrapper, db, library: library);
+
+        await engine.ScanLibraryAsync(null, ScanPhase.Header, CancellationToken.None, nameFilter: "dune");
+
+        wrapper.Verify(w => w.ProbeAsync(wanted.Path, It.IsAny<CancellationToken>()), Times.Once);
+        wrapper.Verify(w => w.ProbeAsync(unwanted.Path, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_NameFilter_MatchesEpisodesBySeriesName_NotEpisodeTitle()
+    {
+        // An episode's own Name (its episode title) should never match here --
+        // scoping a scan "by name" means "this show", not "this one episode
+        // that happens to share a word with the filter".
+        var wanted = MakeEpisode("The Simpsons", seasonNumber: 1);
+        var unwanted = MakeEpisode("Futurama", seasonNumber: 1);
+
+        var library = new Mock<ILibraryManager>();
+        library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(new List<BaseItem> { wanted, unwanted });
+
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.IsCurrentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync(false);
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 1 });
+
+        var engine = CreateEngine(wrapper, db, library: library);
+
+        await engine.ScanLibraryAsync(null, ScanPhase.Header, CancellationToken.None, nameFilter: "simpsons");
+
+        wrapper.Verify(w => w.ProbeAsync(wanted.Path, It.IsAny<CancellationToken>()), Times.Once);
+        wrapper.Verify(w => w.ProbeAsync(unwanted.Path, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_SeasonFilter_RestrictsEpisodesToRequestedSeasons()
+    {
+        var seasonOne = MakeEpisode("The Simpsons", seasonNumber: 1);
+        var seasonTwo = MakeEpisode("The Simpsons", seasonNumber: 2);
+        var seasonThree = MakeEpisode("The Simpsons", seasonNumber: 3);
+
+        var library = new Mock<ILibraryManager>();
+        library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(new List<BaseItem> { seasonOne, seasonTwo, seasonThree });
+
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.IsCurrentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync(false);
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 1 });
+
+        var engine = CreateEngine(wrapper, db, library: library);
+
+        await engine.ScanLibraryAsync(null, ScanPhase.Header, CancellationToken.None, seasons: new[] { 1, 3 });
+
+        wrapper.Verify(w => w.ProbeAsync(seasonOne.Path, It.IsAny<CancellationToken>()), Times.Once);
+        wrapper.Verify(w => w.ProbeAsync(seasonThree.Path, It.IsAny<CancellationToken>()), Times.Once);
+        wrapper.Verify(w => w.ProbeAsync(seasonTwo.Path, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_SeasonFilter_DoesNotExcludeMovies()
+    {
+        // Movies have no season concept -- a season filter should never
+        // silently drop them from a mixed-media library scan.
+        var movie = MakeMovie("Dune: Part Two");
+        var wrongSeasonEpisode = MakeEpisode("The Simpsons", seasonNumber: 5);
+
+        var library = new Mock<ILibraryManager>();
+        library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(new List<BaseItem> { movie, wrongSeasonEpisode });
+
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.IsCurrentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync(false);
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 1 });
+
+        var engine = CreateEngine(wrapper, db, library: library);
+
+        await engine.ScanLibraryAsync(null, ScanPhase.Header, CancellationToken.None, seasons: new[] { 1 });
+
+        wrapper.Verify(w => w.ProbeAsync(movie.Path, It.IsAny<CancellationToken>()), Times.Once);
+        wrapper.Verify(w => w.ProbeAsync(wrongSeasonEpisode.Path, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ScanLibraryAsync_NameAndSeasonFilters_CombineAsAnd()
+    {
+        var matches = MakeEpisode("The Simpsons", seasonNumber: 2);
+        var wrongShow = MakeEpisode("Futurama", seasonNumber: 2);
+        var wrongSeason = MakeEpisode("The Simpsons", seasonNumber: 5);
+
+        var library = new Mock<ILibraryManager>();
+        library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(new List<BaseItem> { matches, wrongShow, wrongSeason });
+
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.IsCurrentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync(false);
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 1 });
+
+        var engine = CreateEngine(wrapper, db, library: library);
+
+        await engine.ScanLibraryAsync(null, ScanPhase.Header, CancellationToken.None, nameFilter: "simpsons", seasons: new[] { 2 });
+
+        wrapper.Verify(w => w.ProbeAsync(matches.Path, It.IsAny<CancellationToken>()), Times.Once);
+        wrapper.Verify(w => w.ProbeAsync(wrongShow.Path, It.IsAny<CancellationToken>()), Times.Never);
+        wrapper.Verify(w => w.ProbeAsync(wrongSeason.Path, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

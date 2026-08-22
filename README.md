@@ -4,7 +4,7 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 
 ## Status
 
-✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, the in-app settings page, update checking, and library event hooks are all implemented and covered by 154 unit tests, a Docker-based integration test suite (including a good/bad video corruption matrix), and a Playwright suite that drives the admin dashboard and settings pages through a real browser session. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
+✅ **Functional** — Two-phase scanning, the REST API, the admin dashboard, the in-app settings page, update checking, and library event hooks are all implemented and covered by 298 unit tests, a Docker-based integration test suite (including a good/bad video corruption matrix), and a Playwright suite that drives the admin dashboard and settings pages through a real browser session. See [CODE_REVIEW.md](CODE_REVIEW.md) for the detailed change history.
 
 ## Features
 
@@ -13,6 +13,7 @@ A [Jellyfin](https://jellyfin.org/) plugin that validates media file integrity u
 - **Persistent state** — SQLite database tracks scan history so rescans are incremental
 - **Event-driven** — Hooks into Jellyfin library events to scan new files and purge records on delete
 - **Admin dashboard** — HTML dashboard showing library health (total/passed/failed/errored/pending) at a glance
+- **Scoped scans** — Trigger a Header or Deep scan against just one library, a name filter (e.g. one show or movie title), and/or a specific set of TV seasons, instead of always running against the whole server — useful for checking a handful of high-priority titles before kicking off a full pass
 - **In-app settings page** — Every setting below is editable from **Dashboard → Plugins → Media Integrity Scanner → Settings**, no config-file editing required
 - **REST API** — Query scan results (with status and per-library filtering), trigger scans, and check status programmatically
 - **Update checking** — Detects newer stable or development-channel releases via Jellyfin's own plugin installation mechanism, with a one-click install from the dashboard
@@ -176,7 +177,7 @@ jellyfin-plugin-media-integrity-scanner/
 │   │   └── integrity_settings.html      # Settings page
 │   └── meta.json                        # Bundled plugin manifest (assemblies whitelist -- see below)
 ├── tests/
-│   ├── Jellyfin.Plugin.MediaIntegrityScanner.Tests/  # xUnit unit tests (154 tests)
+│   ├── Jellyfin.Plugin.MediaIntegrityScanner.Tests/  # xUnit unit tests (298 tests)
 │   ├── docker-compose.integration.yml   # Integration test Jellyfin instance
 │   ├── generate-test-media.sh           # Good/bad video corruption matrix generator
 │   ├── setup-jellyfin.sh                # Shared Jellyfin bring-up (sourced by the below + Playwright)
@@ -213,7 +214,7 @@ CI runs on GitHub-hosted Ubuntu runners. A dedicated Proxmox LXC container (Debi
 dotnet test
 ```
 
-154 unit tests cover the scan engine, database layer, REST API, config throttling logic, update-checker channel classification, and FFmpeg process handling — see [CODE_REVIEW.md](CODE_REVIEW.md) for what's covered and the deliberate scope boundaries (e.g., actual ffmpeg/ffprobe argument behavior is left to the integration suite below).
+298 unit tests cover the scan engine, database layer, REST API, config throttling logic, update-checker channel classification, and FFmpeg process handling — see [CODE_REVIEW.md](CODE_REVIEW.md) for what's covered and the deliberate scope boundaries (e.g., actual ffmpeg/ffprobe argument behavior is left to the integration suite below).
 
 ### Local Development Workflow
 

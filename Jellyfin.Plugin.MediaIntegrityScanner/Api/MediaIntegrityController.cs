@@ -334,7 +334,12 @@ public partial class MediaIntegrityController : ControllerBase
                 }
                 else
                 {
-                    await _scanner.ScanLibraryAsync(request.LibraryId, phase, CancellationToken.None)
+                    await _scanner.ScanLibraryAsync(
+                        request.LibraryId,
+                        phase,
+                        CancellationToken.None,
+                        nameFilter: request.NameFilter,
+                        seasons: request.Seasons)
                         .ConfigureAwait(false);
                 }
             }
@@ -643,6 +648,20 @@ public class ScanRequest
 
     /// <summary>Gets or sets a value indicating whether to run a deep (Phase 2) scan.</summary>
     public bool DeepScan { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional case-insensitive name filter. Matched against a
+    /// movie's title or an episode's series title -- e.g. "Simpsons" scopes the
+    /// scan to every episode of that show, not just an episode literally titled
+    /// "Simpsons".
+    /// </summary>
+    public string? NameFilter { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional set of season numbers to restrict TV episodes
+    /// to (e.g. <c>[1, 2, 3]</c>). Ignored for movies and other non-episode items.
+    /// </summary>
+    public int[]? Seasons { get; set; }
 }
 
 /// <summary>
