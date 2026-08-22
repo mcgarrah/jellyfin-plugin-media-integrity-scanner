@@ -83,6 +83,18 @@
                 color: inherit;
             }
             .scope-summary { opacity: 0.7; font-size: 0.85em; margin: 0 0 0.8em; }
+            .active-scan-banner {
+                display: none;
+                align-items: center;
+                gap: 0.6em;
+                background: rgba(33,150,243,0.12);
+                border: 1px solid rgba(33,150,243,0.4);
+                border-radius: 8px;
+                padding: 0.6em 1em;
+                margin: 0 0 1em;
+                font-size: 0.9em;
+            }
+            .active-scan-banner.open { display: flex; }
             .pagination { display: flex; gap: 0.5em; margin-top: 1em; align-items: center; }
             .error-msg { color: #f44336; font-style: italic; margin: 1em 0; }
             .loading { opacity: 0.5; font-style: italic; }
@@ -185,9 +197,14 @@
                      style="width: 0%; background: #4caf50;"></div>
             </div>
 
+            <!-- Shown only while a scoped scan is actively running -->
+            <div class="active-scan-banner" id="active-scan-banner">
+                <span id="active-scan-banner-text"></span>
+            </div>
+
             <!-- Scan Scope -->
             <div class="scope-row">
-                <select id="scan-library" onchange="updateScopeSummary()">
+                <select id="scan-library" onchange="updateScopeSummary(); loadResults();">
                     <option value="">All Libraries</option>
                 </select>
                 <input type="text" id="scan-name-filter" placeholder="Name contains (show or movie title)"
@@ -196,6 +213,7 @@
                        oninput="updateScopeSummary()">
             </div>
             <div class="scope-summary" id="scope-summary">Scope: entire library</div>
+            <div class="scope-summary">The scope above also filters the file list below and "Refresh File List" -- not just the scan buttons.</div>
 
             <!-- Controls -->
             <div class="controls">
@@ -389,6 +407,8 @@
                     document.getElementById('health-bar').style.width =
                         data.HealthPercentage + '%';
 
+                    updateActiveScanBanner(data);
+
                     // Update button states
                     document.getElementById('btn-cancel').disabled = !data.IsScanning;
                     document.getElementById('btn-scan-headers').disabled = data.IsScanning;
@@ -413,9 +433,16 @@
             function loadResults() {
                 var status = document.getElementById('filter-status').value;
                 var phase = document.getElementById('filter-phase').value;
+                var libraryId = document.getElementById('scan-library').value;
+                var nameFilter = document.getElementById('scan-name-filter').value.trim();
+                var seasons = parseSeasons(document.getElementById('scan-seasons').value);
+
                 var params = 'Results?page=' + currentPage + '&pageSize=' + pageSize;
                 if (status) params += '&status=' + status;
                 if (phase) params += '&phase=' + phase;
+                if (libraryId) params += '&libraryId=' + encodeURIComponent(libraryId);
+                if (nameFilter) params += '&nameFilter=' + encodeURIComponent(nameFilter);
+                if (seasons) seasons.forEach(function(s) { params += '&seasons=' + s; });
 
                 apiFetch(params).then(function(data) {
                     renderResults(data);
@@ -725,12 +752,24 @@
                 });
             }
 
-            function updateScopeSummary() {
-                var libraryName = 'entire library';
-                var select = document.getElementById('scan-library');
-                if (select.value && select.selectedOptions.length) {
-                    libraryName = 'library "' + select.selectedOptions[0].textContent + '"';
+            // Resolves a library ID to its display name via the already-populated
+            // #scan-library <select> options (populateLibraries()), so both the
+            // "about to scan" summary and the "currently scanning" banner can
+            // show a friendly name instead of a bare GUID.
+            function getLibraryNameById(id) {
+                if (!id) return null;
+                var options = document.getElementById('scan-library').options;
+                for (var i = 0; i < options.length; i++) {
+                    if (options[i].value === id) return options[i].textContent;
                 }
+                return null;
+            }
+
+            function updateScopeSummary() {
+                var select = document.getElementById('scan-library');
+                var libraryName = select.value && select.selectedOptions.length
+                    ? 'library "' + select.selectedOptions[0].textContent + '"'
+                    : 'entire library';
 
                 var nameFilter = document.getElementById('scan-name-filter').value.trim();
                 var seasons = parseSeasons(document.getElementById('scan-seasons').value);
@@ -740,6 +779,36 @@
                 if (seasons) parts.push('season(s) ' + seasons.join(', ') + ' (TV only)');
 
                 document.getElementById('scope-summary').textContent = parts.join(', ');
+            }
+
+            // Shows/hides the "Scanning: ..." banner based on the Status
+            // response's CurrentLibraryId/CurrentNameFilter/CurrentSeasons --
+            // these only ever come back non-null while IsScanning is true (see
+            // ScanEngine.CurrentLibraryId etc.), and are the *actual* scope the
+            // running scan was started with, not just whatever the scope inputs
+            // currently show (which the admin may have already changed since).
+            function updateActiveScanBanner(data) {
+                var banner = document.getElementById('active-scan-banner');
+                if (!data.IsScanning) {
+                    banner.classList.remove('open');
+                    return;
+                }
+
+                var libraryName = data.CurrentLibraryId
+                    ? (getLibraryNameById(data.CurrentLibraryId) || 'library ' + data.CurrentLibraryId)
+                    : null;
+
+                var parts = [];
+                if (libraryName) parts.push('library "' + libraryName + '"');
+                if (data.CurrentNameFilter) parts.push('name contains "' + data.CurrentNameFilter + '"');
+                if (data.CurrentSeasons && data.CurrentSeasons.length) {
+                    parts.push('season(s) ' + data.CurrentSeasons.join(', ') + ' (TV only)');
+                }
+
+                document.getElementById('active-scan-banner-text').textContent = parts.length
+                    ? 'Scanning: ' + parts.join(', ')
+                    : 'Scanning: entire library (no scope filter)';
+                banner.classList.add('open');
             }
 
             function triggerScan(deep) {

@@ -145,6 +145,24 @@ public class MediaIntegrityControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task GetStatus_ReportsCurrentScanScope_FromTheScanner()
+    {
+        SetLibraryItems();
+        var libraryId = Guid.NewGuid().ToString();
+        _scanner.SetupGet(s => s.CurrentLibraryId).Returns(libraryId);
+        _scanner.SetupGet(s => s.CurrentNameFilter).Returns("Simpsons");
+        _scanner.SetupGet(s => s.CurrentSeasons).Returns(new[] { 1, 2 });
+
+        var controller = CreateController();
+        var result = await controller.GetStatus();
+
+        var response = Assert.IsType<ScanStatusResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(libraryId, response.CurrentLibraryId);
+        Assert.Equal("Simpsons", response.CurrentNameFilter);
+        Assert.Equal(new[] { 1, 2 }, response.CurrentSeasons);
+    }
+
+    [Fact]
     public async Task GetStatus_TracksHeaderAndDeepPendingCountsIndependently()
     {
         // Regression test for the bug where a Deep Scan in progress showed
@@ -379,6 +397,43 @@ public class MediaIntegrityControllerTests : IDisposable
 
         Assert.NotNull(capturedQuery);
         Assert.True(capturedQuery!.Recursive);
+    }
+
+    [Fact]
+    public async Task GetResults_WithNameFilter_OnlyReturnsMatchingItems()
+    {
+        var matchingId = Guid.NewGuid();
+        var otherId = Guid.NewGuid();
+
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = matchingId.ToString(),
+            FilePath = "/media/dune.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = DateTime.UtcNow.ToString("O")
+        });
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = otherId.ToString(),
+            FilePath = "/media/matrix.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Pass,
+            ScanTimestamp = DateTime.UtcNow.ToString("O")
+        });
+
+        _library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>())).Returns(new List<BaseItem>
+        {
+            new Movie { Id = matchingId, Name = "Dune: Part Two" },
+            new Movie { Id = otherId, Name = "The Matrix" }
+        });
+
+        var controller = CreateController();
+        var result = await controller.GetResults(nameFilter: "dune");
+
+        var response = Assert.IsType<PagedResultResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(1, response.TotalCount);
+        Assert.Equal(matchingId.ToString(), response.Items[0].ItemId);
     }
 
     [Fact]

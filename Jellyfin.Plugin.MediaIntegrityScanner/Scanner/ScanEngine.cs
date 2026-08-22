@@ -24,7 +24,6 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Logging;
@@ -49,6 +48,9 @@ public partial class ScanEngine : IScanEngine, IDisposable
     private int _activeScanCount;
     private int _isLibraryScanning;
     private int _currentLibraryScanPhase;
+    private string? _currentScopeLibraryId;
+    private string? _currentScopeNameFilter;
+    private IReadOnlyCollection<int>? _currentScopeSeasons;
     private bool _disposed;
 
     /// <summary>
@@ -91,6 +93,15 @@ public partial class ScanEngine : IScanEngine, IDisposable
     public int? CurrentPhase => Volatile.Read(ref _isLibraryScanning) > 0
         ? Volatile.Read(ref _currentLibraryScanPhase)
         : (int?)null;
+
+    /// <inheritdoc />
+    public string? CurrentLibraryId => Volatile.Read(ref _isLibraryScanning) > 0 ? _currentScopeLibraryId : null;
+
+    /// <inheritdoc />
+    public string? CurrentNameFilter => Volatile.Read(ref _isLibraryScanning) > 0 ? _currentScopeNameFilter : null;
+
+    /// <inheritdoc />
+    public IReadOnlyCollection<int>? CurrentSeasons => Volatile.Read(ref _isLibraryScanning) > 0 ? _currentScopeSeasons : null;
 
     /// <inheritdoc />
     public async Task ScanItemAsync(BaseItem item, ScanPhase phase, CancellationToken cancellationToken)
@@ -255,6 +266,9 @@ public partial class ScanEngine : IScanEngine, IDisposable
         var token = linkedCts.Token;
 
         Interlocked.Exchange(ref _currentLibraryScanPhase, (int)phase);
+        _currentScopeLibraryId = libraryId;
+        _currentScopeNameFilter = nameFilter;
+        _currentScopeSeasons = seasons;
         Interlocked.Exchange(ref _isLibraryScanning, 1);
 
         try
@@ -282,18 +296,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
                 query.ParentId = parentId;
             }
 
-            IReadOnlyList<BaseItem> items = _library.GetItemList(query);
-
-            if (!string.IsNullOrWhiteSpace(nameFilter))
-            {
-                items = items.Where(item => MatchesNameFilter(item, nameFilter)).ToList();
-            }
-
-            if (seasons is { Count: > 0 })
-            {
-                var seasonSet = new HashSet<int>(seasons);
-                items = items.Where(item => item is not Episode episode || (episode.ParentIndexNumber.HasValue && seasonSet.Contains(episode.ParentIndexNumber.Value))).ToList();
-            }
+            IReadOnlyList<BaseItem> items = ScanScopeFilter.Apply(_library.GetItemList(query), nameFilter, seasons);
 
             var total = items.Count;
             var processed = 0;
@@ -342,6 +345,9 @@ public partial class ScanEngine : IScanEngine, IDisposable
         finally
         {
             Interlocked.Exchange(ref _isLibraryScanning, 0);
+            _currentScopeLibraryId = null;
+            _currentScopeNameFilter = null;
+            _currentScopeSeasons = null;
         }
     }
 
@@ -353,6 +359,9 @@ public partial class ScanEngine : IScanEngine, IDisposable
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
         Interlocked.Exchange(ref _isLibraryScanning, 0);
+        _currentScopeLibraryId = null;
+        _currentScopeNameFilter = null;
+        _currentScopeSeasons = null;
     }
 
     private static bool IsOutsideQuietHours()
@@ -391,19 +400,6 @@ public partial class ScanEngine : IScanEngine, IDisposable
         {
             await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
         }
-    }
-
-    /// <summary>
-    /// Checks whether an item matches a scan-scope name filter. Episodes are
-    /// matched against their series title, not their own episode title --
-    /// admins scoping a scan by name mean "just this show", and an episode's
-    /// own <see cref="BaseItem.Name"/> would only ever match one specific
-    /// episode by coincidence.
-    /// </summary>
-    private static bool MatchesNameFilter(BaseItem item, string nameFilter)
-    {
-        var name = item is Episode episode ? episode.SeriesName : item.Name;
-        return !string.IsNullOrEmpty(name) && name.Contains(nameFilter, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? GetFirstLine(string? text)

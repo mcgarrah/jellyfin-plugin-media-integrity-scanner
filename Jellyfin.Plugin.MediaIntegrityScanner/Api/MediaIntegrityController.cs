@@ -131,7 +131,7 @@ public partial class MediaIntegrityController : ControllerBase
     public async Task<ActionResult<ScanStatusResponse>> GetStatus()
     {
         var stats = await _db.GetStatisticsAsync().ConfigureAwait(false);
-        var totalFiles = GetLibraryMediaItems(null).Count;
+        var totalFiles = GetLibraryMediaItems(null, null, null).Count;
         var pendingHeaderFiles = Math.Max(0, totalFiles - stats.ScannedFiles);
         var pendingDeepFiles = Math.Max(0, totalFiles - stats.DeepScannedFiles);
 
@@ -139,6 +139,9 @@ public partial class MediaIntegrityController : ControllerBase
         {
             IsScanning = _scanner.IsScanning,
             CurrentPhase = _scanner.CurrentPhase,
+            CurrentLibraryId = _scanner.CurrentLibraryId,
+            CurrentNameFilter = _scanner.CurrentNameFilter,
+            CurrentSeasons = _scanner.CurrentSeasons,
             TotalFiles = totalFiles,
             ScannedFiles = stats.ScannedFiles,
             PassedFiles = stats.PassedFiles,
@@ -156,9 +159,12 @@ public partial class MediaIntegrityController : ControllerBase
     /// <summary>
     /// Gets real media items in the library (or a specific library, when
     /// <paramref name="parentId"/> is supplied), matching the same query
-    /// shape used by <c>ScanEngine</c> and the scheduled tasks.
+    /// shape used by <c>ScanEngine</c> and the scheduled tasks, with the same
+    /// name/season scope filter applied on top (see <see cref="ScanScopeFilter"/>)
+    /// so "what the Results table shows" always matches "what a scan with this
+    /// scope would actually touch".
     /// </summary>
-    private IReadOnlyList<BaseItem> GetLibraryMediaItems(Guid? parentId)
+    private IReadOnlyList<BaseItem> GetLibraryMediaItems(Guid? parentId, string? nameFilter, int[]? seasons)
     {
         var query = new InternalItemsQuery
         {
@@ -176,7 +182,7 @@ public partial class MediaIntegrityController : ControllerBase
             query.ParentId = parentId.Value;
         }
 
-        return _library.GetItemList(query);
+        return ScanScopeFilter.Apply(_library.GetItemList(query), nameFilter, seasons);
     }
 
     /// <summary>
@@ -187,6 +193,8 @@ public partial class MediaIntegrityController : ControllerBase
     /// <param name="page">Page number (1-based).</param>
     /// <param name="pageSize">Results per page.</param>
     /// <param name="libraryId">Optional library ID filter.</param>
+    /// <param name="nameFilter">Optional case-insensitive name filter -- see <see cref="ScanRequest.NameFilter"/>.</param>
+    /// <param name="seasons">Optional season filter -- see <see cref="ScanRequest.Seasons"/>.</param>
     /// <returns>Paginated scan results.</returns>
     [HttpGet("Results")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -195,7 +203,9 @@ public partial class MediaIntegrityController : ControllerBase
         [FromQuery] int? phase = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
-        [FromQuery] string? libraryId = null)
+        [FromQuery] string? libraryId = null,
+        [FromQuery] string? nameFilter = null,
+        [FromQuery] int[]? seasons = null)
     {
         if (page < 1)
         {
@@ -208,11 +218,20 @@ public partial class MediaIntegrityController : ControllerBase
         }
 
         IReadOnlyCollection<string>? itemIds = null;
-        if (!string.IsNullOrEmpty(libraryId))
+        if (!string.IsNullOrEmpty(libraryId) || !string.IsNullOrWhiteSpace(nameFilter) || (seasons?.Length ?? 0) > 0)
         {
-            itemIds = Guid.TryParse(libraryId, out var parentId)
-                ? GetLibraryMediaItems(parentId).Select(item => item.Id.ToString()).ToArray()
-                : Array.Empty<string>();
+            Guid? parentId = null;
+            if (!string.IsNullOrEmpty(libraryId))
+            {
+                if (!Guid.TryParse(libraryId, out var parsed))
+                {
+                    return Ok(new PagedResultResponse { Items = new List<Data.Models.ScanRecord>(), TotalCount = 0, Page = page, PageSize = pageSize });
+                }
+
+                parentId = parsed;
+            }
+
+            itemIds = GetLibraryMediaItems(parentId, nameFilter, seasons).Select(item => item.Id.ToString()).ToArray();
         }
 
         var results = await _db.GetResultsAsync(status, phase, page, pageSize, itemIds)
@@ -605,6 +624,15 @@ public class ScanStatusResponse
 
     /// <summary>Gets or sets the <see cref="Scanner.ScanPhase"/> (as an int) the current library scan is running, or null when idle or between library scans.</summary>
     public int? CurrentPhase { get; set; }
+
+    /// <summary>Gets or sets the library ID the current library scan is scoped to, or null when idle/unscoped.</summary>
+    public string? CurrentLibraryId { get; set; }
+
+    /// <summary>Gets or sets the name filter the current library scan is scoped to, or null when idle/unscoped.</summary>
+    public string? CurrentNameFilter { get; set; }
+
+    /// <summary>Gets or sets the season filter the current library scan is scoped to, or null when idle/unscoped.</summary>
+    public IReadOnlyCollection<int>? CurrentSeasons { get; set; }
 
     /// <summary>Gets or sets the total number of tracked files.</summary>
     public int TotalFiles { get; set; }
