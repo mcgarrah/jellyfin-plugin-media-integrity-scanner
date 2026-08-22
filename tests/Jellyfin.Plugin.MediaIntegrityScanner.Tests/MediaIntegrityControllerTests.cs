@@ -363,6 +363,25 @@ public class MediaIntegrityControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task GetResults_WithLibraryId_QueriesRecursively()
+    {
+        // Regression test, same root cause as ScanEngineTests's equivalent:
+        // without Recursive=true, a library-scoped query only returns that
+        // library's direct children, not its full Series/Season/Episode tree.
+        InternalItemsQuery? capturedQuery = null;
+        var libraryGuid = Guid.NewGuid();
+        _library.Setup(l => l.GetItemList(It.Is<InternalItemsQuery>(q => q.ParentId == libraryGuid)))
+            .Callback<InternalItemsQuery>(q => capturedQuery = q)
+            .Returns(new List<BaseItem>());
+
+        var controller = CreateController();
+        await controller.GetResults(libraryId: libraryGuid.ToString());
+
+        Assert.NotNull(capturedQuery);
+        Assert.True(capturedQuery!.Recursive);
+    }
+
+    [Fact]
     public async Task GetResults_UnparsableLibraryId_ReturnsZeroResults()
     {
         await _dbFactory.Database.SaveResultAsync(new ScanRecord

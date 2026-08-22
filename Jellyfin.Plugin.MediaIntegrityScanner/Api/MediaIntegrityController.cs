@@ -163,7 +163,12 @@ public partial class MediaIntegrityController : ControllerBase
         var query = new InternalItemsQuery
         {
             MediaTypes = new[] { MediaType.Video, MediaType.Audio },
-            IsVirtualItem = false
+            IsVirtualItem = false,
+            // See the matching comment in ScanEngine.ScanLibraryAsync -- without
+            // this, a library-scoped query (parentId set) returns only that
+            // library's direct children (Series, not episodes) instead of
+            // descending the full hierarchy.
+            Recursive = true
         };
 
         if (parentId.HasValue)
