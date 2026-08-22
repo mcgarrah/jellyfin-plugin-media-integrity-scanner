@@ -15,6 +15,7 @@
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
@@ -56,8 +57,25 @@ public interface IScanEngine
     /// <param name="phase">The scan phase to execute.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <param name="progress">Optional progress reporter, updated after each item (scanned or skipped).</param>
+    /// <param name="nameFilter">
+    /// Optional case-insensitive substring filter. Matched against a movie's own
+    /// title, or an episode's series title (not the episode's own title) -- so
+    /// typing a show name scopes to every episode of that show, matching how
+    /// admins actually think about "just this show", not "just this episode".
+    /// </param>
+    /// <param name="seasons">
+    /// Optional set of season numbers to restrict episodes to (e.g. just seasons
+    /// 1-3 of a show). Only applies to TV episodes; movies and other item types
+    /// are unaffected by this filter regardless of what's passed here.
+    /// </param>
     /// <returns>A task representing the async operation.</returns>
-    Task ScanLibraryAsync(string? libraryId, ScanPhase phase, CancellationToken cancellationToken, IProgress<double>? progress = null);
+    Task ScanLibraryAsync(
+        string? libraryId,
+        ScanPhase phase,
+        CancellationToken cancellationToken,
+        IProgress<double>? progress = null,
+        string? nameFilter = null,
+        IReadOnlyCollection<int>? seasons = null);
 
     /// <summary>
     /// Cancels the currently running scan.

@@ -74,6 +74,15 @@
             }
             .results-table th { opacity: 0.7; font-weight: 600; }
             .filter-row { display: flex; gap: 1em; margin: 1em 0; align-items: center; }
+            .scope-row { display: flex; gap: 0.8em; margin: 1em 0 0.3em; align-items: center; flex-wrap: wrap; }
+            .scope-row input[type="text"] {
+                padding: 0.4em 0.6em;
+                border-radius: 4px;
+                border: 1px solid rgba(255,255,255,0.2);
+                background: rgba(255,255,255,0.05);
+                color: inherit;
+            }
+            .scope-summary { opacity: 0.7; font-size: 0.85em; margin: 0 0 0.8em; }
             .pagination { display: flex; gap: 0.5em; margin-top: 1em; align-items: center; }
             .error-msg { color: #f44336; font-style: italic; margin: 1em 0; }
             .loading { opacity: 0.5; font-style: italic; }
@@ -175,6 +184,18 @@
                 <div class="health-bar-fill" id="health-bar"
                      style="width: 0%; background: #4caf50;"></div>
             </div>
+
+            <!-- Scan Scope -->
+            <div class="scope-row">
+                <select id="scan-library" onchange="updateScopeSummary()">
+                    <option value="">All Libraries</option>
+                </select>
+                <input type="text" id="scan-name-filter" placeholder="Name contains (show or movie title)"
+                       oninput="updateScopeSummary()">
+                <input type="text" id="scan-seasons" placeholder="Seasons, e.g. 1,2,5 or 1-3 (TV only)"
+                       oninput="updateScopeSummary()">
+            </div>
+            <div class="scope-summary" id="scope-summary">Scope: entire library</div>
 
             <!-- Controls -->
             <div class="controls">
@@ -664,14 +685,80 @@
                 });
             }
 
+            // Parses a season filter string like "1,2,5" or "1-3,7" into a
+            // deduplicated array of season numbers. Returns null for an
+            // empty/whitespace-only input so the request body omits the
+            // field entirely rather than sending an empty array.
+            function parseSeasons(text) {
+                if (!text || !text.trim()) return null;
+                var seasons = {};
+                var parts = text.split(',');
+                for (var i = 0; i < parts.length; i++) {
+                    var part = parts[i].trim();
+                    if (!part) continue;
+                    var rangeMatch = part.match(/^(\d+)\s*-\s*(\d+)$/);
+                    if (rangeMatch) {
+                        var start = parseInt(rangeMatch[1], 10);
+                        var end = parseInt(rangeMatch[2], 10);
+                        for (var s = Math.min(start, end); s <= Math.max(start, end); s++) {
+                            seasons[s] = true;
+                        }
+                    } else if (/^\d+$/.test(part)) {
+                        seasons[parseInt(part, 10)] = true;
+                    }
+                }
+                var result = Object.keys(seasons).map(Number).sort(function(a, b) { return a - b; });
+                return result.length ? result : null;
+            }
+
+            function populateLibraries() {
+                var select = document.getElementById('scan-library');
+                ApiClient.getVirtualFolders().then(function(folders) {
+                    folders.forEach(function(folder) {
+                        var option = document.createElement('option');
+                        option.value = folder.ItemId;
+                        option.textContent = folder.Name;
+                        select.appendChild(option);
+                    });
+                }).catch(function(err) {
+                    showError('Failed to load library list: ' + err.message);
+                });
+            }
+
+            function updateScopeSummary() {
+                var libraryName = 'entire library';
+                var select = document.getElementById('scan-library');
+                if (select.value && select.selectedOptions.length) {
+                    libraryName = 'library "' + select.selectedOptions[0].textContent + '"';
+                }
+
+                var nameFilter = document.getElementById('scan-name-filter').value.trim();
+                var seasons = parseSeasons(document.getElementById('scan-seasons').value);
+
+                var parts = ['Scope: ' + libraryName];
+                if (nameFilter) parts.push('name contains "' + nameFilter + '"');
+                if (seasons) parts.push('season(s) ' + seasons.join(', ') + ' (TV only)');
+
+                document.getElementById('scope-summary').textContent = parts.join(', ');
+            }
+
             function triggerScan(deep) {
+                var libraryId = document.getElementById('scan-library').value || null;
+                var nameFilter = document.getElementById('scan-name-filter').value.trim() || null;
+                var seasons = parseSeasons(document.getElementById('scan-seasons').value);
+
                 apiFetch('Scan', {
                     method: 'POST',
                     headers: {
                         'X-Emby-Token': ApiClient.accessToken(),
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ deepScan: deep })
+                    body: JSON.stringify({
+                        deepScan: deep,
+                        libraryId: libraryId,
+                        nameFilter: nameFilter,
+                        seasons: seasons
+                    })
                 }).then(function() {
                     setTimeout(loadStatus, 1000);
                 }).catch(function(err) {
@@ -851,6 +938,7 @@
             }
 
             // Initial load
+            populateLibraries();
             loadStatus();
             loadResults();
             loadUpdateStatus();

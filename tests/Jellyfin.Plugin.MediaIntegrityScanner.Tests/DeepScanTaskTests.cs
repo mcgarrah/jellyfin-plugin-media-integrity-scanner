@@ -15,6 +15,7 @@
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
@@ -77,7 +78,7 @@ public class DeepScanTaskTests : IDisposable
         await task.ExecuteAsync(progress, CancellationToken.None);
 
         scanner.Verify(
-            s => s.ScanLibraryAsync(It.IsAny<string>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()),
+            s => s.ScanLibraryAsync(It.IsAny<string>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>(), It.IsAny<string>(), It.IsAny<IReadOnlyCollection<int>>()),
             Times.Never);
         Assert.Equal(100, reported);
     }
@@ -97,7 +98,7 @@ public class DeepScanTaskTests : IDisposable
         TestPluginContext.SetConfiguration(new PluginConfiguration { EnableDeepScan = true });
 
         var scanner = new Mock<IScanEngine>();
-        scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.FullDecode, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()))
+        scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.FullDecode, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>(), It.IsAny<string>(), It.IsAny<IReadOnlyCollection<int>>()))
             .Returns(Task.CompletedTask);
 
         var task = CreateTask(scanner);
@@ -106,7 +107,7 @@ public class DeepScanTaskTests : IDisposable
         await task.ExecuteAsync(progress, CancellationToken.None);
 
         scanner.Verify(
-            s => s.ScanLibraryAsync(null, ScanPhase.FullDecode, It.IsAny<CancellationToken>(), progress),
+            s => s.ScanLibraryAsync(null, ScanPhase.FullDecode, It.IsAny<CancellationToken>(), progress, It.IsAny<string>(), It.IsAny<IReadOnlyCollection<int>>()),
             Times.Once);
     }
 

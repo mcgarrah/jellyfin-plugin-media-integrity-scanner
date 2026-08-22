@@ -284,7 +284,7 @@ All articles are in `_drafts/2026-07-29-jellyfin-media-integrity-*.md` in the bl
 ## Current Status
 
 - Functional: two-phase scanning, REST API, admin dashboard, in-app settings page, and library event hooks are all implemented and merged to `main`.
-- 141 unit tests + a Docker-based integration test suite (`tests/run-integration-tests.sh`, mirrored in `.github/workflows/integration-test.yml`), both green.
+- 298 unit tests + a Docker-based integration test suite (`tests/run-integration-tests.sh`, mirrored in `.github/workflows/integration-test.yml`), both green.
 - See `CODE_REVIEW.md` (kept untracked/local, not committed) for the full pass-by-pass history and current known-remaining-issues list.
 
 ## Authorial Context

@@ -15,6 +15,7 @@
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
@@ -54,7 +55,7 @@ public class HeaderScanTaskTests
     public async Task ExecuteAsync_DelegatesToScanLibraryAsync_WithHeaderPhaseAndNoLibraryScope()
     {
         var scanner = new Mock<IScanEngine>();
-        scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()))
+        scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>(), It.IsAny<string>(), It.IsAny<IReadOnlyCollection<int>>()))
             .Returns(Task.CompletedTask);
 
         var task = CreateTask(scanner);
@@ -63,7 +64,7 @@ public class HeaderScanTaskTests
         await task.ExecuteAsync(progress, CancellationToken.None);
 
         scanner.Verify(
-            s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>(), progress),
+            s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>(), progress, It.IsAny<string>(), It.IsAny<IReadOnlyCollection<int>>()),
             Times.Once);
     }
 
@@ -71,7 +72,7 @@ public class HeaderScanTaskTests
     public async Task ExecuteAsync_PropagatesScanLibraryAsyncFailure()
     {
         var scanner = new Mock<IScanEngine>();
-        scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>()))
+        scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>(), It.IsAny<string>(), It.IsAny<IReadOnlyCollection<int>>()))
             .ThrowsAsync(new InvalidOperationException("boom"));
 
         var task = CreateTask(scanner);
