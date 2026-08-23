@@ -105,6 +105,7 @@ public class PluginServiceRegistratorTests : IDisposable
     [InlineData(typeof(IDatabaseManager))]
     [InlineData(typeof(IArrClientFactory))]
     [InlineData(typeof(IArrItemMatcher))]
+    [InlineData(typeof(IArrServerSelector))]
     [InlineData(typeof(IArrRemediationService))]
     public void RegisterServices_RegistersEachServiceExactlyOnce(Type serviceType)
     {
@@ -123,6 +124,7 @@ public class PluginServiceRegistratorTests : IDisposable
     [InlineData(typeof(IDatabaseManager))]
     [InlineData(typeof(IArrClientFactory))]
     [InlineData(typeof(IArrItemMatcher))]
+    [InlineData(typeof(IArrServerSelector))]
     [InlineData(typeof(IArrRemediationService))]
     public void RegisterServices_RegistersAsSingletonLifetime(Type serviceType)
     {

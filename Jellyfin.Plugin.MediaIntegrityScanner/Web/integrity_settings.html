@@ -27,6 +27,22 @@
             }
             .settings-section h2 { margin-top: 0; font-size: 1.1em; opacity: 0.85; }
             .settings-section h3 { font-size: 1em; opacity: 0.75; margin: 1.4em 0 0.6em; }
+            .server-card {
+                background: rgba(255,255,255,0.04);
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 6px;
+                padding: 1em 1.2em;
+                margin: 0.8em 0;
+            }
+            .server-card-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 0.4em;
+            }
+            .server-card-header strong { opacity: 0.85; }
+            .btn-danger { background: rgba(244,67,54,0.85); color: white; }
+            .btn-sm { padding: 0.3em 0.8em; font-size: 0.85em; }
             .field-row { margin: 1em 0; }
             .field-row label { display: block; margin-bottom: 0.3em; }
             .field-row .field-hint { opacity: 0.6; font-size: 0.85em; margin-top: 0.2em; }
@@ -260,40 +276,20 @@
                     <h2>Radarr / Sonarr Integration</h2>
                     <div class="field-hint">
                         Lets the Media Issues page manually forward a bad movie or episode
-                        file to Radarr/Sonarr for deletion + re-download. Leave a server's
-                        URL blank to leave that app's matching/forwarding unavailable.
-                        Manual "Send" from the Media Issues page always works regardless of
-                        the automatic-forwarding settings below.
+                        file to Radarr/Sonarr for deletion + re-download. Manual "Send" from
+                        the Media Issues page always works regardless of the
+                        automatic-forwarding settings below.
                     </div>
-                    <h3>Radarr</h3>
-                    <div class="field-row">
-                        <label for="RadarrName">Server Name</label>
-                        <input type="text" id="RadarrName" placeholder="Main">
-                    </div>
-                    <div class="field-row">
-                        <label for="RadarrUrl">URL</label>
-                        <input type="text" id="RadarrUrl" placeholder="http://192.168.86.52:7878">
-                    </div>
-                    <div class="field-row">
-                        <label for="RadarrApiKey">API Key</label>
-                        <input type="text" id="RadarrApiKey">
-                        <div class="field-hint">Found in Radarr under Settings &gt; General &gt; Security.</div>
-                    </div>
-                    <h3>Sonarr</h3>
-                    <div class="field-row">
-                        <label for="SonarrName">Server Name</label>
-                        <input type="text" id="SonarrName" placeholder="Main">
-                    </div>
-                    <div class="field-row">
-                        <label for="SonarrUrl">URL</label>
-                        <input type="text" id="SonarrUrl" placeholder="http://192.168.86.52:8989">
-                    </div>
-                    <div class="field-row">
-                        <label for="SonarrApiKey">API Key</label>
-                        <input type="text" id="SonarrApiKey">
-                        <div class="field-hint">Found in Sonarr under Settings &gt; General &gt; Security.</div>
-                    </div>
-                    <div class="field-row">
+
+                    <h3>Radarr Servers</h3>
+                    <div id="radarr-servers-list"></div>
+                    <button type="button" class="btn btn-sm" onclick="addServer('radarr')">+ Add Radarr Server</button>
+
+                    <h3 style="margin-top:1.6em;">Sonarr Servers</h3>
+                    <div id="sonarr-servers-list"></div>
+                    <button type="button" class="btn btn-sm" onclick="addServer('sonarr')">+ Add Sonarr Server</button>
+
+                    <div class="field-row" style="margin-top:1.4em;">
                         <label for="HistoryLookbackDays">History Lookback (days)</label>
                         <input type="number" id="HistoryLookbackDays" min="1" max="365" step="1" required>
                         <div class="field-hint">
@@ -382,6 +378,91 @@
             // endpoints require the same dashless form.
             var PLUGIN_ID = 'c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c';
 
+            // In-memory Radarr/Sonarr server lists -- the source of truth
+            // while this page is open. Each entry is { Name, Url, ApiKey,
+            // LibraryPathPrefixes: string[] }, matching ArrServerConfig.
+            // Inputs are two-way bound via oninput handlers below rather
+            // than re-scanned from the DOM at save time, since the list of
+            // fields itself is dynamic (rows can be added/removed).
+            var radarrServers = [];
+            var sonarrServers = [];
+
+            function serverListFor(app) {
+                return app === 'radarr' ? radarrServers : sonarrServers;
+            }
+
+            function renderServerList(app) {
+                var servers = serverListFor(app);
+                var container = document.getElementById(app + '-servers-list');
+
+                if (servers.length === 0) {
+                    container.innerHTML = '<p class="field-hint">No ' + (app === 'radarr' ? 'Radarr' : 'Sonarr') +
+                        ' servers configured -- matching/forwarding for ' +
+                        (app === 'radarr' ? 'movies' : 'TV episodes') + ' is unavailable until one is added.</p>';
+                    return;
+                }
+
+                container.innerHTML = servers.map(function(server, index) {
+                    var prefixHint = servers.length > 1
+                        ? 'Comma-separated. Routes an item to this server when its file path (as Jellyfin sees it) starts with one of these. An item matching no configured prefix falls back to the first server in this list.'
+                        : 'Only needed once a second ' + (app === 'radarr' ? 'Radarr' : 'Sonarr') + ' server is added below -- a single server is always used regardless of this field.';
+
+                    return '<div class="server-card">' +
+                        '<div class="server-card-header">' +
+                            '<strong>' + (app === 'radarr' ? 'Radarr' : 'Sonarr') + ' Server ' + (index + 1) + '</strong>' +
+                            '<button type="button" class="btn btn-danger btn-sm" onclick="removeServer(\'' + app + '\', ' + index + ')">Remove</button>' +
+                        '</div>' +
+                        '<div class="field-row">' +
+                            '<label>Server Name</label>' +
+                            '<input type="text" placeholder="Main" value="' + escapeAttr(server.Name) + '" ' +
+                                'oninput="updateServerField(\'' + app + '\', ' + index + ', \'Name\', this.value)">' +
+                        '</div>' +
+                        '<div class="field-row">' +
+                            '<label>URL</label>' +
+                            '<input type="text" placeholder="http://192.168.86.52:' + (app === 'radarr' ? '7878' : '8989') + '" value="' + escapeAttr(server.Url) + '" ' +
+                                'oninput="updateServerField(\'' + app + '\', ' + index + ', \'Url\', this.value)">' +
+                        '</div>' +
+                        '<div class="field-row">' +
+                            '<label>API Key</label>' +
+                            '<input type="text" value="' + escapeAttr(server.ApiKey) + '" ' +
+                                'oninput="updateServerField(\'' + app + '\', ' + index + ', \'ApiKey\', this.value)">' +
+                            '<div class="field-hint">Found in ' + (app === 'radarr' ? 'Radarr' : 'Sonarr') + ' under Settings &gt; General &gt; Security.</div>' +
+                        '</div>' +
+                        '<div class="field-row">' +
+                            '<label>Library Path Prefixes</label>' +
+                            '<input type="text" placeholder="/data/movies, /data/disney-movies" value="' + escapeAttr((server.LibraryPathPrefixes || []).join(', ')) + '" ' +
+                                'oninput="updateServerPrefixes(\'' + app + '\', ' + index + ', this.value)">' +
+                            '<div class="field-hint">' + prefixHint + '</div>' +
+                        '</div>' +
+                        '</div>';
+                }).join('');
+            }
+
+            function escapeAttr(str) {
+                return (str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+            }
+
+            function addServer(app) {
+                serverListFor(app).push({ Name: '', Url: '', ApiKey: '', LibraryPathPrefixes: [] });
+                renderServerList(app);
+            }
+
+            function removeServer(app, index) {
+                serverListFor(app).splice(index, 1);
+                renderServerList(app);
+            }
+
+            function updateServerField(app, index, field, value) {
+                serverListFor(app)[index][field] = value;
+            }
+
+            function updateServerPrefixes(app, index, rawValue) {
+                serverListFor(app)[index].LibraryPathPrefixes = rawValue
+                    .split(',')
+                    .map(function(s) { return s.trim(); })
+                    .filter(function(s) { return s.length > 0; });
+            }
+
             function getApiUrl(path) {
                 return ApiClient.getUrl('MediaIntegrity/' + path);
             }
@@ -446,14 +527,14 @@
                     document.getElementById('AutoRestartAfterUpdate').checked = !!config.AutoRestartAfterUpdate;
                     document.getElementById('EnableAutoDatabaseMaintenance').checked = config.EnableAutoDatabaseMaintenance !== false;
                     document.getElementById('EnableAutoReconciliation').checked = config.EnableAutoReconciliation !== false;
-                    var radarr = (config.RadarrServers || [])[0] || {};
-                    document.getElementById('RadarrName').value = radarr.Name || '';
-                    document.getElementById('RadarrUrl').value = radarr.Url || '';
-                    document.getElementById('RadarrApiKey').value = radarr.ApiKey || '';
-                    var sonarr = (config.SonarrServers || [])[0] || {};
-                    document.getElementById('SonarrName').value = sonarr.Name || '';
-                    document.getElementById('SonarrUrl').value = sonarr.Url || '';
-                    document.getElementById('SonarrApiKey').value = sonarr.ApiKey || '';
+                    radarrServers = (config.RadarrServers || []).map(function(s) {
+                        return { Name: s.Name || '', Url: s.Url || '', ApiKey: s.ApiKey || '', LibraryPathPrefixes: s.LibraryPathPrefixes || [] };
+                    });
+                    sonarrServers = (config.SonarrServers || []).map(function(s) {
+                        return { Name: s.Name || '', Url: s.Url || '', ApiKey: s.ApiKey || '', LibraryPathPrefixes: s.LibraryPathPrefixes || [] };
+                    });
+                    renderServerList('radarr');
+                    renderServerList('sonarr');
                     document.getElementById('HistoryLookbackDays').value = config.HistoryLookbackDays || 30;
                     document.getElementById('EnableArrForwarding').checked = !!config.EnableArrForwarding;
                     document.getElementById('ArrForwardingDryRun').checked = config.ArrForwardingDryRun !== false;
@@ -497,23 +578,15 @@
                     config.EnableAutoDatabaseMaintenance = document.getElementById('EnableAutoDatabaseMaintenance').checked;
                     config.EnableAutoReconciliation = document.getElementById('EnableAutoReconciliation').checked;
 
-                    var existingRadarr = (config.RadarrServers || [])[0] || {};
-                    var radarrUrl = document.getElementById('RadarrUrl').value.trim();
-                    config.RadarrServers = radarrUrl ? [{
-                        Name: document.getElementById('RadarrName').value.trim() || 'Main',
-                        Url: radarrUrl,
-                        ApiKey: document.getElementById('RadarrApiKey').value.trim(),
-                        LibraryPathPrefixes: existingRadarr.LibraryPathPrefixes || []
-                    }] : [];
-
-                    var existingSonarr = (config.SonarrServers || [])[0] || {};
-                    var sonarrUrl = document.getElementById('SonarrUrl').value.trim();
-                    config.SonarrServers = sonarrUrl ? [{
-                        Name: document.getElementById('SonarrName').value.trim() || 'Main',
-                        Url: sonarrUrl,
-                        ApiKey: document.getElementById('SonarrApiKey').value.trim(),
-                        LibraryPathPrefixes: existingSonarr.LibraryPathPrefixes || []
-                    }] : [];
+                    // Only servers with a URL actually filled in are kept -- an
+                    // added-then-abandoned blank row (e.g. clicked "+ Add" then
+                    // changed their mind) shouldn't round-trip into the saved config.
+                    config.RadarrServers = radarrServers
+                        .filter(function(s) { return s.Url && s.Url.trim(); })
+                        .map(function(s) { return { Name: s.Name.trim() || 'Main', Url: s.Url.trim(), ApiKey: s.ApiKey.trim(), LibraryPathPrefixes: s.LibraryPathPrefixes }; });
+                    config.SonarrServers = sonarrServers
+                        .filter(function(s) { return s.Url && s.Url.trim(); })
+                        .map(function(s) { return { Name: s.Name.trim() || 'Main', Url: s.Url.trim(), ApiKey: s.ApiKey.trim(), LibraryPathPrefixes: s.LibraryPathPrefixes }; });
 
                     config.HistoryLookbackDays = parseInt(document.getElementById('HistoryLookbackDays').value, 10) || 30;
                     config.EnableArrForwarding = document.getElementById('EnableArrForwarding').checked;
