@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License along
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
@@ -134,12 +135,15 @@ public interface IDatabaseManager
 
     /// <summary>
     /// Counts how many past remediation attempts for this item completed
-    /// successfully -- used to compute the next attempt's
-    /// <see cref="ArrRemediationRecord.CycleNumber"/>. Not enforced against
-    /// any limit in Phase 1 (see that property's doc comment).
+    /// successfully since the most recent "cycle_reset" marker row (see
+    /// <c>IArrRemediationService.ResetCycleAsync</c>), or since the
+    /// beginning if it's never been reset -- used to compute the next
+    /// attempt's <see cref="ArrRemediationRecord.CycleNumber"/>. Not
+    /// enforced against any limit until Phase 2's <c>MaxRemediationCycles</c>
+    /// trip-wire.
     /// </summary>
     /// <param name="itemId">The Jellyfin item ID.</param>
-    /// <returns>The number of prior successful remediations.</returns>
+    /// <returns>The number of prior successful remediations since the last reset.</returns>
     Task<int> CountSuccessfulRemediationsForItemAsync(string itemId);
 
     /// <summary>
@@ -153,6 +157,65 @@ public interface IDatabaseManager
     /// <param name="pageSize">Results per page.</param>
     /// <returns>Paginated issue rows.</returns>
     Task<PagedIssueResults> GetIssuesAsync(int? status, int? phase, int page, int pageSize);
+
+    /// <summary>
+    /// Gets every remediation row still in the <c>pending</c> state --
+    /// enqueued by a failed/errored scan (Phase 2 automatic forwarding) but
+    /// not yet processed by <c>ArrRemediationWorker</c>. Oldest first, so a
+    /// backlog drains in the order items actually broke.
+    /// </summary>
+    /// <returns>Pending remediation rows.</returns>
+    Task<IReadOnlyList<ArrRemediationRecord>> GetPendingRemediationsAsync();
+
+    /// <summary>
+    /// Gets whether <paramref name="itemId"/> already has a remediation row
+    /// in the <c>pending</c> state, so a repeatedly-failing item doesn't
+    /// enqueue a new row on every scan while an earlier one is still
+    /// waiting to be processed.
+    /// </summary>
+    /// <param name="itemId">The Jellyfin item ID.</param>
+    /// <returns>True if a pending remediation already exists for this item.</returns>
+    Task<bool> HasPendingRemediationAsync(string itemId);
+
+    /// <summary>
+    /// Gets the most recent remediation attempt for a given Jellyfin item
+    /// that has actually finished (any status other than <c>pending</c>),
+    /// or <c>null</c> if none has. Unlike <see cref="GetLatestRemediationForItemAsync"/>
+    /// (which can return a still-<c>pending</c> row), this is what the
+    /// per-item cooldown check (<see cref="PluginConfiguration.RemediationCooldownHours"/>)
+    /// needs -- it must look past a just-enqueued pending row to the prior
+    /// completed attempt's timestamp.
+    /// </summary>
+    /// <param name="itemId">The Jellyfin item ID.</param>
+    /// <returns>The most recent completed <see cref="ArrRemediationRecord"/>, or <c>null</c>.</returns>
+    Task<ArrRemediationRecord?> GetLastCompletedRemediationForItemAsync(string itemId);
+
+    /// <summary>
+    /// Counts real automatic remediation actions (<c>status</c> of
+    /// <c>success</c> or <c>failed</c> -- an actual Radarr/Sonarr call was
+    /// attempted, not merely enqueued/skipped/blocked) completed at or
+    /// after <paramref name="sinceUtc"/>. Backs the daily-cap check in
+    /// <see cref="PluginConfiguration.MaxAutoRemediationsPerDay"/>.
+    /// </summary>
+    /// <param name="sinceUtc">The UTC instant to count from (inclusive).</param>
+    /// <returns>The number of qualifying remediation attempts.</returns>
+    Task<int> CountAutoRemediationsSinceAsync(DateTime sinceUtc);
+
+    /// <summary>
+    /// Updates an existing remediation row's outcome fields in place
+    /// (<c>ArrServerName</c>, <c>MatchMethod</c>, <c>ArrItemId</c>,
+    /// <c>ArrFileId</c>, <c>ActionTaken</c>, <c>Status</c>, <c>ErrorMessage</c>,
+    /// <c>CompletedAt</c>) -- the Phase 2 counterpart to <see cref="RecordRemediationAsync"/>'s
+    /// insert-only Phase 1 behavior, used to transition a <c>pending</c> row
+    /// enqueued by a failed scan into its terminal state once
+    /// <c>ArrRemediationWorker</c> actually processes it. <c>ItemId</c>,
+    /// <c>ScanRecordId</c>, <c>FilePath</c>, <c>ArrApp</c>, <c>RequestedAt</c>,
+    /// and <c>CycleNumber</c> are identifying/immutable and never touched by
+    /// this update.
+    /// </summary>
+    /// <param name="record">The record to persist, identified by <see cref="ArrRemediationRecord.Id"/>.</param>
+    /// <returns>A task representing the async operation.</returns>
+    Task UpdateRemediationAsync(ArrRemediationRecord record);
 }
 
 /// <summary>

@@ -260,10 +260,10 @@
                     <h2>Radarr / Sonarr Integration</h2>
                     <div class="field-hint">
                         Lets the Media Issues page manually forward a bad movie or episode
-                        file to Radarr/Sonarr for deletion + re-download (Phase 1: manual
-                        "Send" action only -- no automatic forwarding yet). Leave a
-                        server's URL blank to leave that app's matching/forwarding
-                        unavailable.
+                        file to Radarr/Sonarr for deletion + re-download. Leave a server's
+                        URL blank to leave that app's matching/forwarding unavailable.
+                        Manual "Send" from the Media Issues page always works regardless of
+                        the automatic-forwarding settings below.
                     </div>
                     <h3>Radarr</h3>
                     <div class="field-row">
@@ -301,6 +301,73 @@
                             alongside a delete. A grab older than this is assumed already-superseded
                             -- the file is still deleted and re-searched, just without blocklisting
                             a stale release.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h2>Automatic Forwarding</h2>
+                    <div class="field-hint">
+                        Off by default -- this deletes real files on another system. Every
+                        automatic action is also fully logged and visible on the Media
+                        Issues page, including unmatched/skipped/dry-run outcomes, not just
+                        successes.
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="EnableArrForwarding">
+                        <label for="EnableArrForwarding">Automatically forward failed/errored scans to Radarr/Sonarr</label>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="ArrForwardingDryRun">
+                        <label for="ArrForwardingDryRun">Dry-run: match and log only, never actually delete/blocklist/search</label>
+                    </div>
+                    <div class="field-hint">
+                        On by default even once forwarding is enabled above -- a deliberate
+                        two-step opt-in, so a first-time enable never immediately starts
+                        deleting files. Turn this off only once you've reviewed a few
+                        dry-run outcomes on the Media Issues page and trust the matching.
+                    </div>
+                    <div class="field-row">
+                        <label for="ArrForwardOnStatus">Trigger On</label>
+                        <select id="ArrForwardOnStatus">
+                            <option value="FailOnly">Fail only (recommended)</option>
+                            <option value="FailAndError">Fail and Error</option>
+                        </select>
+                        <div class="field-hint">
+                            Error means the scan itself broke (ffprobe crashed, a read error) --
+                            a weaker signal that the media is actually bad than a completed
+                            scan that affirmatively found corruption.
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="MaxAutoRemediationsPerDay">Max Automatic Actions Per Day</label>
+                        <input type="number" id="MaxAutoRemediationsPerDay" min="1" max="1000" step="1" required>
+                        <div class="field-hint">
+                            Bounds the blast radius of a scanner false-positive or a bad
+                            ffmpeg build flagging a large swath of the library at once. Safe
+                            to bump up temporarily during an initial full-library review and
+                            bring back down afterward.
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="RemediationCooldownHours">Per-Item Cooldown (hours)</label>
+                        <input type="number" id="RemediationCooldownHours" min="1" max="8760" step="1" required>
+                        <div class="field-hint">
+                            How long to wait before automatically forwarding the same item
+                            again, even if it fails a later scan too -- default 168 (1 week).
+                            Prevents a persistently-failing item (e.g. a codec this
+                            environment's ffmpeg genuinely can't decode) from cycling right away.
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="MaxRemediationCycles">Max Cycles Before Blocking</label>
+                        <input type="number" id="MaxRemediationCycles" min="1" max="100" step="1" required>
+                        <div class="field-hint">
+                            After this many total automatic attempts on the same item, it's
+                            permanently blocked from further automatic forwarding and flagged
+                            in the "Needs Manual Review" banner on the Media Issues page,
+                            until reset there. A repeatedly-failing item is a strong signal
+                            the problem isn't a bad release at all.
                         </div>
                     </div>
                 </div>
@@ -388,6 +455,12 @@
                     document.getElementById('SonarrUrl').value = sonarr.Url || '';
                     document.getElementById('SonarrApiKey').value = sonarr.ApiKey || '';
                     document.getElementById('HistoryLookbackDays').value = config.HistoryLookbackDays || 30;
+                    document.getElementById('EnableArrForwarding').checked = !!config.EnableArrForwarding;
+                    document.getElementById('ArrForwardingDryRun').checked = config.ArrForwardingDryRun !== false;
+                    document.getElementById('ArrForwardOnStatus').value = config.ArrForwardOnStatus || 'FailOnly';
+                    document.getElementById('MaxAutoRemediationsPerDay').value = config.MaxAutoRemediationsPerDay || 10;
+                    document.getElementById('RemediationCooldownHours').value = config.RemediationCooldownHours || 168;
+                    document.getElementById('MaxRemediationCycles').value = config.MaxRemediationCycles || 3;
                     hideMessages();
                 }).catch(function (err) {
                     showError('Failed to load configuration: ' + err.message);
@@ -443,6 +516,12 @@
                     }] : [];
 
                     config.HistoryLookbackDays = parseInt(document.getElementById('HistoryLookbackDays').value, 10) || 30;
+                    config.EnableArrForwarding = document.getElementById('EnableArrForwarding').checked;
+                    config.ArrForwardingDryRun = document.getElementById('ArrForwardingDryRun').checked;
+                    config.ArrForwardOnStatus = document.getElementById('ArrForwardOnStatus').value || 'FailOnly';
+                    config.MaxAutoRemediationsPerDay = parseInt(document.getElementById('MaxAutoRemediationsPerDay').value, 10) || 10;
+                    config.RemediationCooldownHours = parseInt(document.getElementById('RemediationCooldownHours').value, 10) || 168;
+                    config.MaxRemediationCycles = parseInt(document.getElementById('MaxRemediationCycles').value, 10) || 3;
 
                     return ApiClient.updatePluginConfiguration(PLUGIN_ID, config);
                 }).then(function (result) {

@@ -298,4 +298,239 @@ public class ArrRemediationServiceTests : IDisposable
         Assert.Equal("success", result.Status);
         Assert.Equal("sonarr", result.ArrApp);
     }
+
+    // --- Phase 2: EnqueueIfEligibleAsync ---
+
+    private static ArrRemediationRecord MakePendingRecord(string itemId, string arrApp = "radarr", int cycleNumber = 1, long id = 5) =>
+        new()
+        {
+            Id = id,
+            ItemId = itemId,
+            FilePath = "/movies/x.mkv",
+            ArrApp = arrApp,
+            MatchMethod = "pending",
+            Status = "pending",
+            RequestedAt = DateTime.UtcNow.ToString("O"),
+            CycleNumber = cycleNumber
+        };
+
+    [Fact]
+    public async Task EnqueueIfEligibleAsync_ForwardingDisabled_ReturnsNull_WithoutTouchingDb()
+    {
+        // TestPluginContext's constructor-set config already leaves EnableArrForwarding at its off-by-default value.
+        var service = CreateService();
+
+        var result = await service.EnqueueIfEligibleAsync(MakeMovie(), scanStatus: 2, CancellationToken.None);
+
+        Assert.Null(result);
+        _db.Verify(d => d.RecordRemediationAsync(It.IsAny<ArrRemediationRecord>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnqueueIfEligibleAsync_UnsupportedItemType_ReturnsNull()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { EnableArrForwarding = true });
+        var audio = new Audio { Id = Guid.NewGuid(), Path = "/music/song.mp3" };
+        var service = CreateService();
+
+        var result = await service.EnqueueIfEligibleAsync(audio, scanStatus: 2, CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task EnqueueIfEligibleAsync_ErrorStatus_WithFailOnlyTrigger_ReturnsNull()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { EnableArrForwarding = true, ArrForwardOnStatus = ArrForwardTrigger.FailOnly });
+        var service = CreateService();
+
+        var result = await service.EnqueueIfEligibleAsync(MakeMovie(), scanStatus: 3, CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task EnqueueIfEligibleAsync_ErrorStatus_WithFailAndErrorTrigger_Enqueues()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { EnableArrForwarding = true, ArrForwardOnStatus = ArrForwardTrigger.FailAndError });
+        var service = CreateService();
+
+        var result = await service.EnqueueIfEligibleAsync(MakeMovie(), scanStatus: 3, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal("pending", result!.Status);
+    }
+
+    [Fact]
+    public async Task EnqueueIfEligibleAsync_AlreadyHasAPendingRow_ReturnsNull()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { EnableArrForwarding = true });
+        _db.Setup(d => d.HasPendingRemediationAsync(It.IsAny<string>())).ReturnsAsync(true);
+        var service = CreateService();
+
+        var result = await service.EnqueueIfEligibleAsync(MakeMovie(), scanStatus: 2, CancellationToken.None);
+
+        Assert.Null(result);
+        _db.Verify(d => d.RecordRemediationAsync(It.IsAny<ArrRemediationRecord>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnqueueIfEligibleAsync_WithinCooldownOfLastCompletedAttempt_ReturnsNull()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { EnableArrForwarding = true, RemediationCooldownHours = 168 });
+        _db.Setup(d => d.GetLastCompletedRemediationForItemAsync(It.IsAny<string>()))
+            .ReturnsAsync(new ArrRemediationRecord { CompletedAt = DateTime.UtcNow.AddHours(-1).ToString("O") });
+
+        var service = CreateService();
+        var result = await service.EnqueueIfEligibleAsync(MakeMovie(), scanStatus: 2, CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task EnqueueIfEligibleAsync_PastCooldown_Enqueues()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { EnableArrForwarding = true, RemediationCooldownHours = 24 });
+        _db.Setup(d => d.GetLastCompletedRemediationForItemAsync(It.IsAny<string>()))
+            .ReturnsAsync(new ArrRemediationRecord { CompletedAt = DateTime.UtcNow.AddDays(-2).ToString("O") });
+
+        var service = CreateService();
+        var result = await service.EnqueueIfEligibleAsync(MakeMovie(), scanStatus: 2, CancellationToken.None);
+
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task EnqueueIfEligibleAsync_Eligible_InsertsPendingRow_WithComputedCycleNumber()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { EnableArrForwarding = true });
+        _db.Setup(d => d.CountSuccessfulRemediationsForItemAsync(It.IsAny<string>())).ReturnsAsync(2);
+        var movie = MakeMovie();
+
+        var service = CreateService();
+        var result = await service.EnqueueIfEligibleAsync(movie, scanStatus: 2, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal("pending", result!.Status);
+        Assert.Equal("radarr", result.ArrApp);
+        Assert.Equal(3, result.CycleNumber);
+        _db.Verify(d => d.RecordRemediationAsync(It.Is<ArrRemediationRecord>(r => r.Status == "pending")), Times.Once);
+    }
+
+    // --- Phase 2: ProcessPendingAsync ---
+
+    [Fact]
+    public async Task ProcessPendingAsync_CycleNumberExceedsMax_MarksBlocked_WithoutResolvingTheItem()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { MaxRemediationCycles = 3 });
+        var pending = MakePendingRecord(Guid.NewGuid().ToString(), cycleNumber: 4);
+
+        var service = CreateService();
+        var result = await service.ProcessPendingAsync(pending, CancellationToken.None);
+
+        Assert.Equal("blocked", result.Status);
+        Assert.Equal("skipped_cycle_limit", result.ActionTaken);
+        _library.Verify(l => l.GetItemById(It.IsAny<Guid>()), Times.Never);
+        _db.Verify(d => d.UpdateRemediationAsync(It.Is<ArrRemediationRecord>(r => r.Status == "blocked")), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessPendingAsync_ItemNoLongerExists_MarksSkippedItemRemoved()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { MaxRemediationCycles = 3 });
+        var itemId = Guid.NewGuid();
+        var pending = MakePendingRecord(itemId.ToString());
+        _library.Setup(l => l.GetItemById(itemId)).Returns((BaseItem?)null);
+
+        var service = CreateService();
+        var result = await service.ProcessPendingAsync(pending, CancellationToken.None);
+
+        Assert.Equal("skipped", result.Status);
+        Assert.Equal("item_removed", result.ActionTaken);
+    }
+
+    [Fact]
+    public async Task ProcessPendingAsync_DryRunOn_MatchesButNeverCallsDeleteOrBlocklist_MarksSkipped()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            RadarrServers = new List<ArrServerConfig> { new() { Name = "main", Url = "http://radarr", ApiKey = "key" } },
+            ArrForwardingDryRun = true,
+            MaxRemediationCycles = 3
+        });
+        var movie = MakeMovie();
+        var pending = MakePendingRecord(movie.Id.ToString());
+        _library.Setup(l => l.GetItemById(movie.Id)).Returns(movie);
+        _matcher.Setup(m => m.MatchMovieAsync(It.IsAny<BaseItem>(), _radarr.Object, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ArrMatchResult(true, "provider_id", 1, 99));
+        _radarr.Setup(r => r.SearchReleasesAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new List<RadarrReleaseCandidate> { ViableRelease() });
+        _radarr.Setup(r => r.GetHistoryForMovieAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new List<RadarrHistoryRecord>());
+
+        var service = CreateService();
+        var result = await service.ProcessPendingAsync(pending, CancellationToken.None);
+
+        _radarr.Verify(r => r.DeleteMovieFileAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _radarr.Verify(r => r.TriggerMovieSearchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _radarr.Verify(r => r.MarkHistoryAsFailedAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal("skipped", result.Status);
+        Assert.Equal("would_delete_and_search", result.ActionTaken);
+    }
+
+    [Fact]
+    public async Task ProcessPendingAsync_DryRunOff_PerformsTheRealDeleteAndMarksSuccess()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            RadarrServers = new List<ArrServerConfig> { new() { Name = "main", Url = "http://radarr", ApiKey = "key" } },
+            ArrForwardingDryRun = false,
+            MaxRemediationCycles = 3
+        });
+        var movie = MakeMovie();
+        var pending = MakePendingRecord(movie.Id.ToString());
+        _library.Setup(l => l.GetItemById(movie.Id)).Returns(movie);
+        _matcher.Setup(m => m.MatchMovieAsync(It.IsAny<BaseItem>(), _radarr.Object, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ArrMatchResult(true, "provider_id", 1, 99));
+        _radarr.Setup(r => r.SearchReleasesAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new List<RadarrReleaseCandidate> { ViableRelease() });
+        _radarr.Setup(r => r.GetHistoryForMovieAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new List<RadarrHistoryRecord>());
+
+        var service = CreateService();
+        var result = await service.ProcessPendingAsync(pending, CancellationToken.None);
+
+        _radarr.Verify(r => r.DeleteMovieFileAsync(99, It.IsAny<CancellationToken>()), Times.Once);
+        _radarr.Verify(r => r.TriggerMovieSearchAsync(1, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal("success", result.Status);
+        Assert.Equal("deleted_and_searched", result.ActionTaken);
+        _db.Verify(d => d.UpdateRemediationAsync(It.Is<ArrRemediationRecord>(r => r.Id == pending.Id && r.Status == "success")), Times.Once);
+    }
+
+    // --- Phase 2: ResetCycleAsync ---
+
+    [Fact]
+    public async Task ResetCycleAsync_ItemNotBlocked_ReturnsNull()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        _db.Setup(d => d.GetLatestRemediationForItemAsync(itemId))
+            .ReturnsAsync(new ArrRemediationRecord { Status = "success" });
+
+        var service = CreateService();
+        var result = await service.ResetCycleAsync(itemId, CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ResetCycleAsync_ItemBlocked_InsertsResetMarker_WithCycleNumberOne()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        _db.Setup(d => d.GetLatestRemediationForItemAsync(itemId))
+            .ReturnsAsync(new ArrRemediationRecord { ItemId = itemId, ArrApp = "radarr", FilePath = "/movies/x.mkv", Status = "blocked" });
+
+        var service = CreateService();
+        var result = await service.ResetCycleAsync(itemId, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal("cycle_reset", result!.ActionTaken);
+        Assert.Equal(1, result.CycleNumber);
+        _db.Verify(d => d.RecordRemediationAsync(It.Is<ArrRemediationRecord>(r => r.ActionTaken == "cycle_reset")), Times.Once);
+    }
 }

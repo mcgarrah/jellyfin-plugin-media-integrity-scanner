@@ -234,4 +234,127 @@ public class ArrRemediationDatabaseTests : IDisposable
         Assert.Equal(2, page2.Items.Count);
         Assert.DoesNotContain(page2.Items, i => i.ItemId == page1.Items[0].ItemId);
     }
+
+    [Fact]
+    public async Task GetPendingRemediationsAsync_ReturnsOnlyPendingRows_OldestFirst()
+    {
+        var itemA = Guid.NewGuid().ToString();
+        var itemB = Guid.NewGuid().ToString();
+        await _db.RecordRemediationAsync(MakeRemediation(itemA, status: "success"));
+        await _db.RecordRemediationAsync(MakeRemediation(itemB, status: "pending", requestedAt: "2026-08-20T00:00:00.0000000Z"));
+        await _db.RecordRemediationAsync(MakeRemediation(itemA, status: "pending", requestedAt: "2026-08-01T00:00:00.0000000Z"));
+
+        var pending = await _db.GetPendingRemediationsAsync();
+
+        Assert.Equal(2, pending.Count);
+        Assert.Equal(itemA, pending[0].ItemId);
+        Assert.Equal(itemB, pending[1].ItemId);
+    }
+
+    [Fact]
+    public async Task HasPendingRemediationAsync_TrueOnlyWhileAPendingRowExists()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        Assert.False(await _db.HasPendingRemediationAsync(itemId));
+
+        await _db.RecordRemediationAsync(MakeRemediation(itemId, status: "pending"));
+        Assert.True(await _db.HasPendingRemediationAsync(itemId));
+    }
+
+    [Fact]
+    public async Task GetLastCompletedRemediationForItemAsync_SkipsAPendingRow_ReturnsThePriorCompletedOne()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        await _db.RecordRemediationAsync(MakeRemediation(itemId, status: "failed", requestedAt: "2026-08-01T00:00:00.0000000Z"));
+        await _db.RecordRemediationAsync(MakeRemediation(itemId, status: "pending", requestedAt: "2026-08-20T00:00:00.0000000Z"));
+
+        var result = await _db.GetLastCompletedRemediationForItemAsync(itemId);
+
+        Assert.NotNull(result);
+        Assert.Equal("failed", result!.Status);
+    }
+
+    [Fact]
+    public async Task GetLastCompletedRemediationForItemAsync_ReturnsNull_WhenOnlyPendingRowsExist()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        await _db.RecordRemediationAsync(MakeRemediation(itemId, status: "pending"));
+
+        var result = await _db.GetLastCompletedRemediationForItemAsync(itemId);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task CountAutoRemediationsSinceAsync_OnlyCountsSuccessAndFailed_CompletedSinceTheCutoff()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        var old = MakeRemediation(itemId, status: "success");
+        old.CompletedAt = "2026-08-01T00:00:00.0000000Z";
+        await _db.RecordRemediationAsync(old);
+
+        var recentSuccess = MakeRemediation(itemId, status: "success");
+        recentSuccess.CompletedAt = "2026-08-23T12:00:00.0000000Z";
+        await _db.RecordRemediationAsync(recentSuccess);
+
+        var recentFailed = MakeRemediation(itemId, status: "failed");
+        recentFailed.CompletedAt = "2026-08-23T13:00:00.0000000Z";
+        await _db.RecordRemediationAsync(recentFailed);
+
+        var recentSkipped = MakeRemediation(itemId, status: "skipped");
+        recentSkipped.CompletedAt = "2026-08-23T14:00:00.0000000Z";
+        await _db.RecordRemediationAsync(recentSkipped);
+
+        var count = await _db.CountAutoRemediationsSinceAsync(new DateTime(2026, 8, 23, 0, 0, 0, DateTimeKind.Utc));
+
+        Assert.Equal(2, count);
+    }
+
+    [Fact]
+    public async Task UpdateRemediationAsync_TransitionsAPendingRowToItsTerminalState()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        var id = await _db.RecordRemediationAsync(MakeRemediation(itemId, status: "pending", matchMethod: "pending"));
+
+        var pending = await _db.GetLatestRemediationForItemAsync(itemId);
+        Assert.NotNull(pending);
+        pending!.Status = "success";
+        pending.ActionTaken = "deleted_and_searched";
+        pending.MatchMethod = "provider_id";
+        pending.ArrServerName = "Main";
+        pending.ArrItemId = 7;
+        pending.ArrFileId = 8;
+
+        await _db.UpdateRemediationAsync(pending);
+
+        var updated = await _db.GetLatestRemediationForItemAsync(itemId);
+        Assert.NotNull(updated);
+        Assert.Equal(id, updated!.Id);
+        Assert.Equal("success", updated.Status);
+        Assert.Equal("deleted_and_searched", updated.ActionTaken);
+        Assert.Equal("provider_id", updated.MatchMethod);
+        Assert.Equal("Main", updated.ArrServerName);
+        Assert.Equal(7, updated.ArrItemId);
+        Assert.Equal(8, updated.ArrFileId);
+        Assert.NotNull(updated.CompletedAt);
+    }
+
+    [Fact]
+    public async Task CountSuccessfulRemediationsForItemAsync_OnlyCountsSuccessesAfterTheMostRecentCycleReset()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        await _db.RecordRemediationAsync(MakeRemediation(itemId, status: "success", requestedAt: "2026-08-01T00:00:00.0000000Z"));
+        await _db.RecordRemediationAsync(MakeRemediation(itemId, status: "success", requestedAt: "2026-08-02T00:00:00.0000000Z"));
+
+        Assert.Equal(2, await _db.CountSuccessfulRemediationsForItemAsync(itemId));
+
+        var reset = MakeRemediation(itemId, status: "skipped", actionTaken: "cycle_reset", requestedAt: "2026-08-10T00:00:00.0000000Z");
+        await _db.RecordRemediationAsync(reset);
+
+        Assert.Equal(0, await _db.CountSuccessfulRemediationsForItemAsync(itemId));
+
+        await _db.RecordRemediationAsync(MakeRemediation(itemId, status: "success", requestedAt: "2026-08-11T00:00:00.0000000Z"));
+
+        Assert.Equal(1, await _db.CountSuccessfulRemediationsForItemAsync(itemId));
+    }
 }

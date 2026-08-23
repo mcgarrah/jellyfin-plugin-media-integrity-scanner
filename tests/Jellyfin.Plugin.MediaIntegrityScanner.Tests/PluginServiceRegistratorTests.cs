@@ -142,6 +142,14 @@ public class PluginServiceRegistratorTests : IDisposable
     }
 
     [Fact]
+    public void RegisterServices_RegistersArrRemediationWorkerAsAHostedService()
+    {
+        var services = CreateRegisteredServices();
+
+        Assert.Contains(services, d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(ArrRemediationWorker));
+    }
+
+    [Fact]
     public void RegisterServices_IDatabaseManagerResolvesToTheSameSqliteInstance()
     {
         using var provider = CreateProvider();
