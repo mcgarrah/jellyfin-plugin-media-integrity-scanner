@@ -15,16 +15,27 @@
   You should have received a copy of the GNU General Public License along
   with this program; if not, see <https://www.gnu.org/licenses/>.
 
-  Phase 1 scope only (ARR-INTEGRATION-PROPOSAL.md section 11): manual
-  single/bulk "Send to Radarr/Sonarr" only, no auto-forward, no Blocked
-  state or "Needs Manual Review" banner yet -- those arrive with Phase 2's
-  automatic forwarding, since nothing can hit the cycle-limit trip-wire
-  without it running in the background.
+  Phase 2 adds automatic forwarding's on-page surfaces (ARR-INTEGRATION-PROPOSAL.md
+  section 8.3): the Blocked stat card, the "Needs Manual Review" banner
+  (visible whenever the cycle-limit trip-wire has fired for at least one
+  item), the Blocked chip, and the "Reset Cycle" recovery action.
 -->
 <div id="MediaIssuesPage" data-role="page" class="page type-interior pluginConfigurationPage">
     <div data-role="content" class="content-primary">
         <style>
             .integrity-issues { padding: 4em 2em 1em; font-family: inherit; }
+            .review-banner {
+                display: none;
+                align-items: center;
+                gap: 0.6em;
+                background: rgba(255,152,0,0.12);
+                border: 1px solid rgba(255,152,0,0.4);
+                border-radius: 8px;
+                padding: 0.6em 1em;
+                margin: 0 0 1em;
+                font-size: 0.9em;
+            }
+            .review-banner.open { display: flex; }
             .stats-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -75,7 +86,9 @@
             .chip-unmatched { background: rgba(144,152,163,0.14); color: #9098a3; }
             .chip-skipped { background: rgba(255,152,0,0.14); color: #ff9800; }
             .chip-failed { background: rgba(244,67,54,0.14); color: #f44336; }
+            .chip-blocked { background: rgba(255,152,0,0.22); color: #ff9800; font-weight: 700; }
             .chip-none { opacity: 0.5; }
+            .btn-reset { background: rgba(255,152,0,0.9); color: #1a1a1a; }
             .bulk-bar {
                 display: none;
                 align-items: center;
@@ -95,6 +108,10 @@
             <h1>Media Issues</h1>
             <p style="opacity:0.7;">Files that failed integrity checks, what they matched to in Radarr/Sonarr, and what's been done about it.</p>
 
+            <div class="review-banner" id="review-banner">
+                <span id="review-banner-text"></span>
+            </div>
+
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-label">Failed</div>
@@ -108,6 +125,10 @@
                     <div class="stat-label">Unmatched</div>
                     <div class="stat-value" id="stat-unmatched" style="color:#9098a3;">&mdash;</div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-label">Blocked</div>
+                    <div class="stat-value" id="stat-blocked" style="color:#ff9800;">&mdash;</div>
+                </div>
             </div>
 
             <div class="filter-row">
@@ -120,6 +141,17 @@
                     <option value="">All Phases</option>
                     <option value="1">Header Only</option>
                     <option value="2">Deep Only</option>
+                </select>
+                <select id="filter-arr-action" onchange="renderIssues()" title="Filters the currently-loaded page only, not the full result set">
+                    <option value="">Any Arr Action</option>
+                    <option value="not_sent">Not sent</option>
+                    <option value="pending">Pending</option>
+                    <option value="sent">Sent, searching</option>
+                    <option value="unmatched">Unmatched</option>
+                    <option value="no_replacement">No replacement found</option>
+                    <option value="blocked">Blocked</option>
+                    <option value="failed">Failed</option>
+                    <option value="dry_run">Dry-run</option>
                 </select>
                 <select id="page-size-select" onchange="changePageSize()">
                     <option value="25">25 / page</option>
@@ -209,11 +241,20 @@
                 var action = remediation.ActionTaken;
                 var status = remediation.Status;
 
+                if (status === 'blocked') {
+                    return '<span class="chip chip-blocked" title="Hit the cycle-limit trip-wire -- needs manual review">Blocked</span>';
+                }
+                if (status === 'pending') {
+                    return '<span class="chip chip-pending">Pending</span>';
+                }
                 if (status === 'success' && action === 'deleted_and_blocklisted') {
                     return '<span class="chip chip-sent">Deleted + blocklisted, searching</span>';
                 }
                 if (status === 'success' && action === 'deleted_and_searched') {
                     return '<span class="chip chip-sent">Deleted, searching</span>';
+                }
+                if (action === 'would_delete_and_blocklist' || action === 'would_delete_and_search') {
+                    return '<span class="chip chip-pending" title="Automatic forwarding is in dry-run mode -- nothing was actually deleted">Dry-run: would send</span>';
                 }
                 if (action === 'unmatched') {
                     return '<span class="chip chip-unmatched">Unmatched</span>';
@@ -221,11 +262,39 @@
                 if (action === 'no_replacement_available') {
                     return '<span class="chip chip-skipped">No replacement found</span>';
                 }
+                if (action === 'item_removed') {
+                    return '<span class="chip chip-skipped">Item removed</span>';
+                }
+                if (action === 'skipped_daily_cap') {
+                    return '<span class="chip chip-skipped">Skipped (daily cap)</span>';
+                }
+                if (action === 'cycle_reset') {
+                    return '<span class="chip chip-skipped">Cycle reset</span>';
+                }
                 if (status === 'failed') {
                     return '<span class="chip chip-failed" title="' + escapeHtml(remediation.ErrorMessage || '') + '">Failed</span>';
                 }
 
                 return '<span class="chip chip-pending">Pending</span>';
+            }
+
+            // Maps a row's Remediation to the coarse bucket used by the
+            // #filter-arr-action dropdown -- deliberately client-side (not a
+            // new GetIssuesAsync query param) since this page's default page
+            // size already keeps a typical result set small; see the
+            // dropdown's title attribute for the tradeoff this implies
+            // (filters the loaded page only, not the full result set).
+            function arrActionBucket(remediation) {
+                if (!remediation) return 'not_sent';
+                if (remediation.Status === 'blocked') return 'blocked';
+                if (remediation.Status === 'pending') return 'pending';
+                if (remediation.Status === 'failed') return 'failed';
+                var action = remediation.ActionTaken;
+                if (action === 'would_delete_and_blocklist' || action === 'would_delete_and_search') return 'dry_run';
+                if (action === 'unmatched') return 'unmatched';
+                if (action === 'no_replacement_available') return 'no_replacement';
+                if (remediation.Status === 'success') return 'sent';
+                return 'not_sent';
             }
 
             function renderArrMatch(remediation) {
@@ -257,25 +326,40 @@
             }
 
             function renderStats() {
-                var failed = 0, errored = 0, unmatched = 0;
+                var failed = 0, errored = 0, unmatched = 0, blocked = 0;
                 currentIssues.forEach(function(item) {
                     if (item.ScanStatus === 2) failed++;
                     if (item.ScanStatus === 3) errored++;
                     if (item.Remediation && item.Remediation.ActionTaken === 'unmatched') unmatched++;
+                    if (item.Remediation && item.Remediation.Status === 'blocked') blocked++;
                 });
                 document.getElementById('stat-failed').textContent = failed;
                 document.getElementById('stat-errored').textContent = errored;
                 document.getElementById('stat-unmatched').textContent = unmatched;
+                document.getElementById('stat-blocked').textContent = blocked;
+
+                var banner = document.getElementById('review-banner');
+                banner.classList.toggle('open', blocked > 0);
+                if (blocked > 0) {
+                    document.getElementById('review-banner-text').textContent =
+                        'Needs Manual Review: ' + blocked + ' item(s) blocked after repeated failures. ' +
+                        'Use "Reset Cycle" below once you\'ve confirmed the underlying release is actually good.';
+                }
             }
 
             function renderIssues() {
                 var tbody = document.getElementById('issues-body');
-                if (currentIssues.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="8">No current issues.</td></tr>';
+                var filter = document.getElementById('filter-arr-action').value;
+                var rows = filter
+                    ? currentIssues.filter(function(item) { return arrActionBucket(item.Remediation) === filter; })
+                    : currentIssues;
+
+                if (rows.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8">No current issues' + (filter ? ' matching this filter' : '') + '.</td></tr>';
                     return;
                 }
 
-                tbody.innerHTML = currentIssues.map(function(item) {
+                tbody.innerHTML = rows.map(function(item) {
                     var filename = item.FilePath ? item.FilePath.split('/').pop().split('\\').pop() : '—';
                     var statusLabel = item.ScanStatus === 3 ? 'Error' : 'Fail';
                     var phaseLabel = item.ScanPhase === 1 ? 'Header' : 'Full Decode';
@@ -284,6 +368,10 @@
                         : '—';
                     var checked = selectedItemIds[item.ItemId] ? ' checked' : '';
                     var sendDisabled = item.Remediation && item.Remediation.Status === 'success' ? ' disabled' : '';
+                    var isBlocked = item.Remediation && item.Remediation.Status === 'blocked';
+                    var resetButton = isBlocked
+                        ? ' <button class="btn btn-reset btn-sm" onclick="resetCycle(\'' + item.ItemId + '\')">Reset Cycle</button>'
+                        : '';
 
                     return '<tr>' +
                         '<td><input type="checkbox"' + checked + ' onchange="toggleSelect(\'' + item.ItemId + '\')"></td>' +
@@ -294,6 +382,7 @@
                         '<td>' + error + '</td>' +
                         '<td>' + renderArrMatch(item.Remediation) + '</td>' +
                         '<td>' + renderArrAction(item.Remediation) +
+                            resetButton +
                             ' <button class="btn btn-primary btn-sm" onclick="sendOne(\'' + item.ItemId + '\')"' + sendDisabled + '>Send</button>' +
                         '</td>' +
                         '</tr>';
@@ -344,6 +433,17 @@
                     loadIssues();
                 }).catch(function(err) {
                     showError('Failed to send item: ' + err.message);
+                });
+            }
+
+            function resetCycle(itemId) {
+                apiFetch('ArrRemediation/' + itemId + '/ResetCycle', {
+                    method: 'POST',
+                    headers: { 'X-Emby-Token': ApiClient.accessToken() }
+                }).then(function() {
+                    loadIssues();
+                }).catch(function(err) {
+                    showError('Failed to reset cycle: ' + err.message);
                 });
             }
 
