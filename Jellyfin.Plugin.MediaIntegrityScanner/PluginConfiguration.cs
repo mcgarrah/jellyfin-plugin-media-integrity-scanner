@@ -15,6 +15,7 @@
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Plugins;
@@ -197,4 +198,51 @@ public class PluginConfiguration : BasePluginConfiguration
     /// software decode rather than passing an unverified flag to ffmpeg.
     /// </summary>
     public HardwareAccelerationType HardwareAccelerationType { get; set; } = HardwareAccelerationType.none;
+
+    /// <summary>
+    /// Gets or sets the configured Radarr servers a bad movie file can be
+    /// forwarded to (<c>ARR-INTEGRATION-PROPOSAL.md</c> section 7). A list
+    /// to support the multi-server routing planned for Phase 3 (e.g. a
+    /// separate "Family"/Disney server), though Phase 1 only ever uses the
+    /// first entry -- no routing logic exists yet. Empty by default; the
+    /// Media Issues page's manual "Send to Radarr" action is simply
+    /// unavailable for movies until at least one server is configured.
+    /// </summary>
+    public List<ArrServerConfig> RadarrServers { get; set; } = new();
+
+    /// <summary>Gets or sets the configured Sonarr servers. See <see cref="RadarrServers"/>.</summary>
+    public List<ArrServerConfig> SonarrServers { get; set; } = new();
+
+    /// <summary>
+    /// Gets or sets how many days back to look for a "grabbed" history
+    /// record when deciding what to blocklist alongside a file deletion
+    /// (<c>ARR-INTEGRATION-PROPOSAL.md</c> section 4). A grab older than
+    /// this is assumed already-superseded and not worth blocklisting -- the
+    /// remediation flow just deletes the file and triggers a plain search
+    /// instead of blocklisting a stale release.
+    /// </summary>
+    public int HistoryLookbackDays { get; set; } = 30;
+}
+
+/// <summary>
+/// One configured Radarr or Sonarr server connection -- see
+/// <see cref="PluginConfiguration.RadarrServers"/>/<see cref="PluginConfiguration.SonarrServers"/>.
+/// </summary>
+public class ArrServerConfig
+{
+    /// <summary>Gets or sets a display name for this server (e.g. "Main", "Disney/Family").</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the server's base URL (e.g. <c>http://192.168.86.52:7878</c>).</summary>
+    public string Url { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the server's API key.</summary>
+    public string ApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets which library path prefixes route to this server, for
+    /// the Phase 3 multi-server support. Unused in Phase 1 (a single
+    /// configured server of each type is assumed).
+    /// </summary>
+    public List<string> LibraryPathPrefixes { get; set; } = new();
 }
