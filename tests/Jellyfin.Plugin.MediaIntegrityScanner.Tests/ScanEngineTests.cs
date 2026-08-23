@@ -376,6 +376,54 @@ public class ScanEngineTests : IDisposable
         Assert.Null(engine.CurrentPhase);
     }
 
+    [Fact]
+    public async Task CurrentScope_ReflectsLibraryNameFilterAndSeasons_DuringLibraryScan_AndIsNullAfter()
+    {
+        var gate = new TaskCompletionSource();
+        // Named to actually survive the "Simpsons" name filter below -- this
+        // test is only checking that the exposed Current* properties reflect
+        // the active scan's scope, not re-verifying the filtering logic
+        // itself (covered separately), so the item must not get excluded.
+        var item = MakeMovie("Simpsons");
+        var libraryId = Guid.NewGuid().ToString();
+
+        var library = new Mock<ILibraryManager>();
+        library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(new List<BaseItem> { item });
+
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.IsCurrentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>())).ReturnsAsync(false);
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                await gate.Task;
+                return new ScanResult { Success = true, DurationMs = 1 };
+            });
+
+        var engine = CreateEngine(wrapper, db, library: library);
+        Assert.Null(engine.CurrentLibraryId);
+        Assert.Null(engine.CurrentNameFilter);
+        Assert.Null(engine.CurrentSeasons);
+
+        var libraryScanTask = engine.ScanLibraryAsync(
+            libraryId, ScanPhase.Header, CancellationToken.None, nameFilter: "Simpsons", seasons: new[] { 1, 2 });
+        await Task.Delay(50);
+
+        Assert.Equal(libraryId, engine.CurrentLibraryId);
+        Assert.Equal("Simpsons", engine.CurrentNameFilter);
+        Assert.Equal(new[] { 1, 2 }, engine.CurrentSeasons);
+
+        gate.SetResult();
+        await libraryScanTask;
+
+        Assert.Null(engine.CurrentLibraryId);
+        Assert.Null(engine.CurrentNameFilter);
+        Assert.Null(engine.CurrentSeasons);
+    }
+
     // --- Concurrency ---
 
     [Fact]

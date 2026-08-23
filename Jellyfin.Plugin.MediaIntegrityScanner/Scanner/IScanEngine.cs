@@ -41,6 +41,26 @@ public interface IScanEngine
     int? CurrentPhase { get; }
 
     /// <summary>
+    /// Gets the library ID the current library scan is scoped to, or <c>null</c>
+    /// when idle or when the current scan has no library scope. Lets the
+    /// dashboard show what's actually being scanned, not just that a scan is
+    /// running -- mirrors <see cref="CurrentPhase"/>'s gating.
+    /// </summary>
+    string? CurrentLibraryId { get; }
+
+    /// <summary>
+    /// Gets the name filter the current library scan is scoped to, or <c>null</c>
+    /// when idle or unscoped. See <see cref="CurrentLibraryId"/>.
+    /// </summary>
+    string? CurrentNameFilter { get; }
+
+    /// <summary>
+    /// Gets the season filter the current library scan is scoped to, or
+    /// <c>null</c> when idle or unscoped. See <see cref="CurrentLibraryId"/>.
+    /// </summary>
+    IReadOnlyCollection<int>? CurrentSeasons { get; }
+
+    /// <summary>
     /// Scans a single item for media integrity.
     /// </summary>
     /// <param name="item">The Jellyfin library item to scan.</param>
