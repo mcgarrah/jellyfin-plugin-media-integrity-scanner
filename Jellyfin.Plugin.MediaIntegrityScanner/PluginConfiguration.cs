@@ -16,6 +16,7 @@
 
 using System;
 using System.Collections.Generic;
+using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
 using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Plugins;
@@ -222,6 +223,80 @@ public class PluginConfiguration : BasePluginConfiguration
     /// instead of blocklisting a stale release.
     /// </summary>
     public int HistoryLookbackDays { get; set; } = 30;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether failed/errored scans are
+    /// automatically forwarded to Radarr/Sonarr for deletion + re-download
+    /// (Phase 2, <c>ARR-INTEGRATION-PROPOSAL.md</c> section 7). Off by
+    /// default -- this deletes real files on another system; an admin has
+    /// to explicitly opt in. Manual forwarding from the Media Issues page
+    /// (Phase 1) always works regardless of this setting.
+    /// </summary>
+    public bool EnableArrForwarding { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether automatic forwarding only
+    /// matches and logs what it would do, without actually calling
+    /// Radarr/Sonarr's delete/blocklist/search endpoints. True by default
+    /// even when <see cref="EnableArrForwarding"/> is turned on, so a
+    /// first-time enable doesn't immediately start deleting files -- an
+    /// admin has to explicitly turn this off too, a deliberate two-step
+    /// opt-in. Has no effect on manual forwarding, which never dry-runs.
+    /// </summary>
+    public bool ArrForwardingDryRun { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets which scan outcomes trigger automatic forwarding.
+    /// Fail-only by default -- Error means the *scan itself* broke (ffprobe
+    /// crashed, a read error), a weaker signal that the media is actually
+    /// bad than a completed scan that affirmatively found corruption.
+    /// </summary>
+    public ArrForwardTrigger ArrForwardOnStatus { get; set; } = ArrForwardTrigger.FailOnly;
+
+    /// <summary>
+    /// Gets or sets the maximum number of automatic remediation actions
+    /// (delete + blocklist/search) per rolling day, across all configured
+    /// servers. Protects against a scanner bug, a bad ffmpeg build, or a
+    /// misconfigured hardware-decode path flagging a large swath of the
+    /// library as corrupt all at once and mass-blocklisting real, good
+    /// releases as a result. Anything beyond this cap is skipped for that
+    /// poll, not queued past midnight -- surfaces on the Media Issues page
+    /// as "skipped (daily cap)" for manual review instead. A plain
+    /// settings-page number, not a rebuild/restart-gated value -- meant to
+    /// be bumped up temporarily during an initial library-wide review (a
+    /// fresh install scanning years of existing media will legitimately
+    /// find more than 10 bad files on day one) and brought back down
+    /// afterward.
+    /// </summary>
+    public int MaxAutoRemediationsPerDay { get; set; } = 10;
+
+    /// <summary>
+    /// Gets or sets how many hours must pass before the same Jellyfin item
+    /// can be automatically forwarded again, even if it fails a later scan
+    /// too. Prevents a persistently-failing item (e.g. a codec this
+    /// environment's ffmpeg build genuinely can't decode, not a corrupt
+    /// file) from repeatedly cycling through delete+redownload right away.
+    /// Distinct from <see cref="MaxRemediationCycles"/>, which is a hard
+    /// stop after N total attempts regardless of timing -- this setting
+    /// only spaces successive attempts out, it doesn't cap how many can
+    /// eventually happen. Manual forwarding from the Media Issues page
+    /// ignores this.
+    /// </summary>
+    public int RemediationCooldownHours { get; set; } = 168; // 1 week
+
+    /// <summary>
+    /// Gets or sets the maximum number of times the same Jellyfin item can
+    /// be automatically forwarded before it's permanently blocked from
+    /// further automatic attempts (<c>ARR-INTEGRATION-PROPOSAL.md</c>
+    /// section 5.1's trip-wire). Once <see cref="Data.Models.ArrRemediationRecord.CycleNumber"/>
+    /// exceeds this, the item is marked <c>Blocked</c> and surfaces in the
+    /// "Needs Manual Review" banner on the Media Issues page until an admin
+    /// uses the "Reset cycle count" action there. A repeatedly-failing item
+    /// is a strong signal the problem isn't a bad release at all -- cycling
+    /// forever just wastes Radarr/Sonarr grabs and indexer queries without
+    /// ever actually fixing anything.
+    /// </summary>
+    public int MaxRemediationCycles { get; set; } = 3;
 }
 
 /// <summary>

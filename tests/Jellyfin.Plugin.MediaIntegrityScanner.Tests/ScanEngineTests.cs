@@ -20,6 +20,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
@@ -80,6 +81,7 @@ public class ScanEngineTests : IDisposable
         Mock<IDatabaseManager>? db = null,
         Mock<ISessionManager>? sessions = null,
         Mock<ILibraryManager>? library = null,
+        Mock<IArrRemediationService>? arrRemediation = null,
         SharedBandwidthLimiter? bandwidthLimiter = null)
     {
         return new ScanEngine(
@@ -87,6 +89,7 @@ public class ScanEngineTests : IDisposable
             (db ?? new Mock<IDatabaseManager>()).Object,
             (sessions ?? new Mock<ISessionManager>()).Object,
             (library ?? new Mock<ILibraryManager>()).Object,
+            (arrRemediation ?? new Mock<IArrRemediationService>()).Object,
             NullLogger<ScanEngine>.Instance,
             bandwidthLimiter);
     }
@@ -184,6 +187,76 @@ public class ScanEngineTests : IDisposable
         Assert.NotNull(saved);
         Assert.Equal((int)ScanStatus.Error, saved!.ScanStatus);
         Assert.Equal("ffmpeg not found", saved.ErrorOutput);
+    }
+
+    [Fact]
+    public async Task ScanItemAsync_FailedProbe_EnqueuesArrRemediation_WithTheFailStatus()
+    {
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = false, ErrorOutput = "corrupt", DurationMs = 10 });
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+        var arrRemediation = new Mock<IArrRemediationService>();
+        var item = MakeItem();
+
+        var engine = CreateEngine(wrapper, db, arrRemediation: arrRemediation);
+        await engine.ScanItemAsync(item, ScanPhase.Header, CancellationToken.None);
+
+        arrRemediation.Verify(a => a.EnqueueIfEligibleAsync(item, (int)ScanStatus.Fail, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ScanItemAsync_ScanThrows_EnqueuesArrRemediation_WithTheErrorStatus()
+    {
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("ffmpeg not found"));
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+        var arrRemediation = new Mock<IArrRemediationService>();
+        var item = MakeItem();
+
+        var engine = CreateEngine(wrapper, db, arrRemediation: arrRemediation);
+        await engine.ScanItemAsync(item, ScanPhase.Header, CancellationToken.None);
+
+        arrRemediation.Verify(a => a.EnqueueIfEligibleAsync(item, (int)ScanStatus.Error, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ScanItemAsync_PassedProbe_NeverEnqueuesArrRemediation()
+    {
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 10 });
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+        var arrRemediation = new Mock<IArrRemediationService>();
+
+        var engine = CreateEngine(wrapper, db, arrRemediation: arrRemediation);
+        await engine.ScanItemAsync(MakeItem(), ScanPhase.Header, CancellationToken.None);
+
+        arrRemediation.Verify(a => a.EnqueueIfEligibleAsync(It.IsAny<BaseItem>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ScanItemAsync_ArrRemediationEnqueueThrows_DoesNotBreakTheScan()
+    {
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = false, ErrorOutput = "corrupt", DurationMs = 10 });
+        var db = new Mock<IDatabaseManager>();
+        db.Setup(d => d.SaveResultAsync(It.IsAny<ScanRecord>())).Returns(Task.CompletedTask);
+        var arrRemediation = new Mock<IArrRemediationService>();
+        arrRemediation.Setup(a => a.EnqueueIfEligibleAsync(It.IsAny<BaseItem>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db unavailable"));
+
+        var engine = CreateEngine(wrapper, db, arrRemediation: arrRemediation);
+
+        // Should complete without throwing -- a broken remediation enqueue must never take down the scan loop.
+        await engine.ScanItemAsync(MakeItem(), ScanPhase.Header, CancellationToken.None);
+
+        db.Verify(d => d.SaveResultAsync(It.IsAny<ScanRecord>()), Times.Once);
     }
 
     [Fact]

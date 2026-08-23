@@ -21,6 +21,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using MediaBrowser.Controller.Entities;
@@ -42,6 +43,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
     private readonly IDatabaseManager _db;
     private readonly ISessionManager _sessions;
     private readonly ILibraryManager _library;
+    private readonly IArrRemediationService _arrRemediation;
     private readonly ILogger<ScanEngine> _logger;
     private readonly SharedBandwidthLimiter _bandwidthLimiter;
     private CancellationTokenSource? _cts;
@@ -60,6 +62,11 @@ public partial class ScanEngine : IScanEngine, IDisposable
     /// <param name="db">Database manager for persisting results.</param>
     /// <param name="sessions">Session manager for playback awareness.</param>
     /// <param name="library">Library manager for querying items.</param>
+    /// <param name="arrRemediation">
+    /// Enqueues a Phase 2 automatic Radarr/Sonarr remediation attempt after a
+    /// Fail/Error result -- a cheap, local, no-op-unless-opted-in call (see
+    /// <see cref="IArrRemediationService.EnqueueIfEligibleAsync"/>).
+    /// </param>
     /// <param name="logger">Logger instance.</param>
     /// <param name="bandwidthLimiter">
     /// Shared bandwidth budget. Optional -- no DI registration exists for
@@ -72,6 +79,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
         IDatabaseManager db,
         ISessionManager sessions,
         ILibraryManager library,
+        IArrRemediationService arrRemediation,
         ILogger<ScanEngine> logger,
         SharedBandwidthLimiter? bandwidthLimiter = null)
     {
@@ -79,6 +87,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
         _db = db;
         _sessions = sessions;
         _library = library;
+        _arrRemediation = arrRemediation;
         _logger = logger;
         _bandwidthLimiter = bandwidthLimiter ?? new SharedBandwidthLimiter();
 
@@ -209,6 +218,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
             {
                 var firstError = GetFirstLine(result.ErrorOutput);
                 LogScanFailed(item.Path, firstError);
+                await TryEnqueueRemediationAsync(item, (int)ScanStatus.Fail).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -244,11 +254,34 @@ public partial class ScanEngine : IScanEngine, IDisposable
                 DecodeMode = (int)attemptedDecodeMode,
                 HardwareAccelType = attemptedHwAccelFlag
             }).ConfigureAwait(false);
+
+            await TryEnqueueRemediationAsync(item, (int)ScanStatus.Error).ConfigureAwait(false);
         }
         finally
         {
             Interlocked.Decrement(ref _activeScanCount);
             _scanLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Enqueues a Phase 2 automatic remediation attempt for a Fail/Error
+    /// result, swallowing any exception -- this must never break the scan
+    /// loop itself. Deliberately uses <see cref="CancellationToken.None"/>
+    /// rather than the scan's own token: the scan result is already
+    /// persisted at this point, and losing the enqueue to a mid-flight
+    /// cancellation (e.g. the user clicking "Cancel Scan" moments later)
+    /// would silently drop remediation for an item that's already known bad.
+    /// </summary>
+    private async Task TryEnqueueRemediationAsync(BaseItem item, int scanStatus)
+    {
+        try
+        {
+            await _arrRemediation.EnqueueIfEligibleAsync(item, scanStatus, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LogRemediationEnqueueFailed(ex, item.Path);
         }
     }
 
@@ -451,6 +484,9 @@ public partial class ScanEngine : IScanEngine, IDisposable
 
     [LoggerMessage(EventId = 8, Level = LogLevel.Information, Message = "Library scan complete: {Processed}/{Total} items processed")]
     private partial void LogLibraryScanComplete(int processed, int total);
+
+    [LoggerMessage(EventId = 11, Level = LogLevel.Error, Message = "Failed to enqueue Arr remediation for {File}")]
+    private partial void LogRemediationEnqueueFailed(Exception ex, string file);
 
     [LoggerMessage(EventId = 9, Level = LogLevel.Information, Message = "Scan cancellation requested")]
     private partial void LogScanCancellationRequested();

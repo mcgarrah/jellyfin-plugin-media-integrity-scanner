@@ -57,5 +57,12 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IArrClientFactory, ArrClientFactory>();
         serviceCollection.AddSingleton<IArrItemMatcher, ArrItemMatcher>();
         serviceCollection.AddSingleton<IArrRemediationService, ArrRemediationService>();
+
+        // Phase 2: drains the pending-remediation queue ScanEngine enqueues
+        // into on a Fail/Error result. Registered the same way LibraryMonitor
+        // already is above -- gated entirely by PluginConfiguration.EnableArrForwarding
+        // at runtime, so it's a safe no-op hosted service on any install that
+        // hasn't opted in yet.
+        serviceCollection.AddHostedService<ArrRemediationWorker>();
     }
 }

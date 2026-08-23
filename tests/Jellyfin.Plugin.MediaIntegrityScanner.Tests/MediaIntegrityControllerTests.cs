@@ -729,6 +729,35 @@ public class MediaIntegrityControllerTests : IDisposable
         _arrRemediation.Verify(a => a.RemediateAsync(It.IsAny<BaseItem>(), null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // --- ResetArrRemediationCycle ---
+
+    [Fact]
+    public async Task ResetArrRemediationCycle_ItemNotBlocked_ReturnsNotFound()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        _arrRemediation.Setup(a => a.ResetCycleAsync(itemId, It.IsAny<CancellationToken>())).ReturnsAsync((ArrRemediationRecord?)null);
+
+        var controller = CreateController();
+        var result = await controller.ResetArrRemediationCycle(itemId);
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task ResetArrRemediationCycle_ItemBlocked_ReturnsTheResetMarkerRecord()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        var expected = new ArrRemediationRecord { Id = 9, ItemId = itemId, ActionTaken = "cycle_reset", CycleNumber = 1 };
+        _arrRemediation.Setup(a => a.ResetCycleAsync(itemId, It.IsAny<CancellationToken>())).ReturnsAsync(expected);
+
+        var controller = CreateController();
+        var result = await controller.ResetArrRemediationCycle(itemId);
+
+        var response = Assert.IsType<ArrRemediationRecord>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal("cycle_reset", response.ActionTaken);
+        Assert.Equal(1, response.CycleNumber);
+    }
+
     // --- CancelScan ---
 
     [Fact]

@@ -580,7 +580,21 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         await connection.OpenAsync().ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM arr_remediation WHERE item_id = @itemId AND status = 'success';";
+        // Only counts successes recorded after the most recent "cycle_reset"
+        // marker row (if any) for this item -- otherwise a reset action
+        // (ResetCycleAsync) would never actually lower the next
+        // CycleNumber, since history is append-only and old successes would
+        // still be there to count. A COALESCE against 0 falls back to
+        // counting everything when the item has never been reset.
+        command.CommandText = @"
+            SELECT COUNT(*) FROM arr_remediation
+            WHERE item_id = @itemId
+              AND status = 'success'
+              AND id > COALESCE(
+                  (SELECT MAX(id) FROM arr_remediation WHERE item_id = @itemId AND action_taken = 'cycle_reset'),
+                  0
+              );
+        ";
         command.Parameters.AddWithValue("@itemId", itemId);
 
         return Convert.ToInt32(
@@ -673,6 +687,139 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
             }
 
             return new PagedIssueResults { Items = items, TotalCount = totalCount };
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ArrRemediationRecord>> GetPendingRemediationsAsync()
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+            SELECT id, item_id, scan_record_id, file_path, arr_app, arr_server_name,
+                   match_method, arr_item_id, arr_file_id, action_taken, status,
+                   error_message, requested_at, completed_at, retry_count, cycle_number
+            FROM arr_remediation
+            WHERE status = 'pending'
+            ORDER BY requested_at ASC, id ASC;
+        ";
+
+        var items = new List<ArrRemediationRecord>();
+        await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            items.Add(ReadRemediationRecord(reader));
+        }
+
+        return items;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> HasPendingRemediationAsync(string itemId)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM arr_remediation WHERE item_id = @itemId AND status = 'pending';";
+        command.Parameters.AddWithValue("@itemId", itemId);
+
+        var count = Convert.ToInt32(
+            await command.ExecuteScalarAsync().ConfigureAwait(false),
+            System.Globalization.CultureInfo.InvariantCulture);
+        return count > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<ArrRemediationRecord?> GetLastCompletedRemediationForItemAsync(string itemId)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+            SELECT id, item_id, scan_record_id, file_path, arr_app, arr_server_name,
+                   match_method, arr_item_id, arr_file_id, action_taken, status,
+                   error_message, requested_at, completed_at, retry_count, cycle_number
+            FROM arr_remediation
+            WHERE item_id = @itemId AND status != 'pending'
+            ORDER BY completed_at DESC, id DESC
+            LIMIT 1;
+        ";
+        command.Parameters.AddWithValue("@itemId", itemId);
+
+        await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+        if (!await reader.ReadAsync().ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        return ReadRemediationRecord(reader);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> CountAutoRemediationsSinceAsync(DateTime sinceUtc)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+            SELECT COUNT(*) FROM arr_remediation
+            WHERE status IN ('success', 'failed') AND completed_at >= @sinceUtc;
+        ";
+        // ISO 8601 ('O' format, e.g. 2026-08-23T00:00:00.0000000Z) sorts
+        // lexicographically the same as chronologically, so a plain string
+        // comparison here is safe -- same trick already used elsewhere
+        // (requested_at/completed_at ordering) in this file.
+        command.Parameters.AddWithValue("@sinceUtc", sinceUtc.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+
+        return Convert.ToInt32(
+            await command.ExecuteScalarAsync().ConfigureAwait(false),
+            System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <inheritdoc />
+    public async Task UpdateRemediationAsync(ArrRemediationRecord record)
+    {
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync().ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = @"
+                UPDATE arr_remediation
+                SET arr_server_name = @arrServerName,
+                    match_method = @matchMethod,
+                    arr_item_id = @arrItemId,
+                    arr_file_id = @arrFileId,
+                    action_taken = @actionTaken,
+                    status = @status,
+                    error_message = @errorMessage,
+                    completed_at = @completedAt
+                WHERE id = @id;
+            ";
+
+            command.Parameters.AddWithValue("@arrServerName", (object?)record.ArrServerName ?? DBNull.Value);
+            command.Parameters.AddWithValue("@matchMethod", record.MatchMethod);
+            command.Parameters.AddWithValue("@arrItemId", (object?)record.ArrItemId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@arrFileId", (object?)record.ArrFileId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@actionTaken", (object?)record.ActionTaken ?? DBNull.Value);
+            command.Parameters.AddWithValue("@status", record.Status);
+            command.Parameters.AddWithValue("@errorMessage", (object?)record.ErrorMessage ?? DBNull.Value);
+            command.Parameters.AddWithValue("@completedAt", (object?)record.CompletedAt ?? DBNull.Value);
+            command.Parameters.AddWithValue("@id", record.Id);
+
+            await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+            LogRemediationUpdated(record.Id, record.Status);
+        }
+        finally
+        {
+            _writeLock.Release();
         }
     }
 
@@ -1181,6 +1328,9 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 
     [LoggerMessage(EventId = 11, Level = LogLevel.Information, Message = "Recorded {ArrApp} remediation for item {ItemId}: {Status}")]
     private partial void LogRemediationRecorded(string itemId, string arrApp, string status);
+
+    [LoggerMessage(EventId = 12, Level = LogLevel.Information, Message = "Updated remediation {Id}: {Status}")]
+    private partial void LogRemediationUpdated(long id, string status);
 }
 
 /// <summary>

@@ -364,6 +364,28 @@ public partial class MediaIntegrityController : ControllerBase
     }
 
     /// <summary>
+    /// Clears the Phase 2 cycle-limit trip-wire for an item that's currently
+    /// <c>Blocked</c> (<c>ARR-INTEGRATION-PROPOSAL.md</c> section 5.1's
+    /// "Reset cycle count" recovery action), letting the next scan failure
+    /// enqueue and auto-forward it again normally.
+    /// </summary>
+    /// <param name="itemId">The Jellyfin item ID to reset.</param>
+    /// <returns>The new reset-marker record, or 404 if the item isn't currently blocked.</returns>
+    [HttpPost("ArrRemediation/{itemId}/ResetCycle")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<Data.Models.ArrRemediationRecord>> ResetArrRemediationCycle(string itemId)
+    {
+        var record = await _arrRemediation.ResetCycleAsync(itemId, HttpContext.RequestAborted).ConfigureAwait(false);
+        if (record is null)
+        {
+            return NotFound();
+        }
+
+        return Ok(record);
+    }
+
+    /// <summary>
     /// Export every result matching the given status filter (not just one page)
     /// as a downloadable CSV or TSV file.
     /// </summary>
