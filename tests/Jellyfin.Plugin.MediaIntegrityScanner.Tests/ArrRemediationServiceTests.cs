@@ -72,7 +72,7 @@ public class ArrRemediationServiceTests : IDisposable
     public void Dispose() => TestPluginContext.Clear();
 
     private ArrRemediationService CreateService() =>
-        new(_clientFactory.Object, _matcher.Object, _db.Object, _library.Object, NullLogger<ArrRemediationService>.Instance);
+        new(_clientFactory.Object, _matcher.Object, new ArrServerSelector(), _db.Object, _library.Object, NullLogger<ArrRemediationService>.Instance);
 
     private static Movie MakeMovie() => new() { Id = Guid.NewGuid(), Path = "/movies/Sintel/Sintel.mkv" };
 
@@ -297,6 +297,34 @@ public class ArrRemediationServiceTests : IDisposable
         _sonarr.Verify(s => s.TriggerEpisodeSearchAsync(7958, It.IsAny<CancellationToken>()), Times.Once);
         Assert.Equal("success", result.Status);
         Assert.Equal("sonarr", result.ArrApp);
+    }
+
+    // --- Phase 3: multi-server routing ---
+
+    [Fact]
+    public async Task RemediateAsync_MultipleRadarrServersConfigured_RoutesToTheOneMatchingTheMoviesPath()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            RadarrServers = new List<ArrServerConfig>
+            {
+                new() { Name = "main", Url = "http://radarr-main", ApiKey = "key", LibraryPathPrefixes = new List<string> { "/data/movies" } },
+                new() { Name = "disney", Url = "http://radarr-disney", ApiKey = "key", LibraryPathPrefixes = new List<string> { "/data/disney-movies" } }
+            }
+        });
+        var disneyRadarr = new Mock<IRadarrClient>();
+        _clientFactory.Setup(f => f.CreateRadarrClient(It.Is<ArrServerConfig>(s => s.Name == "disney"))).Returns(disneyRadarr.Object);
+        _clientFactory.Setup(f => f.CreateRadarrClient(It.Is<ArrServerConfig>(s => s.Name == "main"))).Returns(_radarr.Object);
+
+        var movie = new Movie { Id = Guid.NewGuid(), Path = "/data/disney-movies/Frozen/Frozen.mkv" };
+        _matcher.Setup(m => m.MatchMovieAsync(movie, disneyRadarr.Object, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ArrMatchResult.Unmatched);
+
+        var service = CreateService();
+        var result = await service.RemediateAsync(movie, scanRecordId: null, CancellationToken.None);
+
+        Assert.Equal("disney", result.ArrServerName);
+        _radarr.VerifyNoOtherCalls();
     }
 
     // --- Phase 2: EnqueueIfEligibleAsync ---

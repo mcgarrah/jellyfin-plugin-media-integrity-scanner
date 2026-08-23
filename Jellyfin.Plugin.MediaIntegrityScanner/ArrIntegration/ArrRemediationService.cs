@@ -15,6 +15,7 @@
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
@@ -36,6 +37,7 @@ public partial class ArrRemediationService : IArrRemediationService
 {
     private readonly IArrClientFactory _clientFactory;
     private readonly IArrItemMatcher _matcher;
+    private readonly IArrServerSelector _serverSelector;
     private readonly IDatabaseManager _db;
     private readonly ILibraryManager _library;
     private readonly ILogger<ArrRemediationService> _logger;
@@ -45,18 +47,21 @@ public partial class ArrRemediationService : IArrRemediationService
     /// </summary>
     /// <param name="clientFactory">Builds Radarr/Sonarr clients for a configured server.</param>
     /// <param name="matcher">Matches a Jellyfin item to its Radarr/Sonarr counterpart.</param>
+    /// <param name="serverSelector">Picks which configured server (Phase 3 multi-server support) an item routes to.</param>
     /// <param name="db">Database manager, for persisting the remediation outcome.</param>
     /// <param name="library">Library manager, for resolving an episode's parent series.</param>
     /// <param name="logger">Logger instance.</param>
     public ArrRemediationService(
         IArrClientFactory clientFactory,
         IArrItemMatcher matcher,
+        IArrServerSelector serverSelector,
         IDatabaseManager db,
         ILibraryManager library,
         ILogger<ArrRemediationService> logger)
     {
         _clientFactory = clientFactory;
         _matcher = matcher;
+        _serverSelector = serverSelector;
         _db = db;
         _library = library;
         _logger = logger;
@@ -190,7 +195,7 @@ public partial class ArrRemediationService : IArrRemediationService
 
     private async Task<ArrRemediationRecord> RemediateMovieAsync(Movie movie, long? scanRecordId, string requestedAt, PluginConfiguration? config, bool dryRun, ArrRemediationRecord? existing, CancellationToken cancellationToken)
     {
-        var serverConfig = config?.RadarrServers?.FirstOrDefault();
+        var serverConfig = _serverSelector.SelectForPath(config?.RadarrServers ?? new List<ArrServerConfig>(), movie.Path);
         if (serverConfig is null)
         {
             LogNoServerConfigured("radarr", movie.Id);
@@ -247,7 +252,7 @@ public partial class ArrRemediationService : IArrRemediationService
 
     private async Task<ArrRemediationRecord> RemediateEpisodeAsync(Episode episode, long? scanRecordId, string requestedAt, PluginConfiguration? config, bool dryRun, ArrRemediationRecord? existing, CancellationToken cancellationToken)
     {
-        var serverConfig = config?.SonarrServers?.FirstOrDefault();
+        var serverConfig = _serverSelector.SelectForPath(config?.SonarrServers ?? new List<ArrServerConfig>(), episode.Path);
         if (serverConfig is null)
         {
             LogNoServerConfigured("sonarr", episode.Id);

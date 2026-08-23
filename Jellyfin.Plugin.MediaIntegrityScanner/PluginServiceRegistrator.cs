@@ -56,6 +56,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         // plugin classes without this plugin ever registering them itself.
         serviceCollection.AddSingleton<IArrClientFactory, ArrClientFactory>();
         serviceCollection.AddSingleton<IArrItemMatcher, ArrItemMatcher>();
+        serviceCollection.AddSingleton<IArrServerSelector, ArrServerSelector>();
         serviceCollection.AddSingleton<IArrRemediationService, ArrRemediationService>();
 
         // Phase 2: drains the pending-remediation queue ScanEngine enqueues
