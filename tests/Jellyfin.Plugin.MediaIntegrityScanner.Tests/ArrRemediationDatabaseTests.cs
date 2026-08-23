@@ -165,7 +165,7 @@ public class ArrRemediationDatabaseTests : IDisposable
         await _db.SaveResultAsync(MakeFailedScan(errorId, status: 3)); // Error
         await _db.SaveResultAsync(MakeFailedScan(pendingId, status: 0)); // Pending
 
-        var result = await _db.GetIssuesAsync(status: null, phase: null, page: 1, pageSize: 50);
+        var result = await _db.GetIssuesAsync(status: null, phase: null, arrAction: null, page: 1, pageSize: 50);
 
         Assert.Equal(2, result.TotalCount);
         Assert.Contains(result.Items, i => i.ItemId == failId);
@@ -182,11 +182,11 @@ public class ArrRemediationDatabaseTests : IDisposable
         await _db.SaveResultAsync(MakeFailedScan(failHeaderId, status: 2, phase: 1));
         await _db.SaveResultAsync(MakeFailedScan(errorDeepId, status: 3, phase: 2));
 
-        var failOnly = await _db.GetIssuesAsync(status: 2, phase: null, page: 1, pageSize: 50);
+        var failOnly = await _db.GetIssuesAsync(status: 2, phase: null, arrAction: null, page: 1, pageSize: 50);
         Assert.Equal(1, failOnly.TotalCount);
         Assert.Equal(failHeaderId, failOnly.Items[0].ItemId);
 
-        var deepOnly = await _db.GetIssuesAsync(status: null, phase: 2, page: 1, pageSize: 50);
+        var deepOnly = await _db.GetIssuesAsync(status: null, phase: 2, arrAction: null, page: 1, pageSize: 50);
         Assert.Equal(1, deepOnly.TotalCount);
         Assert.Equal(errorDeepId, deepOnly.Items[0].ItemId);
     }
@@ -197,7 +197,7 @@ public class ArrRemediationDatabaseTests : IDisposable
         var itemId = Guid.NewGuid().ToString();
         await _db.SaveResultAsync(MakeFailedScan(itemId, status: 2));
 
-        var result = await _db.GetIssuesAsync(status: null, phase: null, page: 1, pageSize: 50);
+        var result = await _db.GetIssuesAsync(status: null, phase: null, arrAction: null, page: 1, pageSize: 50);
 
         var row = Assert.Single(result.Items);
         Assert.Null(row.Remediation);
@@ -211,7 +211,7 @@ public class ArrRemediationDatabaseTests : IDisposable
         await _db.RecordRemediationAsync(MakeRemediation(itemId, status: "failed", requestedAt: "2026-08-01T00:00:00.0000000Z"));
         await _db.RecordRemediationAsync(MakeRemediation(itemId, status: "success", requestedAt: "2026-08-20T00:00:00.0000000Z"));
 
-        var result = await _db.GetIssuesAsync(status: null, phase: null, page: 1, pageSize: 50);
+        var result = await _db.GetIssuesAsync(status: null, phase: null, arrAction: null, page: 1, pageSize: 50);
 
         var row = Assert.Single(result.Items);
         Assert.NotNull(row.Remediation);
@@ -226,8 +226,8 @@ public class ArrRemediationDatabaseTests : IDisposable
             await _db.SaveResultAsync(MakeFailedScan(Guid.NewGuid().ToString(), status: 2, timestamp: $"2026-08-{10 + i:00}T00:00:00.0000000Z"));
         }
 
-        var page1 = await _db.GetIssuesAsync(status: null, phase: null, page: 1, pageSize: 2);
-        var page2 = await _db.GetIssuesAsync(status: null, phase: null, page: 2, pageSize: 2);
+        var page1 = await _db.GetIssuesAsync(status: null, phase: null, arrAction: null, page: 1, pageSize: 2);
+        var page2 = await _db.GetIssuesAsync(status: null, phase: null, arrAction: null, page: 2, pageSize: 2);
 
         Assert.Equal(5, page1.TotalCount);
         Assert.Equal(2, page1.Items.Count);
@@ -337,6 +337,73 @@ public class ArrRemediationDatabaseTests : IDisposable
         Assert.Equal(7, updated.ArrItemId);
         Assert.Equal(8, updated.ArrFileId);
         Assert.NotNull(updated.CompletedAt);
+    }
+
+    /// <summary>
+    /// Sets up two Fail rows: one whose (optional) remediation matches the
+    /// given bucket, one whose remediation deliberately doesn't (a fixed
+    /// "success"/"deleted_and_blocklisted" distractor, or -- when testing
+    /// the "sent" bucket itself, which that distractor would also match --
+    /// a "failed" one instead). Asserts the filter returns only the matching row.
+    /// </summary>
+    private async Task AssertArrActionBucketMatchesOnly(string bucket, string? matchStatus, string? matchAction)
+    {
+        var matchingId = Guid.NewGuid().ToString();
+        var nonMatchingId = Guid.NewGuid().ToString();
+        await _db.SaveResultAsync(MakeFailedScan(matchingId, status: 2));
+        await _db.SaveResultAsync(MakeFailedScan(nonMatchingId, status: 2));
+
+        if (matchStatus is not null)
+        {
+            await _db.RecordRemediationAsync(MakeRemediation(matchingId, status: matchStatus, actionTaken: matchAction!));
+        }
+
+        // The non-matching row always gets *some* remediation -- this is what
+        // disqualifies it from "not_sent" as well as every other bucket.
+        var distractorStatus = bucket == "sent" ? "failed" : "success";
+        await _db.RecordRemediationAsync(MakeRemediation(nonMatchingId, status: distractorStatus));
+
+        var result = await _db.GetIssuesAsync(status: null, phase: null, arrAction: bucket, page: 1, pageSize: 50);
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal(matchingId, row.ItemId);
+    }
+
+    [Fact]
+    public Task GetIssuesAsync_ArrActionFilter_NotSent() => AssertArrActionBucketMatchesOnly("not_sent", null, null);
+
+    [Fact]
+    public Task GetIssuesAsync_ArrActionFilter_Pending() => AssertArrActionBucketMatchesOnly("pending", "pending", "pending");
+
+    [Fact]
+    public Task GetIssuesAsync_ArrActionFilter_Sent() => AssertArrActionBucketMatchesOnly("sent", "success", "deleted_and_searched");
+
+    [Fact]
+    public Task GetIssuesAsync_ArrActionFilter_Unmatched() => AssertArrActionBucketMatchesOnly("unmatched", "skipped", "unmatched");
+
+    [Fact]
+    public Task GetIssuesAsync_ArrActionFilter_NoReplacement() => AssertArrActionBucketMatchesOnly("no_replacement", "skipped", "no_replacement_available");
+
+    [Fact]
+    public Task GetIssuesAsync_ArrActionFilter_Blocked() => AssertArrActionBucketMatchesOnly("blocked", "blocked", "skipped_cycle_limit");
+
+    [Fact]
+    public Task GetIssuesAsync_ArrActionFilter_Failed() => AssertArrActionBucketMatchesOnly("failed", "failed", "deleted_and_searched");
+
+    [Fact]
+    public Task GetIssuesAsync_ArrActionFilter_DryRun() => AssertArrActionBucketMatchesOnly("dry_run", "skipped", "would_delete_and_search");
+
+    [Fact]
+    public async Task GetAllIssuesAsync_ReturnsEveryMatchingRow_NotJustOnePage()
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            await _db.SaveResultAsync(MakeFailedScan(Guid.NewGuid().ToString(), status: 2, timestamp: $"2026-08-{10 + i:00}T00:00:00.0000000Z"));
+        }
+
+        var all = await _db.GetAllIssuesAsync(status: null, phase: null, arrAction: null);
+
+        Assert.Equal(5, all.Count);
     }
 
     [Fact]

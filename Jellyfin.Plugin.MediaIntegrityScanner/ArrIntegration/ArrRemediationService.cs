@@ -22,12 +22,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration.Radarr;
 using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration.Sonarr;
+using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Activity;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
@@ -40,6 +42,7 @@ public partial class ArrRemediationService : IArrRemediationService
     private readonly IArrServerSelector _serverSelector;
     private readonly IDatabaseManager _db;
     private readonly ILibraryManager _library;
+    private readonly IActivityManager _activityManager;
     private readonly ILogger<ArrRemediationService> _logger;
 
     /// <summary>
@@ -50,6 +53,13 @@ public partial class ArrRemediationService : IArrRemediationService
     /// <param name="serverSelector">Picks which configured server (Phase 3 multi-server support) an item routes to.</param>
     /// <param name="db">Database manager, for persisting the remediation outcome.</param>
     /// <param name="library">Library manager, for resolving an episode's parent series.</param>
+    /// <param name="activityManager">
+    /// Jellyfin's own Activity Log (Dashboard &gt; Activity) -- the real, currently-existing
+    /// admin-alert surface a plugin can push into (verified against the real 10.11 server
+    /// source; there is no separate "Notifications" push mechanism in current Jellyfin, despite
+    /// that being the original, unverified assumption in <c>ARR-INTEGRATION-PROPOSAL.md</c>
+    /// section 5.1). Used for the cycle-limit trip-wire alert (Phase 4).
+    /// </param>
     /// <param name="logger">Logger instance.</param>
     public ArrRemediationService(
         IArrClientFactory clientFactory,
@@ -57,6 +67,7 @@ public partial class ArrRemediationService : IArrRemediationService
         IArrServerSelector serverSelector,
         IDatabaseManager db,
         ILibraryManager library,
+        IActivityManager activityManager,
         ILogger<ArrRemediationService> logger)
     {
         _clientFactory = clientFactory;
@@ -64,6 +75,7 @@ public partial class ArrRemediationService : IArrRemediationService
         _serverSelector = serverSelector;
         _db = db;
         _library = library;
+        _activityManager = activityManager;
         _logger = logger;
     }
 
@@ -142,6 +154,7 @@ public partial class ArrRemediationService : IArrRemediationService
         if (pending.CycleNumber > maxCycles)
         {
             LogCycleLimitReached(pending.ItemId, pending.CycleNumber, maxCycles);
+            await PushBlockedActivityLogAsync(pending).ConfigureAwait(false);
             return await MarkAsync(pending, "blocked", "skipped_cycle_limit", null, cancellationToken).ConfigureAwait(false);
         }
 
@@ -181,6 +194,34 @@ public partial class ArrRemediationService : IArrRemediationService
         record.Id = await _db.RecordRemediationAsync(record).ConfigureAwait(false);
         LogCycleReset(itemId);
         return record;
+    }
+
+    /// <summary>
+    /// Pushes a warning-level entry into Jellyfin's own Activity Log
+    /// (Dashboard &gt; Activity) when an item hits the cycle-limit trip-wire --
+    /// the real, currently-existing admin-alert surface, alongside the Media
+    /// Issues page's "Needs Manual Review" banner (§5.1). Never lets a
+    /// failure here break the remediation flow itself.
+    /// </summary>
+    private async Task PushBlockedActivityLogAsync(ArrRemediationRecord pending)
+    {
+        try
+        {
+            var fileName = System.IO.Path.GetFileName(pending.FilePath);
+            await _activityManager.CreateAsync(new ActivityLog(
+                $"\"{fileName}\" needs manual review",
+                "MediaIntegrityScannerBlocked",
+                Guid.Empty)
+            {
+                ShortOverview = $"Blocked after {pending.CycleNumber} failed {pending.ArrApp} remediation cycles -- reset from the Media Issues page.",
+                LogSeverity = LogLevel.Warning,
+                ItemId = pending.ItemId
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LogActivityLogPushFailed(ex, pending.ItemId);
+        }
     }
 
     private async Task<ArrRemediationRecord> RemediateCoreAsync(BaseItem item, long? scanRecordId, string requestedAt, PluginConfiguration? config, bool dryRun, ArrRemediationRecord? existing, CancellationToken cancellationToken)
@@ -442,4 +483,7 @@ public partial class ArrRemediationService : IArrRemediationService
 
     [LoggerMessage(EventId = 8, Level = LogLevel.Information, Message = "Cycle count reset for item {ItemId}")]
     private partial void LogCycleReset(string itemId);
+
+    [LoggerMessage(EventId = 9, Level = LogLevel.Warning, Message = "Failed to push Activity Log entry for blocked item {ItemId}")]
+    private partial void LogActivityLogPushFailed(Exception ex, string itemId);
 }

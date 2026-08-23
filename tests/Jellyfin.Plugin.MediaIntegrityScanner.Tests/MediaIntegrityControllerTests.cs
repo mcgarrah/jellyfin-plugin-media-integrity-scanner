@@ -664,6 +664,89 @@ public class MediaIntegrityControllerTests : IDisposable
         Assert.Equal(1, response.TotalCount);
     }
 
+    [Fact]
+    public async Task GetIssues_ArrActionFilter_ExcludesNonMatchingRows()
+    {
+        var sentId = Guid.NewGuid().ToString();
+        var unsentId = Guid.NewGuid().ToString();
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord { ItemId = sentId, FilePath = "/a.mkv", ScanPhase = 1, ScanStatus = (int)ScanStatus.Fail, ScanTimestamp = DateTime.UtcNow.ToString("O") });
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord { ItemId = unsentId, FilePath = "/b.mkv", ScanPhase = 1, ScanStatus = (int)ScanStatus.Fail, ScanTimestamp = DateTime.UtcNow.ToString("O") });
+        await _dbFactory.Database.RecordRemediationAsync(new ArrRemediationRecord
+        {
+            ItemId = sentId,
+            FilePath = "/a.mkv",
+            ArrApp = "radarr",
+            MatchMethod = "provider_id",
+            Status = "success",
+            ActionTaken = "deleted_and_searched",
+            RequestedAt = DateTime.UtcNow.ToString("O")
+        });
+
+        var controller = CreateController();
+        var result = await controller.GetIssues(arrAction: "sent");
+
+        var response = Assert.IsType<PagedIssueResults>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        var row = Assert.Single(response.Items);
+        Assert.Equal(sentId, row.ItemId);
+    }
+
+    // --- ExportIssues ---
+
+    [Fact]
+    public async Task ExportIssues_Csv_IncludesArrColumns()
+    {
+        var itemId = Guid.NewGuid().ToString();
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord { ItemId = itemId, FilePath = "/media/bad.mkv", ScanPhase = 1, ScanStatus = (int)ScanStatus.Fail, ScanTimestamp = "2026-01-01T00:00:00.0000000Z", ErrorOutput = "corrupt" });
+        await _dbFactory.Database.RecordRemediationAsync(new ArrRemediationRecord
+        {
+            ItemId = itemId,
+            FilePath = "/media/bad.mkv",
+            ArrApp = "radarr",
+            ArrServerName = "Main",
+            MatchMethod = "provider_id",
+            Status = "success",
+            ActionTaken = "deleted_and_searched",
+            RequestedAt = "2026-01-01T00:00:00.0000000Z",
+            CycleNumber = 1
+        });
+
+        var controller = CreateController();
+        var result = await controller.ExportIssues();
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        var lines = csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Equal("FilePath,Status,Phase,Timestamp,Error,ArrApp,ArrServerName,MatchMethod,ArrActionTaken,ArrStatus,CycleNumber", lines[0]);
+        Assert.Contains(lines, l => l.Contains("radarr", StringComparison.Ordinal) && l.Contains("Main", StringComparison.Ordinal) && l.Contains("deleted_and_searched", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExportIssues_Csv_ContentTypeAndFileName()
+    {
+        var controller = CreateController();
+        var result = await controller.ExportIssues();
+
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("text/csv", file.ContentType);
+        Assert.StartsWith("media-issues-", file.FileDownloadName, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportIssues_NeverIncludesPassOrPendingRows()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord { ItemId = Guid.NewGuid().ToString(), FilePath = "/good.mkv", ScanPhase = 1, ScanStatus = (int)ScanStatus.Pass, ScanTimestamp = DateTime.UtcNow.ToString("O") });
+
+        var controller = CreateController();
+        var result = await controller.ExportIssues();
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var csv = System.Text.Encoding.UTF8.GetString(file.FileContents);
+        var lines = csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Single(lines); // header row only
+    }
+
     // --- TriggerArrRemediation ---
 
     [Fact]

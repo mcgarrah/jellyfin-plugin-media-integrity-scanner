@@ -153,10 +153,15 @@ public interface IDatabaseManager
     /// </summary>
     /// <param name="status">Optional scan-status filter (2 = fail, 3 = error). Null means both.</param>
     /// <param name="phase">Optional scan-phase filter (1 = header, 2 = full decode).</param>
+    /// <param name="arrAction">
+    /// Optional Arr Action bucket filter (<c>not_sent</c>, <c>pending</c>, <c>sent</c>,
+    /// <c>unmatched</c>, <c>no_replacement</c>, <c>blocked</c>, <c>failed</c>, <c>dry_run</c> --
+    /// matching <c>integrity_issues.html</c>'s <c>arrActionBucket()</c> exactly). Null/unrecognized means no filter.
+    /// </param>
     /// <param name="page">Page number (1-based).</param>
     /// <param name="pageSize">Results per page.</param>
     /// <returns>Paginated issue rows.</returns>
-    Task<PagedIssueResults> GetIssuesAsync(int? status, int? phase, int page, int pageSize);
+    Task<PagedIssueResults> GetIssuesAsync(int? status, int? phase, string? arrAction, int page, int pageSize);
 
     /// <summary>
     /// Gets every remediation row still in the <c>pending</c> state --
