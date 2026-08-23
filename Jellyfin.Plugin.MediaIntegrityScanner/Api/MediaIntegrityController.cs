@@ -24,6 +24,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 using Jellyfin.Plugin.MediaIntegrityScanner.Updates;
@@ -51,6 +52,7 @@ public partial class MediaIntegrityController : ControllerBase
     private readonly IUpdateChecker _updateChecker;
     private readonly FfmpegWrapper _ffmpeg;
     private readonly IServerApplicationHost _appHost;
+    private readonly IArrRemediationService _arrRemediation;
     private readonly ILogger<MediaIntegrityController> _logger;
 
     /// <summary>
@@ -62,6 +64,7 @@ public partial class MediaIntegrityController : ControllerBase
     /// <param name="updateChecker">Plugin update checker.</param>
     /// <param name="ffmpeg">FFmpeg wrapper, for manual path re-resolution.</param>
     /// <param name="appHost">Server application host, for the running Jellyfin server version.</param>
+    /// <param name="arrRemediation">Forwards bad files to Radarr/Sonarr for deletion + replacement (see ARR-INTEGRATION-PROPOSAL.md).</param>
     /// <param name="logger">Logger instance.</param>
     public MediaIntegrityController(
         SqliteDatabaseManager db,
@@ -70,6 +73,7 @@ public partial class MediaIntegrityController : ControllerBase
         IUpdateChecker updateChecker,
         FfmpegWrapper ffmpeg,
         IServerApplicationHost appHost,
+        IArrRemediationService arrRemediation,
         ILogger<MediaIntegrityController> logger)
     {
         _db = db;
@@ -78,6 +82,7 @@ public partial class MediaIntegrityController : ControllerBase
         _updateChecker = updateChecker;
         _ffmpeg = ffmpeg;
         _appHost = appHost;
+        _arrRemediation = arrRemediation;
         _logger = logger;
     }
 
@@ -263,6 +268,99 @@ public partial class MediaIntegrityController : ControllerBase
         }
 
         return Ok(detail);
+    }
+
+    /// <summary>
+    /// Get a paginated list of every current Fail/Error scan result, each
+    /// joined with its most recent Radarr/Sonarr remediation attempt if one
+    /// exists -- backs the dedicated "Media Issues" page (see
+    /// ARR-INTEGRATION-PROPOSAL.md section 8), deliberately not the
+    /// general-purpose <see cref="GetResults"/> endpoint above.
+    /// </summary>
+    /// <param name="status">Optional scan-status filter (2=fail, 3=error). Null means both.</param>
+    /// <param name="phase">Optional scan-phase filter (1=header, 2=full decode).</param>
+    /// <param name="page">Page number (1-based).</param>
+    /// <param name="pageSize">Results per page.</param>
+    /// <returns>Paginated issue rows.</returns>
+    [HttpGet("Issues")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedIssueResults>> GetIssues(
+        [FromQuery] int? status = null,
+        [FromQuery] int? phase = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        if (page < 1)
+        {
+            page = 1;
+        }
+
+        if (pageSize < 1 || pageSize > 200)
+        {
+            pageSize = 50;
+        }
+
+        var results = await _db.GetIssuesAsync(status, phase, page, pageSize).ConfigureAwait(false);
+        return Ok(results);
+    }
+
+    /// <summary>
+    /// Manually forwards a single bad file to Radarr/Sonarr for deletion +
+    /// replacement, bypassing whatever automatic-forwarding gating exists
+    /// (Phase 1 has none yet -- see ARR-INTEGRATION-PROPOSAL.md section 8.4).
+    /// </summary>
+    /// <param name="itemId">The Jellyfin item ID to remediate.</param>
+    /// <returns>The completed remediation record.</returns>
+    [HttpPost("ArrRemediation/{itemId}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<Data.Models.ArrRemediationRecord>> TriggerArrRemediation(string itemId)
+    {
+        if (!Guid.TryParse(itemId, out var guid))
+        {
+            return NotFound();
+        }
+
+        var item = _library.GetItemById(guid);
+        if (item is null)
+        {
+            return NotFound();
+        }
+
+        var record = await _arrRemediation.RemediateAsync(item, scanRecordId: null, HttpContext.RequestAborted).ConfigureAwait(false);
+        return Ok(record);
+    }
+
+    /// <summary>
+    /// Manually forwards several bad files to Radarr/Sonarr at once -- the
+    /// "Send N Selected" bulk action on the Media Issues page (section 8.3).
+    /// Each item is remediated independently; one item's failure doesn't
+    /// stop the rest.
+    /// </summary>
+    /// <param name="request">The Jellyfin item IDs to remediate.</param>
+    /// <returns>The completed remediation record for each item that was found.</returns>
+    [HttpPost("ArrRemediation/Bulk")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<Data.Models.ArrRemediationRecord>>> TriggerArrRemediationBulk([FromBody] ArrRemediationBulkRequest request)
+    {
+        var results = new List<Data.Models.ArrRemediationRecord>();
+        foreach (var itemId in request.ItemIds)
+        {
+            if (!Guid.TryParse(itemId, out var guid))
+            {
+                continue;
+            }
+
+            var item = _library.GetItemById(guid);
+            if (item is null)
+            {
+                continue;
+            }
+
+            results.Add(await _arrRemediation.RemediateAsync(item, scanRecordId: null, HttpContext.RequestAborted).ConfigureAwait(false));
+        }
+
+        return Ok(results);
     }
 
     /// <summary>
@@ -713,6 +811,16 @@ public class RestoreBackupRequest
 {
     /// <summary>Gets or sets the backup file name to restore, as returned by <c>GET Database/Backups</c>.</summary>
     public string FileName { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Request model for the "Send N Selected" bulk Arr-remediation action on
+/// the Media Issues page.
+/// </summary>
+public class ArrRemediationBulkRequest
+{
+    /// <summary>Gets or sets the Jellyfin item IDs to remediate.</summary>
+    public List<string> ItemIds { get; set; } = new();
 }
 
 /// <summary>

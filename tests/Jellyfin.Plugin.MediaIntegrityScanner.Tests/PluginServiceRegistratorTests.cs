@@ -17,6 +17,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.EventHandlers;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
@@ -102,6 +103,9 @@ public class PluginServiceRegistratorTests : IDisposable
     [InlineData(typeof(IScanEngine))]
     [InlineData(typeof(SqliteDatabaseManager))]
     [InlineData(typeof(IDatabaseManager))]
+    [InlineData(typeof(IArrClientFactory))]
+    [InlineData(typeof(IArrItemMatcher))]
+    [InlineData(typeof(IArrRemediationService))]
     public void RegisterServices_RegistersEachServiceExactlyOnce(Type serviceType)
     {
         var services = CreateRegisteredServices();
@@ -117,6 +121,9 @@ public class PluginServiceRegistratorTests : IDisposable
     [InlineData(typeof(IScanEngine))]
     [InlineData(typeof(SqliteDatabaseManager))]
     [InlineData(typeof(IDatabaseManager))]
+    [InlineData(typeof(IArrClientFactory))]
+    [InlineData(typeof(IArrItemMatcher))]
+    [InlineData(typeof(IArrRemediationService))]
     public void RegisterServices_RegistersAsSingletonLifetime(Type serviceType)
     {
         var services = CreateRegisteredServices();

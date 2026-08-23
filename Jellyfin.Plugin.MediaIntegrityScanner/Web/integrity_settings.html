@@ -26,6 +26,7 @@
                 margin: 1.5em 0;
             }
             .settings-section h2 { margin-top: 0; font-size: 1.1em; opacity: 0.85; }
+            .settings-section h3 { font-size: 1em; opacity: 0.75; margin: 1.4em 0 0.6em; }
             .field-row { margin: 1em 0; }
             .field-row label { display: block; margin-bottom: 0.3em; }
             .field-row .field-hint { opacity: 0.6; font-size: 0.85em; margin-top: 0.2em; }
@@ -255,6 +256,55 @@
                     </div>
                 </div>
 
+                <div class="settings-section">
+                    <h2>Radarr / Sonarr Integration</h2>
+                    <div class="field-hint">
+                        Lets the Media Issues page manually forward a bad movie or episode
+                        file to Radarr/Sonarr for deletion + re-download (Phase 1: manual
+                        "Send" action only -- no automatic forwarding yet). Leave a
+                        server's URL blank to leave that app's matching/forwarding
+                        unavailable.
+                    </div>
+                    <h3>Radarr</h3>
+                    <div class="field-row">
+                        <label for="RadarrName">Server Name</label>
+                        <input type="text" id="RadarrName" placeholder="Main">
+                    </div>
+                    <div class="field-row">
+                        <label for="RadarrUrl">URL</label>
+                        <input type="text" id="RadarrUrl" placeholder="http://192.168.86.52:7878">
+                    </div>
+                    <div class="field-row">
+                        <label for="RadarrApiKey">API Key</label>
+                        <input type="text" id="RadarrApiKey">
+                        <div class="field-hint">Found in Radarr under Settings &gt; General &gt; Security.</div>
+                    </div>
+                    <h3>Sonarr</h3>
+                    <div class="field-row">
+                        <label for="SonarrName">Server Name</label>
+                        <input type="text" id="SonarrName" placeholder="Main">
+                    </div>
+                    <div class="field-row">
+                        <label for="SonarrUrl">URL</label>
+                        <input type="text" id="SonarrUrl" placeholder="http://192.168.86.52:8989">
+                    </div>
+                    <div class="field-row">
+                        <label for="SonarrApiKey">API Key</label>
+                        <input type="text" id="SonarrApiKey">
+                        <div class="field-hint">Found in Sonarr under Settings &gt; General &gt; Security.</div>
+                    </div>
+                    <div class="field-row">
+                        <label for="HistoryLookbackDays">History Lookback (days)</label>
+                        <input type="number" id="HistoryLookbackDays" min="1" max="365" step="1" required>
+                        <div class="field-hint">
+                            How far back to look for the "grabbed" download record to blocklist
+                            alongside a delete. A grab older than this is assumed already-superseded
+                            -- the file is still deleted and re-searched, just without blocklisting
+                            a stale release.
+                        </div>
+                    </div>
+                </div>
+
                 <button type="submit" class="btn btn-primary" id="btn-save">Save</button>
             </form>
         </div>
@@ -329,6 +379,15 @@
                     document.getElementById('AutoRestartAfterUpdate').checked = !!config.AutoRestartAfterUpdate;
                     document.getElementById('EnableAutoDatabaseMaintenance').checked = config.EnableAutoDatabaseMaintenance !== false;
                     document.getElementById('EnableAutoReconciliation').checked = config.EnableAutoReconciliation !== false;
+                    var radarr = (config.RadarrServers || [])[0] || {};
+                    document.getElementById('RadarrName').value = radarr.Name || '';
+                    document.getElementById('RadarrUrl').value = radarr.Url || '';
+                    document.getElementById('RadarrApiKey').value = radarr.ApiKey || '';
+                    var sonarr = (config.SonarrServers || [])[0] || {};
+                    document.getElementById('SonarrName').value = sonarr.Name || '';
+                    document.getElementById('SonarrUrl').value = sonarr.Url || '';
+                    document.getElementById('SonarrApiKey').value = sonarr.ApiKey || '';
+                    document.getElementById('HistoryLookbackDays').value = config.HistoryLookbackDays || 30;
                     hideMessages();
                 }).catch(function (err) {
                     showError('Failed to load configuration: ' + err.message);
@@ -364,6 +423,26 @@
                     config.AutoRestartAfterUpdate = document.getElementById('AutoRestartAfterUpdate').checked;
                     config.EnableAutoDatabaseMaintenance = document.getElementById('EnableAutoDatabaseMaintenance').checked;
                     config.EnableAutoReconciliation = document.getElementById('EnableAutoReconciliation').checked;
+
+                    var existingRadarr = (config.RadarrServers || [])[0] || {};
+                    var radarrUrl = document.getElementById('RadarrUrl').value.trim();
+                    config.RadarrServers = radarrUrl ? [{
+                        Name: document.getElementById('RadarrName').value.trim() || 'Main',
+                        Url: radarrUrl,
+                        ApiKey: document.getElementById('RadarrApiKey').value.trim(),
+                        LibraryPathPrefixes: existingRadarr.LibraryPathPrefixes || []
+                    }] : [];
+
+                    var existingSonarr = (config.SonarrServers || [])[0] || {};
+                    var sonarrUrl = document.getElementById('SonarrUrl').value.trim();
+                    config.SonarrServers = sonarrUrl ? [{
+                        Name: document.getElementById('SonarrName').value.trim() || 'Main',
+                        Url: sonarrUrl,
+                        ApiKey: document.getElementById('SonarrApiKey').value.trim(),
+                        LibraryPathPrefixes: existingSonarr.LibraryPathPrefixes || []
+                    }] : [];
+
+                    config.HistoryLookbackDays = parseInt(document.getElementById('HistoryLookbackDays').value, 10) || 30;
 
                     return ApiClient.updatePluginConfiguration(PLUGIN_ID, config);
                 }).then(function (result) {
