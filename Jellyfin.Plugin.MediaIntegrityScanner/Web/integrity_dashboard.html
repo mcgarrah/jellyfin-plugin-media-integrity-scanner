@@ -148,13 +148,13 @@
             <h1>Media Integrity Scanner</h1>
             <div class="version-line">
                 Version <span id="current-version">&mdash;</span>
-                <button class="btn btn-primary" id="btn-check-updates" onclick="checkForUpdatesNow()">Check for Updates</button>
-                <button class="btn btn-primary" id="btn-report-bug" onclick="reportBug()">Report a Bug</button>
+                <button class="btn btn-primary" id="btn-check-updates" onclick="dash_checkForUpdatesNow()">Check for Updates</button>
+                <button class="btn btn-primary" id="btn-report-bug" onclick="dash_reportBug()">Report a Bug</button>
             </div>
 
             <div id="update-banner" class="update-banner">
                 <span id="update-banner-text"></span>
-                <button class="btn btn-primary" id="btn-update-now" onclick="installUpdate()">Update Now</button>
+                <button class="btn btn-primary" id="btn-update-now" onclick="dash_installUpdate()">Update Now</button>
             </div>
 
             <!-- Status Overview -->
@@ -205,44 +205,44 @@
 
             <!-- Scan Scope -->
             <div class="scope-row">
-                <select id="scan-library" onchange="updateScopeSummary(); loadResults();">
+                <select id="scan-library" onchange="dash_updateScopeSummary(); dash_loadResults();">
                     <option value="">All Libraries</option>
                 </select>
                 <input type="text" id="scan-name-filter" placeholder="Name contains (show or movie title)"
-                       oninput="updateScopeSummary()">
+                       oninput="dash_updateScopeSummary()">
                 <input type="text" id="scan-seasons" placeholder="Seasons, e.g. 1,2,5 or 1-3 (TV only)"
-                       oninput="updateScopeSummary()">
+                       oninput="dash_updateScopeSummary()">
             </div>
             <div class="scope-summary" id="scope-summary">Scope: entire library</div>
             <div class="scope-summary">The scope above also filters the file list below and "Refresh File List" -- not just the scan buttons.</div>
 
             <!-- Controls -->
             <div class="controls">
-                <button class="btn btn-primary" id="btn-scan-headers" onclick="triggerScan(false)">
+                <button class="btn btn-primary" id="btn-scan-headers" onclick="dash_triggerScan(false)">
                     Run Header Scan
                 </button>
-                <button class="btn btn-primary" id="btn-scan-deep" onclick="triggerScan(true)">
+                <button class="btn btn-primary" id="btn-scan-deep" onclick="dash_triggerScan(true)">
                     Run Deep Scan
                 </button>
-                <button class="btn btn-danger" id="btn-cancel" onclick="cancelScan()" disabled>
+                <button class="btn btn-danger" id="btn-cancel" onclick="dash_cancelScan()" disabled>
                     Cancel Scan
                 </button>
-                <button class="btn btn-primary" id="btn-refresh-list" onclick="loadResults()">
+                <button class="btn btn-primary" id="btn-refresh-list" onclick="dash_loadResults()">
                     Refresh File List
                 </button>
-                <select id="filter-status" onchange="loadResults()">
+                <select id="filter-status" onchange="dash_loadResults()">
                     <option value="">All Results</option>
                     <option value="0">Pending Only</option>
                     <option value="2">Failed Only</option>
                     <option value="1">Passed Only</option>
                     <option value="3">Errors Only</option>
                 </select>
-                <select id="filter-phase" onchange="loadResults()">
+                <select id="filter-phase" onchange="dash_loadResults()">
                     <option value="">All Phases</option>
                     <option value="1">Header Only</option>
                     <option value="2">Deep Only</option>
                 </select>
-                <select id="page-size-select" onchange="changePageSize()">
+                <select id="page-size-select" onchange="dash_changePageSize()">
                     <option value="25">25 / page</option>
                     <option value="50" selected>50 / page</option>
                     <option value="100">100 / page</option>
@@ -252,7 +252,7 @@
                     <option value="csv">CSV</option>
                     <option value="tsv">TSV</option>
                 </select>
-                <button class="btn btn-primary" id="btn-export" onclick="exportResults()">Export</button>
+                <button class="btn btn-primary" id="btn-export" onclick="dash_exportResults()">Export</button>
             </div>
 
             <!-- Error display -->
@@ -287,7 +287,7 @@
                     restored and compared afterward without re-scanning the whole library.
                     Not covered by Jellyfin's own Dashboard &gt; Advanced &gt; Backups.
                 </p>
-                <button class="btn btn-primary" id="btn-backup-now" onclick="createBackup()">Backup Now</button>
+                <button class="btn btn-primary" id="btn-backup-now" onclick="dash_createBackup()">Backup Now</button>
                 <table class="results-table" id="backups-table">
                     <thead>
                         <tr>
@@ -321,14 +321,14 @@
                         <div class="stat-value" id="db-reclaimable-size">&mdash;</div>
                     </div>
                 </div>
-                <button class="btn btn-primary" id="btn-maintenance-now" onclick="runDatabaseMaintenance()">Run Maintenance Now</button>
+                <button class="btn btn-primary" id="btn-maintenance-now" onclick="dash_runDatabaseMaintenance()">Run Maintenance Now</button>
                 <p class="field-hint" id="maintenance-result"></p>
             </div>
 
             <!-- Result Detail Modal -->
-            <div class="modal-overlay" id="detail-modal-overlay" onclick="if (event.target === this) closeDetail();">
+            <div class="modal-overlay" id="detail-modal-overlay" onclick="if (event.target === this) dash_closeDetail();">
                 <div class="modal-box">
-                    <button class="btn btn-primary modal-close" onclick="closeDetail()">Close</button>
+                    <button class="btn btn-primary modal-close" onclick="dash_closeDetail()">Close</button>
                     <h2>Scan Result Detail</h2>
                     <div class="modal-field">
                         <div class="modal-field-label">File Path</div>
@@ -363,6 +363,18 @@
         </div>
 
         <script>
+        // Wrapped in an IIFE so this page's top-level function/var names
+        // never leak onto window -- a real, live bug found 2026-08-23:
+        // Jellyfin never unmounts a previously-visited plugin config page's
+        // <script>, so a same-named global here and on another of this
+        // plugin's pages (e.g. loadResults/loadIssues both assigning
+        // window.goToPage) silently clobbered each other once a user had
+        // visited both pages in one session. Only the handful of functions
+        // actually invoked from inline onclick/onchange HTML attributes are
+        // deliberately re-exposed on window below, each under a
+        // "dash_"-prefixed name unique across this plugin's three pages.
+        (function () {
+            'use strict';
             // Jellyfin's ApiClient handles authentication automatically within plugin pages
             var currentPage = 1;
             var pageSize = 50;
@@ -476,7 +488,7 @@
                           escapeHtml(item.ErrorOutput.substring(0, 50)) + '...</span>'
                         : '—';
 
-                    return '<tr onclick="showDetail(' + index + ')">' +
+                    return '<tr onclick="dash_showDetail(' + index + ')">' +
                         '<td title="' + escapeHtml(item.FilePath || '') + '">' + escapeHtml(filename) + '</td>' +
                         '<td class="status-' + statusClass + '">' + statusLabel + '</td>' +
                         '<td>' + phaseLabel + '</td>' +
@@ -519,17 +531,17 @@
 
                 var html = '';
                 if (currentPage > 1) {
-                    html += '<button class="btn btn-primary" onclick="goToPage(' + (currentPage - 1) + ')">&laquo; Prev</button>';
+                    html += '<button class="btn btn-primary" onclick="dash_goToPage(' + (currentPage - 1) + ')">&laquo; Prev</button>';
                 }
                 html += '<span>Page ' + currentPage + ' of ' + totalPages +
                         ' (' + data.TotalCount + ' total)</span>';
                 if (currentPage < totalPages) {
-                    html += '<button class="btn btn-primary" onclick="goToPage(' + (currentPage + 1) + ')">Next &raquo;</button>';
+                    html += '<button class="btn btn-primary" onclick="dash_goToPage(' + (currentPage + 1) + ')">Next &raquo;</button>';
                 }
                 if (totalPages > 2) {
                     html += ' <input type="number" id="jump-page-input" min="1" max="' + totalPages +
                              '" placeholder="Page #" style="width:5em;">' +
-                             '<button class="btn btn-primary" onclick="jumpToPage(' + totalPages + ')">Go</button>';
+                             '<button class="btn btn-primary" onclick="dash_jumpToPage(' + totalPages + ')">Go</button>';
                 }
                 container.innerHTML = html;
             }
@@ -612,7 +624,7 @@
                             '<td>' + escapeHtml(b.FileName) + '</td>' +
                             '<td>' + formatDate(b.CreatedUtc) + '</td>' +
                             '<td>' + formatBytes(b.SizeBytes) + '</td>' +
-                            '<td><button class="btn btn-primary" onclick="restoreBackup(\'' +
+                            '<td><button class="btn btn-primary" onclick="dash_restoreBackup(\'' +
                                 escapeHtml(b.FileName) + '\')">Restore</button></td>' +
                             '</tr>';
                     }).join('');
@@ -1023,6 +1035,30 @@
                 });
             }
 
+            // Only these are ever invoked from an inline onclick/onchange
+            // HTML attribute (static markup or a dynamically-built row/button
+            // template above), so only these need to exist on window at all --
+            // every other function/var above stays closure-scoped to this
+            // IIFE. Prefixed "dash_" so none of them can collide with the
+            // Media Issues or Settings pages' own onclick-exposed names (see
+            // the comment at the top of this script block).
+            window.dash_checkForUpdatesNow = checkForUpdatesNow;
+            window.dash_reportBug = reportBug;
+            window.dash_installUpdate = installUpdate;
+            window.dash_updateScopeSummary = updateScopeSummary;
+            window.dash_loadResults = loadResults;
+            window.dash_triggerScan = triggerScan;
+            window.dash_cancelScan = cancelScan;
+            window.dash_changePageSize = changePageSize;
+            window.dash_exportResults = exportResults;
+            window.dash_createBackup = createBackup;
+            window.dash_restoreBackup = restoreBackup;
+            window.dash_runDatabaseMaintenance = runDatabaseMaintenance;
+            window.dash_closeDetail = closeDetail;
+            window.dash_showDetail = showDetail;
+            window.dash_goToPage = goToPage;
+            window.dash_jumpToPage = jumpToPage;
+
             // Initial load
             populateLibraries();
             loadStatus();
@@ -1033,6 +1069,7 @@
 
             // Auto-refresh status every 10 seconds
             refreshInterval = setInterval(loadStatus, 10000);
+        })();
         </script>
     </div>
 </div>

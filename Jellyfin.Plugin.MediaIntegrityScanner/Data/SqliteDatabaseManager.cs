@@ -602,12 +602,32 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
             System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    /// <inheritdoc />
-    public async Task<PagedIssueResults> GetIssuesAsync(int? status, int? phase, int page, int pageSize)
+    /// <summary>
+    /// Maps the Media Issues page's Arr Action filter bucket names (matching
+    /// <c>integrity_issues.html</c>'s <c>arrActionBucket()</c> exactly) to a
+    /// SQL condition against the joined <c>ar.*</c> columns. Values come
+    /// from a fixed switch, never interpolated raw, so an unrecognized
+    /// <paramref name="arrAction"/> (including <c>null</c>/empty) safely
+    /// falls through to "no filter" rather than risking injection.
+    /// </summary>
+    private static string? BuildArrActionClause(string? arrAction)
     {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync().ConfigureAwait(false);
+        return arrAction switch
+        {
+            "not_sent" => "ar.id IS NULL",
+            "pending" => "ar.status = 'pending'",
+            "sent" => "ar.status = 'success'",
+            "unmatched" => "ar.action_taken = 'unmatched'",
+            "no_replacement" => "ar.action_taken = 'no_replacement_available'",
+            "blocked" => "ar.status = 'blocked'",
+            "failed" => "ar.status = 'failed'",
+            "dry_run" => "ar.action_taken IN ('would_delete_and_blocklist', 'would_delete_and_search')",
+            _ => null
+        };
+    }
 
+    private static string BuildIssuesWhereClause(int? status, int? phase, string? arrAction)
+    {
         var clauses = new List<string> { "sr.scan_status IN (2, 3)" }; // Fail=2, Error=3 -- this page never shows Pass/Pending
         if (status.HasValue)
         {
@@ -619,11 +639,40 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
             clauses.Add("sr.scan_phase = @phase");
         }
 
-        var whereClause = "WHERE " + string.Join(" AND ", clauses);
+        var arrActionClause = BuildArrActionClause(arrAction);
+        if (arrActionClause is not null)
+        {
+            clauses.Add(arrActionClause);
+        }
+
+        return "WHERE " + string.Join(" AND ", clauses);
+    }
+
+    /// <inheritdoc />
+    public async Task<PagedIssueResults> GetIssuesAsync(int? status, int? phase, string? arrAction, int page, int pageSize)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        var whereClause = BuildIssuesWhereClause(status, phase, arrAction);
+
+        // Both queries below need the identical LEFT JOIN -- the count query
+        // used to omit it entirely, which worked only because the WHERE
+        // clause never referenced ar.* columns before arrAction filtering
+        // was added; without the join here, an arrAction filter would fail
+        // with "no such column: ar.status".
+        const string IssuesJoin = @"
+            FROM scan_results sr
+            LEFT JOIN arr_remediation ar ON ar.id = (
+                SELECT ar2.id FROM arr_remediation ar2
+                WHERE ar2.item_id = sr.item_id
+                ORDER BY ar2.requested_at DESC, ar2.id DESC
+                LIMIT 1
+            )";
 
         await using (var countCmd = connection.CreateCommand())
         {
-            countCmd.CommandText = $"SELECT COUNT(*) FROM scan_results sr {whereClause};";
+            countCmd.CommandText = $"SELECT COUNT(*) {IssuesJoin} {whereClause};";
             if (status.HasValue)
             {
                 countCmd.Parameters.AddWithValue("@status", status.Value);
@@ -646,13 +695,7 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
                        ar.arr_server_name, ar.match_method, ar.arr_item_id, ar.arr_file_id,
                        ar.action_taken, ar.status, ar.error_message, ar.requested_at,
                        ar.completed_at, ar.retry_count, ar.cycle_number
-                FROM scan_results sr
-                LEFT JOIN arr_remediation ar ON ar.id = (
-                    SELECT ar2.id FROM arr_remediation ar2
-                    WHERE ar2.item_id = sr.item_id
-                    ORDER BY ar2.requested_at DESC, ar2.id DESC
-                    LIMIT 1
-                )
+                {IssuesJoin}
                 {whereClause}
                 ORDER BY sr.scan_timestamp DESC
                 LIMIT @limit OFFSET @offset;
@@ -688,6 +731,67 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 
             return new PagedIssueResults { Items = items, TotalCount = totalCount };
         }
+    }
+
+    /// <summary>
+    /// Unpaginated counterpart to <see cref="GetIssuesAsync"/> -- every
+    /// matching row, not one page -- backing the Media Issues page's CSV/TSV
+    /// export (<c>GET /MediaIntegrity/Issues/Export</c>), the same relationship
+    /// <see cref="GetAllResultsAsync"/> has to the main dashboard's paginated
+    /// <c>GetResultsAsync</c>.
+    /// </summary>
+    public async Task<IReadOnlyList<IssueRecord>> GetAllIssuesAsync(int? status, int? phase, string? arrAction)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        var whereClause = BuildIssuesWhereClause(status, phase, arrAction);
+
+        await using var queryCmd = connection.CreateCommand();
+        queryCmd.CommandText = $@"
+            SELECT sr.item_id, sr.file_path, sr.scan_phase, sr.scan_status,
+                   sr.scan_timestamp, sr.error_output,
+                   ar.id, ar.item_id, ar.scan_record_id, ar.file_path, ar.arr_app,
+                   ar.arr_server_name, ar.match_method, ar.arr_item_id, ar.arr_file_id,
+                   ar.action_taken, ar.status, ar.error_message, ar.requested_at,
+                   ar.completed_at, ar.retry_count, ar.cycle_number
+            FROM scan_results sr
+            LEFT JOIN arr_remediation ar ON ar.id = (
+                SELECT ar2.id FROM arr_remediation ar2
+                WHERE ar2.item_id = sr.item_id
+                ORDER BY ar2.requested_at DESC, ar2.id DESC
+                LIMIT 1
+            )
+            {whereClause}
+            ORDER BY sr.scan_timestamp DESC;
+        ";
+        if (status.HasValue)
+        {
+            queryCmd.Parameters.AddWithValue("@status", status.Value);
+        }
+
+        if (phase.HasValue)
+        {
+            queryCmd.Parameters.AddWithValue("@phase", phase.Value);
+        }
+
+        var items = new List<IssueRecord>();
+        await using var reader = await queryCmd.ExecuteReaderAsync().ConfigureAwait(false);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            items.Add(new IssueRecord
+            {
+                ItemId = reader.GetString(0),
+                FilePath = reader.GetString(1),
+                ScanPhase = reader.GetInt32(2),
+                ScanStatus = reader.GetInt32(3),
+                ScanTimestamp = reader.GetString(4),
+                ErrorOutput = reader.IsDBNull(5) ? null : reader.GetString(5),
+                Remediation = reader.IsDBNull(6) ? null : ReadRemediationRecord(reader, offset: 6)
+            });
+        }
+
+        return items;
     }
 
     /// <inheritdoc />

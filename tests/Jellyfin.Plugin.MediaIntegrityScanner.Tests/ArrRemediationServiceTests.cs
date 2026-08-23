@@ -18,6 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
 using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration.Radarr;
 using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration.Sonarr;
@@ -28,6 +29,8 @@ using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Activity;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -52,6 +55,7 @@ public class ArrRemediationServiceTests : IDisposable
     private readonly Mock<ILibraryManager> _library = new();
     private readonly Mock<IRadarrClient> _radarr = new();
     private readonly Mock<ISonarrClient> _sonarr = new();
+    private readonly Mock<IActivityManager> _activityManager = new();
 
     public ArrRemediationServiceTests()
     {
@@ -72,7 +76,7 @@ public class ArrRemediationServiceTests : IDisposable
     public void Dispose() => TestPluginContext.Clear();
 
     private ArrRemediationService CreateService() =>
-        new(_clientFactory.Object, _matcher.Object, new ArrServerSelector(), _db.Object, _library.Object, NullLogger<ArrRemediationService>.Instance);
+        new(_clientFactory.Object, _matcher.Object, new ArrServerSelector(), _db.Object, _library.Object, _activityManager.Object, NullLogger<ArrRemediationService>.Instance);
 
     private static Movie MakeMovie() => new() { Id = Guid.NewGuid(), Path = "/movies/Sintel/Sintel.mkv" };
 
@@ -460,6 +464,20 @@ public class ArrRemediationServiceTests : IDisposable
         Assert.Equal("skipped_cycle_limit", result.ActionTaken);
         _library.Verify(l => l.GetItemById(It.IsAny<Guid>()), Times.Never);
         _db.Verify(d => d.UpdateRemediationAsync(It.Is<ArrRemediationRecord>(r => r.Status == "blocked")), Times.Once);
+        _activityManager.Verify(a => a.CreateAsync(It.Is<ActivityLog>(l => l.LogSeverity == LogLevel.Warning)), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessPendingAsync_CycleNumberExceedsMax_ActivityLogPushThrows_StillMarksBlocked()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration { MaxRemediationCycles = 3 });
+        var pending = MakePendingRecord(Guid.NewGuid().ToString(), cycleNumber: 4);
+        _activityManager.Setup(a => a.CreateAsync(It.IsAny<ActivityLog>())).ThrowsAsync(new InvalidOperationException("db locked"));
+
+        var service = CreateService();
+        var result = await service.ProcessPendingAsync(pending, CancellationToken.None);
+
+        Assert.Equal("blocked", result.Status);
     }
 
     [Fact]

@@ -279,6 +279,7 @@ public partial class MediaIntegrityController : ControllerBase
     /// </summary>
     /// <param name="status">Optional scan-status filter (2=fail, 3=error). Null means both.</param>
     /// <param name="phase">Optional scan-phase filter (1=header, 2=full decode).</param>
+    /// <param name="arrAction">Optional Arr Action bucket filter -- see <see cref="IDatabaseManager.GetIssuesAsync"/>.</param>
     /// <param name="page">Page number (1-based).</param>
     /// <param name="pageSize">Results per page.</param>
     /// <returns>Paginated issue rows.</returns>
@@ -287,6 +288,7 @@ public partial class MediaIntegrityController : ControllerBase
     public async Task<ActionResult<PagedIssueResults>> GetIssues(
         [FromQuery] int? status = null,
         [FromQuery] int? phase = null,
+        [FromQuery] string? arrAction = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50)
     {
@@ -300,8 +302,61 @@ public partial class MediaIntegrityController : ControllerBase
             pageSize = 50;
         }
 
-        var results = await _db.GetIssuesAsync(status, phase, page, pageSize).ConfigureAwait(false);
+        var results = await _db.GetIssuesAsync(status, phase, arrAction, page, pageSize).ConfigureAwait(false);
         return Ok(results);
+    }
+
+    /// <summary>
+    /// Export every issue row matching the given filters (not just one page)
+    /// as a downloadable CSV or TSV file -- the Media Issues page's
+    /// counterpart to <see cref="ExportResults"/>, including each row's
+    /// Radarr/Sonarr match/remediation state.
+    /// </summary>
+    /// <param name="status">Optional scan-status filter, matching <see cref="GetIssues"/>'s values.</param>
+    /// <param name="phase">Optional scan-phase filter, matching <see cref="GetIssues"/>'s values.</param>
+    /// <param name="arrAction">Optional Arr Action bucket filter, matching <see cref="GetIssues"/>'s values.</param>
+    /// <param name="format">"csv" (default) or "tsv".</param>
+    /// <returns>A downloadable file.</returns>
+    [HttpGet("Issues/Export")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult> ExportIssues(
+        [FromQuery] int? status = null,
+        [FromQuery] int? phase = null,
+        [FromQuery] string? arrAction = null,
+        [FromQuery] string format = "csv")
+    {
+        var isTsv = string.Equals(format, "tsv", StringComparison.OrdinalIgnoreCase);
+        var delimiter = isTsv ? "\t" : ",";
+        var records = await _db.GetAllIssuesAsync(status, phase, arrAction).ConfigureAwait(false);
+
+        var sb = new StringBuilder();
+        sb.Append(string.Join(
+            delimiter,
+            "FilePath", "Status", "Phase", "Timestamp", "Error",
+            "ArrApp", "ArrServerName", "MatchMethod", "ArrActionTaken", "ArrStatus", "CycleNumber")).Append("\r\n");
+        foreach (var record in records)
+        {
+            var remediation = record.Remediation;
+            sb.Append(string.Join(
+                delimiter,
+                FormatField(record.FilePath, isTsv),
+                ((ScanStatus)record.ScanStatus).ToString(),
+                ((ScanPhase)record.ScanPhase).ToString(),
+                record.ScanTimestamp,
+                FormatField(record.ErrorOutput ?? string.Empty, isTsv),
+                remediation?.ArrApp ?? string.Empty,
+                remediation?.ArrServerName ?? string.Empty,
+                remediation?.MatchMethod ?? string.Empty,
+                remediation?.ActionTaken ?? string.Empty,
+                remediation?.Status ?? string.Empty,
+                remediation?.CycleNumber.ToString(CultureInfo.InvariantCulture) ?? string.Empty));
+            sb.Append("\r\n");
+        }
+
+        var extension = isTsv ? "tsv" : "csv";
+        var contentType = isTsv ? "text/tab-separated-values" : "text/csv";
+        var fileName = $"media-issues-{DateTime.UtcNow:yyyyMMdd-HHmmss}.{extension}";
+        return File(Encoding.UTF8.GetBytes(sb.ToString()), contentType, fileName);
     }
 
     /// <summary>
