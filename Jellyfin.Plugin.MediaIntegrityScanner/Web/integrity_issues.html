@@ -132,17 +132,17 @@
             </div>
 
             <div class="filter-row">
-                <select id="filter-status" onchange="loadIssues()">
+                <select id="issues-filter-status" onchange="issues_applyFilters()">
                     <option value="">All (Fail + Error)</option>
-                    <option value="2">Fail Only</option>
+                    <option value="2" selected>Fail Only</option>
                     <option value="3">Error Only</option>
                 </select>
-                <select id="filter-phase" onchange="loadIssues()">
+                <select id="issues-filter-phase" onchange="issues_applyFilters()">
                     <option value="">All Phases</option>
                     <option value="1">Header Only</option>
                     <option value="2">Deep Only</option>
                 </select>
-                <select id="filter-arr-action" onchange="renderIssues()" title="Filters the currently-loaded page only, not the full result set">
+                <select id="filter-arr-action" onchange="issues_applyFilters()">
                     <option value="">Any Arr Action</option>
                     <option value="not_sent">Not sent</option>
                     <option value="pending">Pending</option>
@@ -153,26 +153,37 @@
                     <option value="failed">Failed</option>
                     <option value="dry_run">Dry-run</option>
                 </select>
-                <select id="page-size-select" onchange="changePageSize()">
+                <select id="issues-page-size-select" onchange="changePageSize()">
                     <option value="25">25 / page</option>
                     <option value="50" selected>50 / page</option>
                     <option value="100">100 / page</option>
                 </select>
-                <button class="btn btn-primary" onclick="loadIssues()">Refresh</button>
+                <button class="btn btn-primary" onclick="issues_loadIssues()">Refresh</button>
+                <select id="export-format-select">
+                    <option value="csv">CSV</option>
+                    <option value="tsv">TSV</option>
+                </select>
+                <button class="btn btn-primary" onclick="issues_exportIssues()">Export</button>
             </div>
+            <p style="opacity:0.6;font-size:0.85em;margin:-0.6em 0 0.6em;">
+                Defaults to Fail Only -- Error means the scan itself broke (ffprobe crashed, a
+                read error), a weaker signal that the media is actually bad than a completed
+                scan that affirmatively found corruption. Switch to "All" or "Error Only" to
+                include those too.
+            </p>
 
             <div class="bulk-bar" id="bulk-bar">
                 <span id="bulk-count">0 selected</span>
-                <button class="btn btn-primary" onclick="sendSelected()" id="btn-send-selected">Send Selected to Radarr/Sonarr</button>
-                <button class="btn" onclick="clearSelection()">Clear Selection</button>
+                <button class="btn btn-primary" onclick="issues_sendSelected()" id="btn-send-selected">Send Selected to Radarr/Sonarr</button>
+                <button class="btn" onclick="issues_clearSelection()">Clear Selection</button>
             </div>
 
-            <div id="error-msg" class="error-msg" style="display:none;"></div>
+            <div id="issues-error-msg" class="error-msg" style="display:none;"></div>
 
             <table class="results-table">
                 <thead>
                     <tr>
-                        <th><input type="checkbox" id="select-all" onchange="toggleSelectAll()"></th>
+                        <th><input type="checkbox" id="select-all" onchange="issues_toggleSelectAll()"></th>
                         <th>File</th>
                         <th>Status</th>
                         <th>Phase</th>
@@ -187,10 +198,24 @@
                 </tbody>
             </table>
 
-            <div class="pagination" id="pagination"></div>
+            <div class="pagination" id="issues-pagination"></div>
         </div>
 
         <script>
+        // Wrapped in an IIFE so this page's top-level function/var names
+        // (loadIssues, currentPage, apiFetch, showError, goToPage, ...)
+        // never leak onto window -- a real, live bug found 2026-08-23:
+        // Jellyfin never unmounts a previously-visited plugin config page's
+        // <script>, so every same-named global here silently clobbered the
+        // dashboard's own copy (and vice versa) once a user had visited both
+        // pages in one session (e.g. the dashboard's own pagination started
+        // calling this page's loadIssues() instead of its own loadResults()
+        // after a visit to Media Issues). Only the handful of functions
+        // actually invoked from inline onclick/onchange HTML attributes are
+        // deliberately re-exposed on window below, each under an
+        // "issues_"-prefixed name unique across this plugin's three pages.
+        (function () {
+            'use strict';
             var currentPage = 1;
             var pageSize = 50;
             var currentIssues = [];
@@ -212,13 +237,13 @@
             }
 
             function showError(msg) {
-                var el = document.getElementById('error-msg');
+                var el = document.getElementById('issues-error-msg');
                 el.textContent = msg;
                 el.style.display = 'block';
             }
 
             function hideError() {
-                document.getElementById('error-msg').style.display = 'none';
+                document.getElementById('issues-error-msg').style.display = 'none';
             }
 
             function escapeHtml(str) {
@@ -278,25 +303,6 @@
                 return '<span class="chip chip-pending">Pending</span>';
             }
 
-            // Maps a row's Remediation to the coarse bucket used by the
-            // #filter-arr-action dropdown -- deliberately client-side (not a
-            // new GetIssuesAsync query param) since this page's default page
-            // size already keeps a typical result set small; see the
-            // dropdown's title attribute for the tradeoff this implies
-            // (filters the loaded page only, not the full result set).
-            function arrActionBucket(remediation) {
-                if (!remediation) return 'not_sent';
-                if (remediation.Status === 'blocked') return 'blocked';
-                if (remediation.Status === 'pending') return 'pending';
-                if (remediation.Status === 'failed') return 'failed';
-                var action = remediation.ActionTaken;
-                if (action === 'would_delete_and_blocklist' || action === 'would_delete_and_search') return 'dry_run';
-                if (action === 'unmatched') return 'unmatched';
-                if (action === 'no_replacement_available') return 'no_replacement';
-                if (remediation.Status === 'success') return 'sent';
-                return 'not_sent';
-            }
-
             function renderArrMatch(remediation) {
                 if (!remediation || !remediation.ArrItemId) {
                     return '<span style="opacity:0.5;font-style:italic;">Not managed by Radarr/Sonarr</span>';
@@ -307,12 +313,19 @@
                 return app + server;
             }
 
-            function loadIssues() {
-                var status = document.getElementById('filter-status').value;
-                var phase = document.getElementById('filter-phase').value;
-                var params = 'Issues?page=' + currentPage + '&pageSize=' + pageSize;
+            function currentFilterParams() {
+                var status = document.getElementById('issues-filter-status').value;
+                var phase = document.getElementById('issues-filter-phase').value;
+                var arrAction = document.getElementById('filter-arr-action').value;
+                var params = '';
                 if (status) params += '&status=' + status;
                 if (phase) params += '&phase=' + phase;
+                if (arrAction) params += '&arrAction=' + arrAction;
+                return params;
+            }
+
+            function loadIssues() {
+                var params = 'Issues?page=' + currentPage + '&pageSize=' + pageSize + currentFilterParams();
 
                 apiFetch(params).then(function(data) {
                     currentIssues = data.Items || [];
@@ -323,6 +336,11 @@
                 }).catch(function(err) {
                     showError('Failed to load issues: ' + err.message);
                 });
+            }
+
+            function applyFilters() {
+                currentPage = 1;
+                loadIssues();
             }
 
             function renderStats() {
@@ -349,17 +367,13 @@
 
             function renderIssues() {
                 var tbody = document.getElementById('issues-body');
-                var filter = document.getElementById('filter-arr-action').value;
-                var rows = filter
-                    ? currentIssues.filter(function(item) { return arrActionBucket(item.Remediation) === filter; })
-                    : currentIssues;
 
-                if (rows.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="8">No current issues' + (filter ? ' matching this filter' : '') + '.</td></tr>';
+                if (currentIssues.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8">No current issues matching these filters.</td></tr>';
                     return;
                 }
 
-                tbody.innerHTML = rows.map(function(item) {
+                tbody.innerHTML = currentIssues.map(function(item) {
                     var filename = item.FilePath ? item.FilePath.split('/').pop().split('\\').pop() : '—';
                     var statusLabel = item.ScanStatus === 3 ? 'Error' : 'Fail';
                     var phaseLabel = item.ScanPhase === 1 ? 'Header' : 'Full Decode';
@@ -370,11 +384,11 @@
                     var sendDisabled = item.Remediation && item.Remediation.Status === 'success' ? ' disabled' : '';
                     var isBlocked = item.Remediation && item.Remediation.Status === 'blocked';
                     var resetButton = isBlocked
-                        ? ' <button class="btn btn-reset btn-sm" onclick="resetCycle(\'' + item.ItemId + '\')">Reset Cycle</button>'
+                        ? ' <button class="btn btn-reset btn-sm" onclick="issues_resetCycle(\'' + item.ItemId + '\')">Reset Cycle</button>'
                         : '';
 
                     return '<tr>' +
-                        '<td><input type="checkbox"' + checked + ' onchange="toggleSelect(\'' + item.ItemId + '\')"></td>' +
+                        '<td><input type="checkbox"' + checked + ' onchange="issues_toggleSelect(\'' + item.ItemId + '\')"></td>' +
                         '<td title="' + escapeHtml(item.FilePath || '') + '">' + escapeHtml(filename) + '</td>' +
                         '<td class="status-fail">' + statusLabel + '</td>' +
                         '<td>' + phaseLabel + '</td>' +
@@ -383,7 +397,7 @@
                         '<td>' + renderArrMatch(item.Remediation) + '</td>' +
                         '<td>' + renderArrAction(item.Remediation) +
                             resetButton +
-                            ' <button class="btn btn-primary btn-sm" onclick="sendOne(\'' + item.ItemId + '\')"' + sendDisabled + '>Send</button>' +
+                            ' <button class="btn btn-primary btn-sm" onclick="issues_sendOne(\'' + item.ItemId + '\')"' + sendDisabled + '>Send</button>' +
                         '</td>' +
                         '</tr>';
                 }).join('');
@@ -470,7 +484,7 @@
 
             function renderPagination(data) {
                 var totalPages = Math.ceil(data.TotalCount / pageSize);
-                var container = document.getElementById('pagination');
+                var container = document.getElementById('issues-pagination');
 
                 if (totalPages <= 1) {
                     container.innerHTML = '';
@@ -479,11 +493,11 @@
 
                 var html = '';
                 if (currentPage > 1) {
-                    html += '<button class="btn btn-primary" onclick="goToPage(' + (currentPage - 1) + ')">&laquo; Prev</button>';
+                    html += '<button class="btn btn-primary" onclick="issues_goToPage(' + (currentPage - 1) + ')">&laquo; Prev</button>';
                 }
                 html += '<span>Page ' + currentPage + ' of ' + totalPages + ' (' + data.TotalCount + ' total)</span>';
                 if (currentPage < totalPages) {
-                    html += '<button class="btn btn-primary" onclick="goToPage(' + (currentPage + 1) + ')">Next &raquo;</button>';
+                    html += '<button class="btn btn-primary" onclick="issues_goToPage(' + (currentPage + 1) + ')">Next &raquo;</button>';
                 }
                 container.innerHTML = html;
             }
@@ -494,12 +508,48 @@
             }
 
             function changePageSize() {
-                pageSize = parseInt(document.getElementById('page-size-select').value, 10);
+                pageSize = parseInt(document.getElementById('issues-page-size-select').value, 10);
                 currentPage = 1;
                 loadIssues();
             }
 
+            function exportIssues() {
+                var format = document.getElementById('export-format-select').value;
+                var path = 'Issues/Export?format=' + encodeURIComponent(format) +
+                    '&ApiKey=' + encodeURIComponent(ApiClient.accessToken()) +
+                    currentFilterParams();
+                // Plain navigation, not fetch -- same reasoning as the main
+                // dashboard's exportResults(): the browser's download flow for
+                // a Content-Disposition: attachment response needs a real
+                // navigation, and a browser-triggered one can't set custom
+                // headers, so the API key travels as the "ApiKey" query param
+                // (confirmed against the real server source, AuthorizationContext.cs,
+                // to be the one unconditionally-checked key -- "api_key" is
+                // gated behind EnableLegacyAuthorization).
+                window.location.href = getApiUrl(path);
+            }
+
+            // Only these are ever invoked from an inline onclick/onchange
+            // HTML attribute (static markup or a dynamically-built row/button
+            // template above), so only these need to exist on window at all --
+            // every other function/var above stays closure-scoped to this
+            // IIFE. Prefixed "issues_" so none of them can collide with the
+            // Dashboard or Settings pages' own onclick-exposed names (see the
+            // comment at the top of this script block).
+            window.issues_loadIssues = loadIssues;
+            window.issues_applyFilters = applyFilters;
+            window.issues_changePageSize = changePageSize;
+            window.issues_goToPage = goToPage;
+            window.issues_exportIssues = exportIssues;
+            window.issues_toggleSelect = toggleSelect;
+            window.issues_toggleSelectAll = toggleSelectAll;
+            window.issues_clearSelection = clearSelection;
+            window.issues_sendOne = sendOne;
+            window.issues_sendSelected = sendSelected;
+            window.issues_resetCycle = resetCycle;
+
             loadIssues();
+        })();
         </script>
     </div>
 </div>

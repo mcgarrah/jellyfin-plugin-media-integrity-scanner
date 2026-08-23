@@ -79,7 +79,7 @@
             <a class="nav-link" href="#/configurationpage?name=Media+Integrity+Scanner">&laquo; Back to Dashboard</a>
             <h1>Media Integrity Scanner Settings</h1>
 
-            <div id="error-msg" class="error-msg" style="display:none;"></div>
+            <div id="settings-error-msg" class="error-msg" style="display:none;"></div>
             <div id="success-msg" class="success-msg" style="display:none;"></div>
 
             <form id="settings-form">
@@ -190,7 +190,7 @@
                             &gt; Playback &gt; Transcoding) is never consulted for either binary.
                         </div>
                     </div>
-                    <button type="button" class="btn btn-primary" id="btn-refresh-ffmpeg" onclick="refreshFfmpegPaths()">Re-check FFmpeg Path Now</button>
+                    <button type="button" class="btn btn-primary" id="btn-refresh-ffmpeg" onclick="settings_refreshFfmpegPaths()">Re-check FFmpeg Path Now</button>
                     <p class="field-hint" id="ffmpeg-refresh-result"></p>
                     <div class="field-hint">
                         The resolved ffmpeg/ffprobe paths are otherwise only re-checked on restart/upgrade,
@@ -283,11 +283,11 @@
 
                     <h3>Radarr Servers</h3>
                     <div id="radarr-servers-list"></div>
-                    <button type="button" class="btn btn-sm" onclick="addServer('radarr')">+ Add Radarr Server</button>
+                    <button type="button" class="btn btn-sm" onclick="settings_addServer('radarr')">+ Add Radarr Server</button>
 
                     <h3 style="margin-top:1.6em;">Sonarr Servers</h3>
                     <div id="sonarr-servers-list"></div>
-                    <button type="button" class="btn btn-sm" onclick="addServer('sonarr')">+ Add Sonarr Server</button>
+                    <button type="button" class="btn btn-sm" onclick="settings_addServer('sonarr')">+ Add Sonarr Server</button>
 
                     <div class="field-row" style="margin-top:1.4em;">
                         <label for="HistoryLookbackDays">History Lookback (days)</label>
@@ -373,6 +373,17 @@
         </div>
 
         <script>
+        // Wrapped in an IIFE so this page's top-level function/var names
+        // never leak onto window -- a real, live bug found 2026-08-23:
+        // Jellyfin never unmounts a previously-visited plugin config page's
+        // <script>, so a same-named global here and on another of this
+        // plugin's pages silently clobbered each other once a user had
+        // visited both pages in one session. Only the handful of functions
+        // actually invoked from inline onclick/oninput HTML attributes are
+        // deliberately re-exposed on window below, each under a
+        // "settings_"-prefixed name unique across this plugin's three pages.
+        (function () {
+            'use strict';
             // Jellyfin serializes this plugin's GUID without dashes in its 10.11.11
             // REST responses (c8f4a3b2-1d5e-... -> c8f4a3b21d5e...); the plugin-config
             // endpoints require the same dashless form.
@@ -410,28 +421,28 @@
                     return '<div class="server-card">' +
                         '<div class="server-card-header">' +
                             '<strong>' + (app === 'radarr' ? 'Radarr' : 'Sonarr') + ' Server ' + (index + 1) + '</strong>' +
-                            '<button type="button" class="btn btn-danger btn-sm" onclick="removeServer(\'' + app + '\', ' + index + ')">Remove</button>' +
+                            '<button type="button" class="btn btn-danger btn-sm" onclick="settings_removeServer(\'' + app + '\', ' + index + ')">Remove</button>' +
                         '</div>' +
                         '<div class="field-row">' +
                             '<label>Server Name</label>' +
                             '<input type="text" placeholder="Main" value="' + escapeAttr(server.Name) + '" ' +
-                                'oninput="updateServerField(\'' + app + '\', ' + index + ', \'Name\', this.value)">' +
+                                'oninput="settings_updateServerField(\'' + app + '\', ' + index + ', \'Name\', this.value)">' +
                         '</div>' +
                         '<div class="field-row">' +
                             '<label>URL</label>' +
                             '<input type="text" placeholder="http://192.168.86.52:' + (app === 'radarr' ? '7878' : '8989') + '" value="' + escapeAttr(server.Url) + '" ' +
-                                'oninput="updateServerField(\'' + app + '\', ' + index + ', \'Url\', this.value)">' +
+                                'oninput="settings_updateServerField(\'' + app + '\', ' + index + ', \'Url\', this.value)">' +
                         '</div>' +
                         '<div class="field-row">' +
                             '<label>API Key</label>' +
                             '<input type="text" value="' + escapeAttr(server.ApiKey) + '" ' +
-                                'oninput="updateServerField(\'' + app + '\', ' + index + ', \'ApiKey\', this.value)">' +
+                                'oninput="settings_updateServerField(\'' + app + '\', ' + index + ', \'ApiKey\', this.value)">' +
                             '<div class="field-hint">Found in ' + (app === 'radarr' ? 'Radarr' : 'Sonarr') + ' under Settings &gt; General &gt; Security.</div>' +
                         '</div>' +
                         '<div class="field-row">' +
                             '<label>Library Path Prefixes</label>' +
                             '<input type="text" placeholder="/data/movies, /data/disney-movies" value="' + escapeAttr((server.LibraryPathPrefixes || []).join(', ')) + '" ' +
-                                'oninput="updateServerPrefixes(\'' + app + '\', ' + index + ', this.value)">' +
+                                'oninput="settings_updateServerPrefixes(\'' + app + '\', ' + index + ', this.value)">' +
                             '<div class="field-hint">' + prefixHint + '</div>' +
                         '</div>' +
                         '</div>';
@@ -613,7 +624,7 @@
             }
 
             function showError(msg) {
-                var el = document.getElementById('error-msg');
+                var el = document.getElementById('settings-error-msg');
                 el.textContent = msg;
                 el.style.display = 'block';
             }
@@ -625,13 +636,27 @@
             }
 
             function hideMessages() {
-                document.getElementById('error-msg').style.display = 'none';
+                document.getElementById('settings-error-msg').style.display = 'none';
                 document.getElementById('success-msg').style.display = 'none';
             }
 
             document.getElementById('settings-form').addEventListener('submit', saveConfig);
 
+            // Only these are ever invoked from an inline onclick/oninput HTML
+            // attribute (static markup or a dynamically-built server-card
+            // template above), so only these need to exist on window at all --
+            // every other function/var above stays closure-scoped to this
+            // IIFE. Prefixed "settings_" so none of them can collide with the
+            // Dashboard or Media Issues pages' own onclick-exposed names (see
+            // the comment at the top of this script block).
+            window.settings_refreshFfmpegPaths = refreshFfmpegPaths;
+            window.settings_addServer = addServer;
+            window.settings_removeServer = removeServer;
+            window.settings_updateServerField = updateServerField;
+            window.settings_updateServerPrefixes = updateServerPrefixes;
+
             loadConfig();
+        })();
         </script>
     </div>
 </div>

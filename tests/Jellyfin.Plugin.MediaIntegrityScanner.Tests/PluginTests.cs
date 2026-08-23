@@ -18,6 +18,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
@@ -123,6 +124,51 @@ public class PluginTests : IDisposable
         foreach (var page in pages)
         {
             Assert.Contains(page.EmbeddedResourcePath, resourceNames);
+        }
+    }
+
+    [Fact]
+    public void GetPages_NoElementIdIsDuplicatedAcrossAnyTwoPages()
+    {
+        // Real bug found live (2026-08-23): Jellyfin's own dashboard never
+        // unmounts a plugin config page's DOM when navigating to another one
+        // -- every page a user has visited this session stays mounted
+        // (confirmed live: after Dashboard -> Media Issues, both
+        // #MediaIntegrityScannerPage and #MediaIssuesPage are simultaneously
+        // present). document.getElementById(...) is document-wide, so an id
+        // reused across two of this plugin's own pages silently resolves to
+        // whichever page loaded first -- e.g. "filter-status" existed in
+        // both integrity_dashboard.html and integrity_issues.html, so the
+        // Issues page's own status filter was silently reading/writing the
+        // dashboard's filter element instead of its own once a user had
+        // visited both pages in one session. Each page file may reuse its
+        // OWN ids freely; only reuse *across* different pages is a problem.
+        var plugin = CreatePlugin();
+        var resourceAssembly = typeof(Plugin).Assembly;
+
+        var idsByPage = plugin.GetPages().ToDictionary(
+            page => page.Name,
+            page =>
+            {
+                using var stream = resourceAssembly.GetManifestResourceStream(page.EmbeddedResourcePath);
+                using var reader = new StreamReader(stream!);
+                var html = reader.ReadToEnd();
+                return Regex.Matches(html, "id=\"([a-zA-Z0-9_-]+)\"")
+                    .Select(m => m.Groups[1].Value)
+                    .ToHashSet(StringComparer.Ordinal);
+            });
+
+        var pageNames = idsByPage.Keys.ToList();
+        for (var i = 0; i < pageNames.Count; i++)
+        {
+            for (var j = i + 1; j < pageNames.Count; j++)
+            {
+                var overlap = idsByPage[pageNames[i]].Intersect(idsByPage[pageNames[j]]).ToList();
+                Assert.True(
+                    overlap.Count == 0,
+                    $"Element id(s) {string.Join(", ", overlap)} appear in both \"{pageNames[i]}\" and \"{pageNames[j]}\" -- " +
+                    "document.getElementById will resolve to whichever page loaded first once a user has visited both.");
+            }
         }
     }
 
