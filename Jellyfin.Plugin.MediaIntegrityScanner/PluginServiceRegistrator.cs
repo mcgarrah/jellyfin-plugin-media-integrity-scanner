@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License along
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
+using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.EventHandlers;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
@@ -47,5 +48,14 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
 
         // Update checker
         serviceCollection.AddSingleton<IUpdateChecker, UpdateChecker>();
+
+        // Arr integration (see ARR-INTEGRATION-PROPOSAL.md) -- IHttpClientFactory
+        // needs no registration here, Jellyfin's own host already provides it
+        // (confirmed against Jellyfin.Server/Startup.cs's AddHttpClient calls),
+        // the same way ILibraryManager/ISessionManager are injectable into
+        // plugin classes without this plugin ever registering them itself.
+        serviceCollection.AddSingleton<IArrClientFactory, ArrClientFactory>();
+        serviceCollection.AddSingleton<IArrItemMatcher, ArrItemMatcher>();
+        serviceCollection.AddSingleton<IArrRemediationService, ArrRemediationService>();
     }
 }

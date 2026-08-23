@@ -20,6 +20,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Api;
+using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
@@ -48,6 +49,7 @@ public class MediaIntegrityControllerTests : IDisposable
     private readonly Mock<IScanEngine> _scanner = new();
     private readonly Mock<IUpdateChecker> _updateChecker = new();
     private readonly Mock<IServerApplicationHost> _appHost = new();
+    private readonly Mock<IArrRemediationService> _arrRemediation = new();
 
     public void Dispose()
     {
@@ -76,6 +78,7 @@ public class MediaIntegrityControllerTests : IDisposable
             _updateChecker.Object,
             CreateFfmpegWrapper(),
             _appHost.Object,
+            _arrRemediation.Object,
             NullLogger<MediaIntegrityController>.Instance);
 
         // A controller constructed directly (not through the real ASP.NET Core
@@ -638,6 +641,92 @@ public class MediaIntegrityControllerTests : IDisposable
         _scanner.Verify(
             s => s.ScanLibraryAsync(It.IsAny<string>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>(), It.IsAny<string>(), It.IsAny<IReadOnlyCollection<int>>()),
             Times.Never);
+    }
+
+    // --- GetIssues ---
+
+    [Fact]
+    public async Task GetIssues_ReturnsOnlyFailAndErrorScanResults()
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = Guid.NewGuid().ToString(),
+            FilePath = "/media/bad.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Fail,
+            ScanTimestamp = DateTime.UtcNow.ToString("O")
+        });
+
+        var controller = CreateController();
+        var result = await controller.GetIssues();
+
+        var response = Assert.IsType<PagedIssueResults>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(1, response.TotalCount);
+    }
+
+    // --- TriggerArrRemediation ---
+
+    [Fact]
+    public async Task TriggerArrRemediation_UnknownItemId_ReturnsNotFound()
+    {
+        var controller = CreateController();
+
+        var result = await controller.TriggerArrRemediation(Guid.NewGuid().ToString());
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task TriggerArrRemediation_NonGuidItemId_ReturnsNotFound()
+    {
+        var controller = CreateController();
+
+        var result = await controller.TriggerArrRemediation("not-a-guid");
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task TriggerArrRemediation_KnownItem_CallsRemediateAsync_AndReturnsItsResult()
+    {
+        var itemGuid = Guid.NewGuid();
+        var item = new Movie { Id = itemGuid };
+        _library.Setup(l => l.GetItemById(itemGuid)).Returns(item);
+
+        var expected = new ArrRemediationRecord { Id = 1, ItemId = itemGuid.ToString(), Status = "success" };
+        _arrRemediation.Setup(a => a.RemediateAsync(item, null, It.IsAny<CancellationToken>())).ReturnsAsync(expected);
+
+        var controller = CreateController();
+        var result = await controller.TriggerArrRemediation(itemGuid.ToString());
+
+        var response = Assert.IsType<ArrRemediationRecord>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal("success", response.Status);
+    }
+
+    // --- TriggerArrRemediationBulk ---
+
+    [Fact]
+    public async Task TriggerArrRemediationBulk_RemediatesEachKnownItem_SkipsUnknownOnes()
+    {
+        var knownId = Guid.NewGuid();
+        var unknownId = Guid.NewGuid();
+        var item = new Movie { Id = knownId };
+        _library.Setup(l => l.GetItemById(knownId)).Returns(item);
+        _library.Setup(l => l.GetItemById(unknownId)).Returns((BaseItem?)null);
+
+        _arrRemediation.Setup(a => a.RemediateAsync(item, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ArrRemediationRecord { Id = 1, ItemId = knownId.ToString(), Status = "success" });
+
+        var controller = CreateController();
+        var result = await controller.TriggerArrRemediationBulk(new ArrRemediationBulkRequest
+        {
+            ItemIds = new List<string> { knownId.ToString(), unknownId.ToString(), "not-a-guid" }
+        });
+
+        var response = Assert.IsType<List<ArrRemediationRecord>>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        var record = Assert.Single(response);
+        Assert.Equal(knownId.ToString(), record.ItemId);
+        _arrRemediation.Verify(a => a.RemediateAsync(It.IsAny<BaseItem>(), null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // --- CancelScan ---
