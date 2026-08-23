@@ -65,9 +65,26 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             new PluginPageInfo
             {
                 Name = "Media Integrity Scanner",
+                DisplayName = "Media Integrity Scanner",
                 EmbeddedResourcePath = GetType().Namespace + ".Web.integrity_dashboard.html",
                 EnableInMainMenu = true,
                 MenuIcon = "fact_check"
+            },
+            new PluginPageInfo
+            {
+                Name = "Media Issues",
+                // Explicit DisplayName is required here, not optional -- Jellyfin's
+                // own ConfigurationPageInfo (Jellyfin.Api/Models/ConfigurationPageInfo.cs)
+                // falls back to the *plugin's* own Name whenever a page's DisplayName
+                // is unset, which silently makes every main-menu page from the same
+                // plugin show identical sidebar text regardless of each page's own
+                // Name. Confirmed live (2026-08-23): without this, both pages showed
+                // "Media Integrity Scanner" in the sidebar despite different Name
+                // values -- Name only affects the page's URL slug, not what's displayed.
+                DisplayName = "Media Issues",
+                EmbeddedResourcePath = GetType().Namespace + ".Web.integrity_issues.html",
+                EnableInMainMenu = true,
+                MenuIcon = "healing"
             },
             new PluginPageInfo
             {

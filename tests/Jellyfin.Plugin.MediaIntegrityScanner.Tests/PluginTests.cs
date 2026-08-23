@@ -51,12 +51,13 @@ public class PluginTests : IDisposable
     }
 
     [Fact]
-    public void GetPages_ReturnsExactlyTwoPages_DashboardAndSettings()
+    public void GetPages_ReturnsExactlyThreePages_DashboardIssuesAndSettings()
     {
         var pages = CreatePlugin().GetPages().ToList();
 
-        Assert.Equal(2, pages.Count);
+        Assert.Equal(3, pages.Count);
         Assert.Contains(pages, p => p.Name == "Media Integrity Scanner");
+        Assert.Contains(pages, p => p.Name == "Media Issues");
         Assert.Contains(pages, p => p.Name == "Media Integrity Scanner Settings");
     }
 
@@ -67,6 +68,36 @@ public class PluginTests : IDisposable
 
         Assert.True(dashboardPage.EnableInMainMenu);
         Assert.Equal("fact_check", dashboardPage.MenuIcon);
+    }
+
+    [Fact]
+    public void GetPages_MainMenuPages_EachHaveADistinctExplicitDisplayName()
+    {
+        // Regression test for a real bug found live (2026-08-23): Jellyfin's
+        // own ConfigurationPageInfo (server-side) falls back to the *plugin's*
+        // Name whenever a page's own DisplayName is unset -- silently making
+        // every main-menu page from this plugin show identical sidebar text
+        // regardless of each page's distinct Name (Name only affects the
+        // page's URL slug). Both main-menu pages must set DisplayName
+        // explicitly, and it must actually differ between them.
+        var mainMenuPages = CreatePlugin().GetPages().Where(p => p.EnableInMainMenu).ToList();
+
+        Assert.All(mainMenuPages, p => Assert.False(string.IsNullOrWhiteSpace(p.DisplayName)));
+
+        var distinctDisplayNames = mainMenuPages.Select(p => p.DisplayName).Distinct().Count();
+        Assert.Equal(mainMenuPages.Count, distinctDisplayNames);
+    }
+
+    [Fact]
+    public void GetPages_IssuesPage_IsInMainMenuWithExpectedIcon()
+    {
+        // A top-level nav entry on purpose (ARR-INTEGRATION-PROPOSAL.md
+        // section 8.1) -- the whole point is making it easy to find, not one
+        // click deeper than the main dashboard.
+        var issuesPage = CreatePlugin().GetPages().Single(p => p.Name == "Media Issues");
+
+        Assert.True(issuesPage.EnableInMainMenu);
+        Assert.Equal("healing", issuesPage.MenuIcon);
     }
 
     [Fact]

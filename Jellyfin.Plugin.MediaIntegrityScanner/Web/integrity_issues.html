@@ -1,0 +1,405 @@
+<!--
+  Jellyfin Media Integrity Scanner - validates media file integrity using FFmpeg
+  Copyright (C) 2026  Michael McGarrah <mcgarrah@gmail.com>
+
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 2 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License along
+  with this program; if not, see <https://www.gnu.org/licenses/>.
+
+  Phase 1 scope only (ARR-INTEGRATION-PROPOSAL.md section 11): manual
+  single/bulk "Send to Radarr/Sonarr" only, no auto-forward, no Blocked
+  state or "Needs Manual Review" banner yet -- those arrive with Phase 2's
+  automatic forwarding, since nothing can hit the cycle-limit trip-wire
+  without it running in the background.
+-->
+<div id="MediaIssuesPage" data-role="page" class="page type-interior pluginConfigurationPage">
+    <div data-role="content" class="content-primary">
+        <style>
+            .integrity-issues { padding: 4em 2em 1em; font-family: inherit; }
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: 1em;
+                margin: 1.5em 0;
+            }
+            .stat-card {
+                background: rgba(255,255,255,0.05);
+                border-radius: 8px;
+                padding: 1.2em;
+                text-align: center;
+            }
+            .stat-value { font-size: 2em; font-weight: bold; margin: 0.2em 0; }
+            .stat-label { opacity: 0.7; font-size: 0.9em; }
+            .status-fail { color: #f44336; }
+            .btn {
+                padding: 0.5em 1.2em;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 0.9em;
+                margin-right: 0.5em;
+            }
+            .btn-primary { background: #00a4dc; color: white; }
+            .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+            .btn-sm { padding: 0.3em 0.7em; font-size: 0.8em; margin-right: 0; }
+            .controls { margin: 1em 0; display: flex; gap: 0.5em; align-items: center; flex-wrap: wrap; }
+            .results-table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+            .results-table th,
+            .results-table td { padding: 0.6em 1em; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }
+            .results-table th { opacity: 0.7; font-weight: 600; }
+            .filter-row { display: flex; gap: 1em; margin: 1em 0; align-items: center; }
+            .pagination { display: flex; gap: 0.5em; margin-top: 1em; align-items: center; }
+            .error-msg { color: #f44336; font-style: italic; margin: 1em 0; }
+            .loading { opacity: 0.5; font-style: italic; }
+            .nav-link { float: right; }
+            .chip {
+                display: inline-flex;
+                align-items: center;
+                padding: 0.2em 0.6em;
+                border-radius: 999px;
+                font-size: 0.78em;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+            .chip-sent { background: rgba(76,175,80,0.14); color: #4caf50; }
+            .chip-pending { background: rgba(33,150,243,0.14); color: #2196f3; }
+            .chip-unmatched { background: rgba(144,152,163,0.14); color: #9098a3; }
+            .chip-skipped { background: rgba(255,152,0,0.14); color: #ff9800; }
+            .chip-failed { background: rgba(244,67,54,0.14); color: #f44336; }
+            .chip-none { opacity: 0.5; }
+            .bulk-bar {
+                display: none;
+                align-items: center;
+                gap: 1em;
+                background: rgba(0,164,220,0.12);
+                border: 1px solid rgba(0,164,220,0.4);
+                border-radius: 8px;
+                padding: 0.7em 1.2em;
+                margin: 1em 0;
+            }
+            .bulk-bar.open { display: flex; }
+        </style>
+
+        <div class="integrity-issues">
+            <a class="nav-link" href="#/configurationpage?name=Media+Integrity+Scanner+Settings">Settings &raquo;</a>
+            <a class="nav-link" href="#/configurationpage?name=Media+Integrity+Scanner" style="margin-right:1em;">&laquo; Dashboard</a>
+            <h1>Media Issues</h1>
+            <p style="opacity:0.7;">Files that failed integrity checks, what they matched to in Radarr/Sonarr, and what's been done about it.</p>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Failed</div>
+                    <div class="stat-value status-fail" id="stat-failed">&mdash;</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Errored</div>
+                    <div class="stat-value status-fail" id="stat-errored">&mdash;</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Unmatched</div>
+                    <div class="stat-value" id="stat-unmatched" style="color:#9098a3;">&mdash;</div>
+                </div>
+            </div>
+
+            <div class="filter-row">
+                <select id="filter-status" onchange="loadIssues()">
+                    <option value="">All (Fail + Error)</option>
+                    <option value="2">Fail Only</option>
+                    <option value="3">Error Only</option>
+                </select>
+                <select id="filter-phase" onchange="loadIssues()">
+                    <option value="">All Phases</option>
+                    <option value="1">Header Only</option>
+                    <option value="2">Deep Only</option>
+                </select>
+                <select id="page-size-select" onchange="changePageSize()">
+                    <option value="25">25 / page</option>
+                    <option value="50" selected>50 / page</option>
+                    <option value="100">100 / page</option>
+                </select>
+                <button class="btn btn-primary" onclick="loadIssues()">Refresh</button>
+            </div>
+
+            <div class="bulk-bar" id="bulk-bar">
+                <span id="bulk-count">0 selected</span>
+                <button class="btn btn-primary" onclick="sendSelected()" id="btn-send-selected">Send Selected to Radarr/Sonarr</button>
+                <button class="btn" onclick="clearSelection()">Clear Selection</button>
+            </div>
+
+            <div id="error-msg" class="error-msg" style="display:none;"></div>
+
+            <table class="results-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="select-all" onchange="toggleSelectAll()"></th>
+                        <th>File</th>
+                        <th>Status</th>
+                        <th>Phase</th>
+                        <th>Last Scanned</th>
+                        <th>Error</th>
+                        <th>Arr Match</th>
+                        <th>Arr Action</th>
+                    </tr>
+                </thead>
+                <tbody id="issues-body">
+                    <tr><td colspan="8" class="loading">Loading...</td></tr>
+                </tbody>
+            </table>
+
+            <div class="pagination" id="pagination"></div>
+        </div>
+
+        <script>
+            var currentPage = 1;
+            var pageSize = 50;
+            var currentIssues = [];
+            var selectedItemIds = {};
+
+            function getApiUrl(path) {
+                return ApiClient.getUrl('MediaIntegrity/' + path);
+            }
+
+            function apiFetch(path, options) {
+                var url = getApiUrl(path);
+                var opts = Object.assign({
+                    headers: { 'X-Emby-Token': ApiClient.accessToken() }
+                }, options || {});
+                return fetch(url, opts).then(function(resp) {
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    return resp.json();
+                });
+            }
+
+            function showError(msg) {
+                var el = document.getElementById('error-msg');
+                el.textContent = msg;
+                el.style.display = 'block';
+            }
+
+            function hideError() {
+                document.getElementById('error-msg').style.display = 'none';
+            }
+
+            function escapeHtml(str) {
+                if (!str) return '';
+                return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }
+
+            function formatDate(iso) {
+                if (!iso) return '—';
+                try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+            }
+
+            // Arr Action chip text/class for a row's Remediation (null if this
+            // item has never been forwarded -- see IssueRecord.Remediation).
+            function renderArrAction(remediation) {
+                if (!remediation) {
+                    return '<span class="chip chip-none">Not sent</span>';
+                }
+
+                var action = remediation.ActionTaken;
+                var status = remediation.Status;
+
+                if (status === 'success' && action === 'deleted_and_blocklisted') {
+                    return '<span class="chip chip-sent">Deleted + blocklisted, searching</span>';
+                }
+                if (status === 'success' && action === 'deleted_and_searched') {
+                    return '<span class="chip chip-sent">Deleted, searching</span>';
+                }
+                if (action === 'unmatched') {
+                    return '<span class="chip chip-unmatched">Unmatched</span>';
+                }
+                if (action === 'no_replacement_available') {
+                    return '<span class="chip chip-skipped">No replacement found</span>';
+                }
+                if (status === 'failed') {
+                    return '<span class="chip chip-failed" title="' + escapeHtml(remediation.ErrorMessage || '') + '">Failed</span>';
+                }
+
+                return '<span class="chip chip-pending">Pending</span>';
+            }
+
+            function renderArrMatch(remediation) {
+                if (!remediation || !remediation.ArrItemId) {
+                    return '<span style="opacity:0.5;font-style:italic;">Not managed by Radarr/Sonarr</span>';
+                }
+
+                var app = remediation.ArrApp === 'radarr' ? 'Radarr' : 'Sonarr';
+                var server = remediation.ArrServerName ? ' &middot; ' + escapeHtml(remediation.ArrServerName) : '';
+                return app + server;
+            }
+
+            function loadIssues() {
+                var status = document.getElementById('filter-status').value;
+                var phase = document.getElementById('filter-phase').value;
+                var params = 'Issues?page=' + currentPage + '&pageSize=' + pageSize;
+                if (status) params += '&status=' + status;
+                if (phase) params += '&phase=' + phase;
+
+                apiFetch(params).then(function(data) {
+                    currentIssues = data.Items || [];
+                    renderIssues();
+                    renderPagination(data);
+                    renderStats();
+                    hideError();
+                }).catch(function(err) {
+                    showError('Failed to load issues: ' + err.message);
+                });
+            }
+
+            function renderStats() {
+                var failed = 0, errored = 0, unmatched = 0;
+                currentIssues.forEach(function(item) {
+                    if (item.ScanStatus === 2) failed++;
+                    if (item.ScanStatus === 3) errored++;
+                    if (item.Remediation && item.Remediation.ActionTaken === 'unmatched') unmatched++;
+                });
+                document.getElementById('stat-failed').textContent = failed;
+                document.getElementById('stat-errored').textContent = errored;
+                document.getElementById('stat-unmatched').textContent = unmatched;
+            }
+
+            function renderIssues() {
+                var tbody = document.getElementById('issues-body');
+                if (currentIssues.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8">No current issues.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = currentIssues.map(function(item) {
+                    var filename = item.FilePath ? item.FilePath.split('/').pop().split('\\').pop() : '—';
+                    var statusLabel = item.ScanStatus === 3 ? 'Error' : 'Fail';
+                    var phaseLabel = item.ScanPhase === 1 ? 'Header' : 'Full Decode';
+                    var error = item.ErrorOutput
+                        ? '<span title="' + escapeHtml(item.ErrorOutput) + '">' + escapeHtml(item.ErrorOutput.substring(0, 50)) + '</span>'
+                        : '—';
+                    var checked = selectedItemIds[item.ItemId] ? ' checked' : '';
+                    var sendDisabled = item.Remediation && item.Remediation.Status === 'success' ? ' disabled' : '';
+
+                    return '<tr>' +
+                        '<td><input type="checkbox"' + checked + ' onchange="toggleSelect(\'' + item.ItemId + '\')"></td>' +
+                        '<td title="' + escapeHtml(item.FilePath || '') + '">' + escapeHtml(filename) + '</td>' +
+                        '<td class="status-fail">' + statusLabel + '</td>' +
+                        '<td>' + phaseLabel + '</td>' +
+                        '<td>' + formatDate(item.ScanTimestamp) + '</td>' +
+                        '<td>' + error + '</td>' +
+                        '<td>' + renderArrMatch(item.Remediation) + '</td>' +
+                        '<td>' + renderArrAction(item.Remediation) +
+                            ' <button class="btn btn-primary btn-sm" onclick="sendOne(\'' + item.ItemId + '\')"' + sendDisabled + '>Send</button>' +
+                        '</td>' +
+                        '</tr>';
+                }).join('');
+            }
+
+            function toggleSelect(itemId) {
+                if (selectedItemIds[itemId]) {
+                    delete selectedItemIds[itemId];
+                } else {
+                    selectedItemIds[itemId] = true;
+                }
+                updateBulkBar();
+            }
+
+            function toggleSelectAll() {
+                var checked = document.getElementById('select-all').checked;
+                currentIssues.forEach(function(item) {
+                    if (checked) {
+                        selectedItemIds[item.ItemId] = true;
+                    } else {
+                        delete selectedItemIds[item.ItemId];
+                    }
+                });
+                renderIssues();
+                updateBulkBar();
+            }
+
+            function clearSelection() {
+                selectedItemIds = {};
+                document.getElementById('select-all').checked = false;
+                renderIssues();
+                updateBulkBar();
+            }
+
+            function updateBulkBar() {
+                var count = Object.keys(selectedItemIds).length;
+                var bar = document.getElementById('bulk-bar');
+                document.getElementById('bulk-count').textContent = count + ' selected';
+                bar.classList.toggle('open', count > 0);
+            }
+
+            function sendOne(itemId) {
+                apiFetch('ArrRemediation/' + itemId, {
+                    method: 'POST',
+                    headers: { 'X-Emby-Token': ApiClient.accessToken() }
+                }).then(function() {
+                    loadIssues();
+                }).catch(function(err) {
+                    showError('Failed to send item: ' + err.message);
+                });
+            }
+
+            function sendSelected() {
+                var itemIds = Object.keys(selectedItemIds);
+                if (itemIds.length === 0) return;
+
+                var btn = document.getElementById('btn-send-selected');
+                btn.disabled = true;
+
+                apiFetch('ArrRemediation/Bulk', {
+                    method: 'POST',
+                    headers: { 'X-Emby-Token': ApiClient.accessToken(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ itemIds: itemIds })
+                }).then(function() {
+                    clearSelection();
+                    loadIssues();
+                }).catch(function(err) {
+                    showError('Failed to send selected items: ' + err.message);
+                }).then(function() {
+                    btn.disabled = false;
+                });
+            }
+
+            function renderPagination(data) {
+                var totalPages = Math.ceil(data.TotalCount / pageSize);
+                var container = document.getElementById('pagination');
+
+                if (totalPages <= 1) {
+                    container.innerHTML = '';
+                    return;
+                }
+
+                var html = '';
+                if (currentPage > 1) {
+                    html += '<button class="btn btn-primary" onclick="goToPage(' + (currentPage - 1) + ')">&laquo; Prev</button>';
+                }
+                html += '<span>Page ' + currentPage + ' of ' + totalPages + ' (' + data.TotalCount + ' total)</span>';
+                if (currentPage < totalPages) {
+                    html += '<button class="btn btn-primary" onclick="goToPage(' + (currentPage + 1) + ')">Next &raquo;</button>';
+                }
+                container.innerHTML = html;
+            }
+
+            function goToPage(page) {
+                currentPage = page;
+                loadIssues();
+            }
+
+            function changePageSize() {
+                pageSize = parseInt(document.getElementById('page-size-select').value, 10);
+                currentPage = 1;
+                loadIssues();
+            }
+
+            loadIssues();
+        </script>
+    </div>
+</div>

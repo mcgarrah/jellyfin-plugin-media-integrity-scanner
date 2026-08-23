@@ -144,6 +144,7 @@
 
         <div class="integrity-dashboard">
             <a class="nav-link" href="#/configurationpage?name=Media+Integrity+Scanner+Settings">Settings &raquo;</a>
+            <a class="nav-link" id="issues-nav-link" href="#/configurationpage?name=Media+Issues" style="display:none;margin-right:1em;"></a>
             <h1>Media Integrity Scanner</h1>
             <div class="version-line">
                 Version <span id="current-version">&mdash;</span>
@@ -408,6 +409,7 @@
                         data.HealthPercentage + '%';
 
                     updateActiveScanBanner(data);
+                    updateIssuesNavLink(data);
 
                     // Update button states
                     document.getElementById('btn-cancel').disabled = !data.IsScanning;
@@ -809,6 +811,21 @@
                     ? 'Scanning: ' + parts.join(', ')
                     : 'Scanning: entire library (no scope filter)';
                 banner.classList.add('open');
+            }
+
+            // The dashboard's only footprint for the Media Issues page
+            // (ARR-INTEGRATION-PROPOSAL.md section 8.2) -- a single link,
+            // hidden entirely when there's nothing to look at, everything
+            // else about arr-forwarding status lives on that page instead.
+            function updateIssuesNavLink(data) {
+                var link = document.getElementById('issues-nav-link');
+                var count = (data.FailedFiles || 0) + (data.ErroredFiles || 0);
+                if (count > 0) {
+                    link.textContent = 'Media Issues (' + count + ') »';
+                    link.style.display = '';
+                } else {
+                    link.style.display = 'none';
+                }
             }
 
             function triggerScan(deep) {
