@@ -95,6 +95,34 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 
         await command.ExecuteNonQueryAsync().ConfigureAwait(false);
 
+        await using (var arrTableCommand = connection.CreateCommand())
+        {
+            arrTableCommand.CommandText = @"
+                CREATE TABLE IF NOT EXISTS arr_remediation (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id         TEXT NOT NULL,
+                    scan_record_id  INTEGER,
+                    file_path       TEXT NOT NULL,
+                    arr_app         TEXT NOT NULL,
+                    arr_server_name TEXT,
+                    match_method    TEXT NOT NULL,
+                    arr_item_id     INTEGER,
+                    arr_file_id     INTEGER,
+                    action_taken    TEXT,
+                    status          TEXT NOT NULL,
+                    error_message   TEXT,
+                    requested_at    TEXT NOT NULL,
+                    completed_at    TEXT,
+                    retry_count     INTEGER NOT NULL DEFAULT 0,
+                    cycle_number    INTEGER NOT NULL DEFAULT 1
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_arr_remediation_item_id ON arr_remediation(item_id);
+                CREATE INDEX IF NOT EXISTS idx_arr_remediation_status ON arr_remediation(status);
+            ";
+            await arrTableCommand.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+
         // Migration: decode_mode/hardware_accel_type were added after this
         // table's original CREATE TABLE, so existing databases need an
         // idempotent ALTER TABLE rather than relying on CREATE TABLE IF NOT
@@ -465,6 +493,216 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
         }
 
         return items;
+    }
+
+    /// <inheritdoc />
+    public async Task<long> RecordRemediationAsync(ArrRemediationRecord record)
+    {
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await using var connection = new SqliteConnection(_connectionString);
+            await connection.OpenAsync().ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = @"
+                INSERT INTO arr_remediation
+                    (item_id, scan_record_id, file_path, arr_app, arr_server_name,
+                     match_method, arr_item_id, arr_file_id, action_taken, status,
+                     error_message, requested_at, completed_at, retry_count, cycle_number)
+                VALUES
+                    (@itemId, @scanRecordId, @filePath, @arrApp, @arrServerName,
+                     @matchMethod, @arrItemId, @arrFileId, @actionTaken, @status,
+                     @errorMessage, @requestedAt, @completedAt, @retryCount, @cycleNumber);
+                SELECT last_insert_rowid();
+            ";
+
+            command.Parameters.AddWithValue("@itemId", record.ItemId);
+            command.Parameters.AddWithValue("@scanRecordId", (object?)record.ScanRecordId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@filePath", record.FilePath);
+            command.Parameters.AddWithValue("@arrApp", record.ArrApp);
+            command.Parameters.AddWithValue("@arrServerName", (object?)record.ArrServerName ?? DBNull.Value);
+            command.Parameters.AddWithValue("@matchMethod", record.MatchMethod);
+            command.Parameters.AddWithValue("@arrItemId", (object?)record.ArrItemId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@arrFileId", (object?)record.ArrFileId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@actionTaken", (object?)record.ActionTaken ?? DBNull.Value);
+            command.Parameters.AddWithValue("@status", record.Status);
+            command.Parameters.AddWithValue("@errorMessage", (object?)record.ErrorMessage ?? DBNull.Value);
+            command.Parameters.AddWithValue("@requestedAt", record.RequestedAt);
+            command.Parameters.AddWithValue("@completedAt", (object?)record.CompletedAt ?? DBNull.Value);
+            command.Parameters.AddWithValue("@retryCount", record.RetryCount);
+            command.Parameters.AddWithValue("@cycleNumber", record.CycleNumber);
+
+            var newId = Convert.ToInt64(
+                await command.ExecuteScalarAsync().ConfigureAwait(false),
+                System.Globalization.CultureInfo.InvariantCulture);
+
+            LogRemediationRecorded(record.ItemId, record.ArrApp, record.Status);
+            return newId;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<ArrRemediationRecord?> GetLatestRemediationForItemAsync(string itemId)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+            SELECT id, item_id, scan_record_id, file_path, arr_app, arr_server_name,
+                   match_method, arr_item_id, arr_file_id, action_taken, status,
+                   error_message, requested_at, completed_at, retry_count, cycle_number
+            FROM arr_remediation
+            WHERE item_id = @itemId
+            ORDER BY requested_at DESC, id DESC
+            LIMIT 1;
+        ";
+        command.Parameters.AddWithValue("@itemId", itemId);
+
+        await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+        if (!await reader.ReadAsync().ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        return ReadRemediationRecord(reader);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> CountSuccessfulRemediationsForItemAsync(string itemId)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM arr_remediation WHERE item_id = @itemId AND status = 'success';";
+        command.Parameters.AddWithValue("@itemId", itemId);
+
+        return Convert.ToInt32(
+            await command.ExecuteScalarAsync().ConfigureAwait(false),
+            System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <inheritdoc />
+    public async Task<PagedIssueResults> GetIssuesAsync(int? status, int? phase, int page, int pageSize)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+
+        var clauses = new List<string> { "sr.scan_status IN (2, 3)" }; // Fail=2, Error=3 -- this page never shows Pass/Pending
+        if (status.HasValue)
+        {
+            clauses.Add("sr.scan_status = @status");
+        }
+
+        if (phase.HasValue)
+        {
+            clauses.Add("sr.scan_phase = @phase");
+        }
+
+        var whereClause = "WHERE " + string.Join(" AND ", clauses);
+
+        await using (var countCmd = connection.CreateCommand())
+        {
+            countCmd.CommandText = $"SELECT COUNT(*) FROM scan_results sr {whereClause};";
+            if (status.HasValue)
+            {
+                countCmd.Parameters.AddWithValue("@status", status.Value);
+            }
+
+            if (phase.HasValue)
+            {
+                countCmd.Parameters.AddWithValue("@phase", phase.Value);
+            }
+
+            var totalCount = Convert.ToInt32(
+                await countCmd.ExecuteScalarAsync().ConfigureAwait(false),
+                System.Globalization.CultureInfo.InvariantCulture);
+
+            await using var queryCmd = connection.CreateCommand();
+            queryCmd.CommandText = $@"
+                SELECT sr.item_id, sr.file_path, sr.scan_phase, sr.scan_status,
+                       sr.scan_timestamp, sr.error_output,
+                       ar.id, ar.item_id, ar.scan_record_id, ar.file_path, ar.arr_app,
+                       ar.arr_server_name, ar.match_method, ar.arr_item_id, ar.arr_file_id,
+                       ar.action_taken, ar.status, ar.error_message, ar.requested_at,
+                       ar.completed_at, ar.retry_count, ar.cycle_number
+                FROM scan_results sr
+                LEFT JOIN arr_remediation ar ON ar.id = (
+                    SELECT ar2.id FROM arr_remediation ar2
+                    WHERE ar2.item_id = sr.item_id
+                    ORDER BY ar2.requested_at DESC, ar2.id DESC
+                    LIMIT 1
+                )
+                {whereClause}
+                ORDER BY sr.scan_timestamp DESC
+                LIMIT @limit OFFSET @offset;
+            ";
+            if (status.HasValue)
+            {
+                queryCmd.Parameters.AddWithValue("@status", status.Value);
+            }
+
+            if (phase.HasValue)
+            {
+                queryCmd.Parameters.AddWithValue("@phase", phase.Value);
+            }
+
+            queryCmd.Parameters.AddWithValue("@limit", pageSize);
+            queryCmd.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
+
+            var items = new List<IssueRecord>();
+            await using var reader = await queryCmd.ExecuteReaderAsync().ConfigureAwait(false);
+            while (await reader.ReadAsync().ConfigureAwait(false))
+            {
+                items.Add(new IssueRecord
+                {
+                    ItemId = reader.GetString(0),
+                    FilePath = reader.GetString(1),
+                    ScanPhase = reader.GetInt32(2),
+                    ScanStatus = reader.GetInt32(3),
+                    ScanTimestamp = reader.GetString(4),
+                    ErrorOutput = reader.IsDBNull(5) ? null : reader.GetString(5),
+                    Remediation = reader.IsDBNull(6) ? null : ReadRemediationRecord(reader, offset: 6)
+                });
+            }
+
+            return new PagedIssueResults { Items = items, TotalCount = totalCount };
+        }
+    }
+
+    /// <summary>
+    /// Maps the 16-column <c>arr_remediation</c> projection used by both
+    /// <see cref="GetLatestRemediationForItemAsync"/> (columns 0-15) and
+    /// <see cref="GetIssuesAsync"/> (the joined <c>ar.*</c> columns, offset 6)
+    /// to an <see cref="ArrRemediationRecord"/>.
+    /// </summary>
+    private static ArrRemediationRecord ReadRemediationRecord(SqliteDataReader reader, int offset = 0)
+    {
+        return new ArrRemediationRecord
+        {
+            Id = reader.GetInt64(offset),
+            ItemId = reader.GetString(offset + 1),
+            ScanRecordId = reader.IsDBNull(offset + 2) ? null : reader.GetInt64(offset + 2),
+            FilePath = reader.GetString(offset + 3),
+            ArrApp = reader.GetString(offset + 4),
+            ArrServerName = reader.IsDBNull(offset + 5) ? null : reader.GetString(offset + 5),
+            MatchMethod = reader.GetString(offset + 6),
+            ArrItemId = reader.IsDBNull(offset + 7) ? null : reader.GetInt32(offset + 7),
+            ArrFileId = reader.IsDBNull(offset + 8) ? null : reader.GetInt32(offset + 8),
+            ActionTaken = reader.IsDBNull(offset + 9) ? null : reader.GetString(offset + 9),
+            Status = reader.GetString(offset + 10),
+            ErrorMessage = reader.IsDBNull(offset + 11) ? null : reader.GetString(offset + 11),
+            RequestedAt = reader.GetString(offset + 12),
+            CompletedAt = reader.IsDBNull(offset + 13) ? null : reader.GetString(offset + 13),
+            RetryCount = reader.GetInt32(offset + 14),
+            CycleNumber = reader.GetInt32(offset + 15)
+        };
     }
 
     /// <summary>
@@ -940,6 +1178,9 @@ public partial class SqliteDatabaseManager : IDatabaseManager, IDisposable
 
     [LoggerMessage(EventId = 10, Level = LogLevel.Debug, Message = "Marked {Count} items pending for phase {Phase}")]
     private partial void LogMarkedPending(int count, int phase);
+
+    [LoggerMessage(EventId = 11, Level = LogLevel.Information, Message = "Recorded {ArrApp} remediation for item {ItemId}: {Status}")]
+    private partial void LogRemediationRecorded(string itemId, string arrApp, string status);
 }
 
 /// <summary>

@@ -113,6 +113,58 @@ public interface IDatabaseManager
     /// <param name="backupFileName">The backup file name, as returned by <see cref="ListBackupsAsync"/> -- not a full path.</param>
     /// <returns>A task representing the async operation.</returns>
     Task RestoreAsync(string backupFileName);
+
+    /// <summary>
+    /// Records one complete Radarr/Sonarr remediation attempt. Phase 1 has no
+    /// background worker (see <c>ARR-INTEGRATION-PROPOSAL.md</c>), so a
+    /// remediation is always recorded as a single, already-finished row --
+    /// there is no separate "enqueue, then update later" step yet.
+    /// </summary>
+    /// <param name="record">The remediation attempt to record. <see cref="ArrRemediationRecord.Id"/> is ignored on input.</param>
+    /// <returns>The new row's auto-generated ID.</returns>
+    Task<long> RecordRemediationAsync(ArrRemediationRecord record);
+
+    /// <summary>
+    /// Gets the most recent remediation attempt for a given Jellyfin item, or
+    /// <c>null</c> if it has never been forwarded.
+    /// </summary>
+    /// <param name="itemId">The Jellyfin item ID.</param>
+    /// <returns>The latest <see cref="ArrRemediationRecord"/>, or <c>null</c>.</returns>
+    Task<ArrRemediationRecord?> GetLatestRemediationForItemAsync(string itemId);
+
+    /// <summary>
+    /// Counts how many past remediation attempts for this item completed
+    /// successfully -- used to compute the next attempt's
+    /// <see cref="ArrRemediationRecord.CycleNumber"/>. Not enforced against
+    /// any limit in Phase 1 (see that property's doc comment).
+    /// </summary>
+    /// <param name="itemId">The Jellyfin item ID.</param>
+    /// <returns>The number of prior successful remediations.</returns>
+    Task<int> CountSuccessfulRemediationsForItemAsync(string itemId);
+
+    /// <summary>
+    /// Gets a paginated list of every current Fail/Error scan result, each
+    /// joined with its most recent remediation attempt if one exists. Backs
+    /// the "Media Issues" page (<c>GET /MediaIntegrity/Issues</c>).
+    /// </summary>
+    /// <param name="status">Optional scan-status filter (2 = fail, 3 = error). Null means both.</param>
+    /// <param name="phase">Optional scan-phase filter (1 = header, 2 = full decode).</param>
+    /// <param name="page">Page number (1-based).</param>
+    /// <param name="pageSize">Results per page.</param>
+    /// <returns>Paginated issue rows.</returns>
+    Task<PagedIssueResults> GetIssuesAsync(int? status, int? phase, int page, int pageSize);
+}
+
+/// <summary>
+/// Paginated response for <see cref="IDatabaseManager.GetIssuesAsync"/>.
+/// </summary>
+public class PagedIssueResults
+{
+    /// <summary>Gets or sets the list of issue rows for this page.</summary>
+    public List<IssueRecord> Items { get; set; } = new();
+
+    /// <summary>Gets or sets the total count of matching Fail/Error scan results.</summary>
+    public int TotalCount { get; set; }
 }
 
 /// <summary>
