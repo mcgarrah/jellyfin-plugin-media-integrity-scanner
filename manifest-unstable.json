@@ -8,6 +8,14 @@
     "category": "Administration",
     "versions": [
       {
+        "version": "0.3.0.54",
+        "changelog": "Automated pre-release build v0.3.0-dev.54. **Not guaranteed stable** -- see [release notes](https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/releases/tag/v0.3.0-dev.54).",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/releases/download/v0.3.0-dev.54/media-integrity-scanner-v0.3.0-dev.54.zip",
+        "checksum": "358dad9a770a9e4ef46e9577d78fd75d",
+        "timestamp": "2026-08-23T21:00:24Z"
+      },
+      {
         "version": "0.3.0.53",
         "changelog": "Automated pre-release build v0.3.0-dev.53. **Not guaranteed stable** -- see [release notes](https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner/releases/tag/v0.3.0-dev.53).",
         "targetAbi": "10.11.0.0",
