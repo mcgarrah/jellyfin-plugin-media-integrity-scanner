@@ -25,6 +25,21 @@
 - SSH access from WSL to the LXC is available for remote builds when needed.
 - GitHub Actions CI (Ubuntu runners) remains the primary build verification path.
 
+### `jellyfin-test` -- live dev-channel deployment target
+A real, LAN-reachable Jellyfin instance (Development update channel,
+`autoUpdate: true`) is used to verify each dev release actually works
+against a real library, not just CI. Merging a PR to `main` triggers
+`release-dev.yml`, which cuts a new `v0.3.0-dev.N` pre-release; this
+instance picks it up on its own periodic check afterward, no manual
+install step needed.
+
+**Real admin credentials and connection details are in
+`LOCAL-DEPLOYMENT-CREDS.md`** (repo root, gitignored -- never commit
+this file or its contents; see the credential-handling note in
+`.gitignore`). If that file is missing, ask the user for the
+credentials rather than guessing -- this is a real admin login on a
+real instance with a real media library, not a throwaway CI fixture.
+
 ### Git Configuration
 - Remote: `https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner.git`
 - Default branch: `main`
