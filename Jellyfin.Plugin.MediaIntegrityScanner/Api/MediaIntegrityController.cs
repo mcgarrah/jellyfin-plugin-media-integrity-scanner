@@ -136,7 +136,7 @@ public partial class MediaIntegrityController : ControllerBase
     public async Task<ActionResult<ScanStatusResponse>> GetStatus()
     {
         var stats = await _db.GetStatisticsAsync().ConfigureAwait(false);
-        var totalFiles = GetLibraryMediaItems(null, null, null).Count;
+        var totalFiles = GetLibraryMediaItemCount(null);
         var pendingHeaderFiles = Math.Max(0, totalFiles - stats.ScannedFiles);
         var pendingDeepFiles = Math.Max(0, totalFiles - stats.DeepScannedFiles);
 
@@ -171,6 +171,23 @@ public partial class MediaIntegrityController : ControllerBase
     /// </summary>
     private IReadOnlyList<BaseItem> GetLibraryMediaItems(Guid? parentId, string? nameFilter, int[]? seasons)
     {
+        return ScanScopeFilter.Apply(_library.GetItemList(BuildLibraryItemsQuery(parentId)), nameFilter, seasons);
+    }
+
+    /// <summary>
+    /// Counts real media items in the library without hydrating a full
+    /// <see cref="BaseItem"/> list -- unlike <see cref="GetLibraryMediaItems"/>,
+    /// only safe to use when there's no name/season filter to apply on top
+    /// (<see cref="ScanScopeFilter"/> requires materialized items), which is
+    /// the case for the unscoped total used by <see cref="GetStatus"/>.
+    /// </summary>
+    private int GetLibraryMediaItemCount(Guid? parentId)
+    {
+        return _library.GetCount(BuildLibraryItemsQuery(parentId));
+    }
+
+    private static InternalItemsQuery BuildLibraryItemsQuery(Guid? parentId)
+    {
         var query = new InternalItemsQuery
         {
             MediaTypes = new[] { MediaType.Video, MediaType.Audio },
@@ -187,7 +204,7 @@ public partial class MediaIntegrityController : ControllerBase
             query.ParentId = parentId.Value;
         }
 
-        return ScanScopeFilter.Apply(_library.GetItemList(query), nameFilter, seasons);
+        return query;
     }
 
     /// <summary>

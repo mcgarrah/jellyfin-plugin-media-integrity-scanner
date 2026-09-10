@@ -32,6 +32,21 @@
                 text-align: center;
             }
             .stat-value { font-size: 2em; font-weight: bold; margin: 0.2em 0; }
+            .stat-value.loading {
+                position: relative;
+                color: transparent !important;
+                background: linear-gradient(90deg, rgba(255,255,255,0.08) 25%, rgba(255,255,255,0.18) 37%, rgba(255,255,255,0.08) 63%);
+                background-size: 200% 100%;
+                border-radius: 4px;
+                animation: stat-skeleton 1.4s ease infinite;
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .stat-value.loading { animation: none; background: rgba(255,255,255,0.1); }
+            }
+            @keyframes stat-skeleton {
+                0% { background-position: 200% 0; }
+                100% { background-position: -200% 0; }
+            }
             .stat-label { opacity: 0.7; font-size: 0.9em; }
             .status-pass { color: #4caf50; }
             .status-fail { color: #f44336; }
@@ -161,35 +176,35 @@
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-label">Library Health</div>
-                    <div class="stat-value status-pass" id="health-pct">&mdash;</div>
+                    <div class="stat-value status-pass loading" id="health-pct">&mdash;</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Total Files</div>
-                    <div class="stat-value" id="total-files">&mdash;</div>
+                    <div class="stat-value loading" id="total-files">&mdash;</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Passed</div>
-                    <div class="stat-value status-pass" id="passed-files">&mdash;</div>
+                    <div class="stat-value status-pass loading" id="passed-files">&mdash;</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Failed</div>
-                    <div class="stat-value status-fail" id="failed-files">&mdash;</div>
+                    <div class="stat-value status-fail loading" id="failed-files">&mdash;</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Errored</div>
-                    <div class="stat-value status-fail" id="errored-files">&mdash;</div>
+                    <div class="stat-value status-fail loading" id="errored-files">&mdash;</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Pending Header Scan</div>
-                    <div class="stat-value status-pending" id="pending-header-files">&mdash;</div>
+                    <div class="stat-value status-pending loading" id="pending-header-files">&mdash;</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Pending Deep Scan</div>
-                    <div class="stat-value status-pending" id="pending-deep-files">&mdash;</div>
+                    <div class="stat-value status-pending loading" id="pending-deep-files">&mdash;</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">Status</div>
-                    <div class="stat-value status-scanning" id="scan-status">Idle</div>
+                    <div class="stat-value status-scanning loading" id="scan-status">Idle</div>
                 </div>
             </div>
 
@@ -314,11 +329,11 @@
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-label">On-Disk Size</div>
-                        <div class="stat-value" id="db-file-size">&mdash;</div>
+                        <div class="stat-value loading" id="db-file-size">&mdash;</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-label">Reclaimable</div>
-                        <div class="stat-value" id="db-reclaimable-size">&mdash;</div>
+                        <div class="stat-value loading" id="db-reclaimable-size">&mdash;</div>
                     </div>
                 </div>
                 <button class="btn btn-primary" id="btn-maintenance-now" onclick="dash_runDatabaseMaintenance()">Run Maintenance Now</button>
@@ -398,25 +413,23 @@
                 });
             }
 
+            function setStatText(id, text) {
+                var el = document.getElementById(id);
+                el.textContent = text;
+                el.classList.remove('loading');
+            }
+
             function loadStatus() {
                 apiFetch('Status').then(function(data) {
-                    document.getElementById('health-pct').textContent =
-                        data.HealthPercentage + '%';
-                    document.getElementById('total-files').textContent =
-                        data.TotalFiles;
-                    document.getElementById('passed-files').textContent =
-                        data.PassedFiles;
-                    document.getElementById('failed-files').textContent =
-                        data.FailedFiles;
-                    document.getElementById('errored-files').textContent =
-                        data.ErroredFiles;
-                    document.getElementById('pending-header-files').textContent =
-                        data.PendingHeaderFiles;
-                    document.getElementById('pending-deep-files').textContent =
-                        data.PendingDeepFiles;
+                    setStatText('health-pct', data.HealthPercentage + '%');
+                    setStatText('total-files', data.TotalFiles);
+                    setStatText('passed-files', data.PassedFiles);
+                    setStatText('failed-files', data.FailedFiles);
+                    setStatText('errored-files', data.ErroredFiles);
+                    setStatText('pending-header-files', data.PendingHeaderFiles);
+                    setStatText('pending-deep-files', data.PendingDeepFiles);
                     var phaseLabel = data.CurrentPhase === 1 ? ' (Header)' : data.CurrentPhase === 2 ? ' (Deep)' : '';
-                    document.getElementById('scan-status').textContent =
-                        data.IsScanning ? 'Scanning' + phaseLabel + '...' : 'Idle';
+                    setStatText('scan-status', data.IsScanning ? 'Scanning' + phaseLabel + '...' : 'Idle');
                     document.getElementById('health-bar').style.width =
                         data.HealthPercentage + '%';
 
@@ -440,6 +453,10 @@
 
                     hideError();
                 }).catch(function(err) {
+                    ['health-pct', 'total-files', 'passed-files', 'failed-files', 'errored-files',
+                        'pending-header-files', 'pending-deep-files', 'scan-status'].forEach(function(id) {
+                        document.getElementById(id).classList.remove('loading');
+                    });
                     showError('Failed to load status: ' + err.message);
                 });
             }
@@ -684,9 +701,11 @@
 
             function loadDatabaseInfo() {
                 apiFetch('Database/Info').then(function(info) {
-                    document.getElementById('db-file-size').textContent = formatBytes(info.FileSizeBytes);
-                    document.getElementById('db-reclaimable-size').textContent = formatBytes(info.ReclaimableBytes);
+                    setStatText('db-file-size', formatBytes(info.FileSizeBytes));
+                    setStatText('db-reclaimable-size', formatBytes(info.ReclaimableBytes));
                 }).catch(function(err) {
+                    document.getElementById('db-file-size').classList.remove('loading');
+                    document.getElementById('db-reclaimable-size').classList.remove('loading');
                     showError('Failed to load database info: ' + err.message);
                 });
             }
@@ -1067,8 +1086,34 @@
             loadBackups();
             loadDatabaseInfo();
 
-            // Auto-refresh status every 10 seconds
-            refreshInterval = setInterval(loadStatus, 10000);
+            // Auto-refresh status every 10 seconds, but only while this tab is
+            // visible -- an admin leaving the dashboard open in a background
+            // tab for hours shouldn't keep polling it indefinitely.
+            function startAutoRefresh() {
+                if (refreshInterval === null) {
+                    refreshInterval = setInterval(loadStatus, 10000);
+                }
+            }
+
+            function stopAutoRefresh() {
+                if (refreshInterval !== null) {
+                    clearInterval(refreshInterval);
+                    refreshInterval = null;
+                }
+            }
+
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) {
+                    stopAutoRefresh();
+                } else {
+                    loadStatus();
+                    startAutoRefresh();
+                }
+            });
+
+            if (!document.hidden) {
+                startAutoRefresh();
+            }
         })();
         </script>
     </div>

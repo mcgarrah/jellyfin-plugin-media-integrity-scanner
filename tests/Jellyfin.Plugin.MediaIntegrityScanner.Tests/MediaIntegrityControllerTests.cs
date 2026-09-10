@@ -101,6 +101,7 @@ public class MediaIntegrityControllerTests : IDisposable
         }
 
         _library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>())).Returns(items);
+        _library.Setup(l => l.GetCount(It.IsAny<InternalItemsQuery>())).Returns(items.Count);
     }
 
     // --- GetStatus ---
