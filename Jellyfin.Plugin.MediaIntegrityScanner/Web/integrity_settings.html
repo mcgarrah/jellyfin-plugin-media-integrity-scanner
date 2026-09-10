@@ -482,7 +482,7 @@
                 var url = getApiUrl(path);
                 var opts = Object.assign({
                     headers: {
-                        'X-Emby-Token': ApiClient.accessToken()
+                        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"'
                     }
                 }, options || {});
                 return fetch(url, opts).then(function (resp) {
@@ -500,7 +500,7 @@
                 apiFetch('Ffmpeg/Refresh', {
                     method: 'POST',
                     headers: {
-                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
                         'Content-Type': 'application/json'
                     }
                 }).then(function (result) {

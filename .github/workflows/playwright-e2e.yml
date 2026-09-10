@@ -30,15 +30,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 9
+      - name: Setup .NET 9 and .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: |
+            9.0.x
+            10.0.x
 
       - name: Build plugin
+        # Multi-targeted project (net9.0/Jellyfin 10.11, net10.0/Jellyfin
+        # 12.0) -- publish requires an explicit --framework. This suite tests
+        # UI behavior, not per-Jellyfin-version API differences (that's
+        # integration-test.yml's job, matrixed over both), so it deliberately
+        # stays single-target rather than doubling browser-test runtime --
+        # net10.0/12.0 as the current default, matching
+        # docker-compose.integration.yml's own default image.
         run: |
           dotnet restore Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj
-          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --framework net10.0 --output ./publish
 
       - name: Create Jellyfin directories and install plugin
         run: |

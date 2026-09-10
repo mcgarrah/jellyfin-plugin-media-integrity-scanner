@@ -228,7 +228,7 @@
             function apiFetch(path, options) {
                 var url = getApiUrl(path);
                 var opts = Object.assign({
-                    headers: { 'X-Emby-Token': ApiClient.accessToken() }
+                    headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' }
                 }, options || {});
                 return fetch(url, opts).then(function(resp) {
                     if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -442,7 +442,7 @@
             function sendOne(itemId) {
                 apiFetch('ArrRemediation/' + itemId, {
                     method: 'POST',
-                    headers: { 'X-Emby-Token': ApiClient.accessToken() }
+                    headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' }
                 }).then(function() {
                     loadIssues();
                 }).catch(function(err) {
@@ -453,7 +453,7 @@
             function resetCycle(itemId) {
                 apiFetch('ArrRemediation/' + itemId + '/ResetCycle', {
                     method: 'POST',
-                    headers: { 'X-Emby-Token': ApiClient.accessToken() }
+                    headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' }
                 }).then(function() {
                     loadIssues();
                 }).catch(function(err) {
@@ -470,7 +470,7 @@
 
                 apiFetch('ArrRemediation/Bulk', {
                     method: 'POST',
-                    headers: { 'X-Emby-Token': ApiClient.accessToken(), 'Content-Type': 'application/json' },
+                    headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"', 'Content-Type': 'application/json' },
                     body: JSON.stringify({ itemIds: itemIds })
                 }).then(function() {
                     clearSelection();

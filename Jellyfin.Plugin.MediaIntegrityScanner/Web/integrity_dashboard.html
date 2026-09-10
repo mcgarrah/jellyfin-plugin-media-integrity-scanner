@@ -389,7 +389,7 @@
                 var url = getApiUrl(path);
                 var opts = Object.assign({
                     headers: {
-                        'X-Emby-Token': ApiClient.accessToken()
+                        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"'
                     }
                 }, options || {});
                 return fetch(url, opts).then(function(resp) {
@@ -640,7 +640,7 @@
                 apiFetch('Database/Backup', {
                     method: 'POST',
                     headers: {
-                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
                         'Content-Type': 'application/json'
                     }
                 }).then(function() {
@@ -665,7 +665,7 @@
                 apiFetch('Database/Restore', {
                     method: 'POST',
                     headers: {
-                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ fileName: fileName })
@@ -700,7 +700,7 @@
                 apiFetch('Database/Maintenance', {
                     method: 'POST',
                     headers: {
-                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
                         'Content-Type': 'application/json'
                     }
                 }).then(function(result) {
@@ -848,7 +848,7 @@
                 apiFetch('Scan', {
                     method: 'POST',
                     headers: {
-                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
@@ -872,7 +872,7 @@
                 apiFetch('Cancel', {
                     method: 'POST',
                     headers: {
-                        'X-Emby-Token': ApiClient.accessToken()
+                        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"'
                     }
                 }).then(function() {
                     setTimeout(loadStatus, 1000);
@@ -953,7 +953,7 @@
                 apiFetch('UpdateStatus/Install', {
                     method: 'POST',
                     headers: {
-                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ channel: lastUpdateStatus.Channel })
@@ -976,7 +976,7 @@
                 apiFetch('UpdateStatus/Refresh', {
                     method: 'POST',
                     headers: {
-                        'X-Emby-Token': ApiClient.accessToken(),
+                        'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"',
                         'Content-Type': 'application/json'
                     }
                 }).then(function() {
