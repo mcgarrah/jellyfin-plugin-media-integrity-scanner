@@ -1189,6 +1189,34 @@ public class MediaIntegrityControllerTests : IDisposable
         Assert.Contains("\"moov atom not found, \"\"invalid\"\" data\nsecond line\"", csv, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("csv")]
+    [InlineData("tsv")]
+    public async Task ExportResults_NeutralizesLeadingFormulaCharacters_ToPreventCsvInjection(string format)
+    {
+        await _dbFactory.Database.SaveResultAsync(new ScanRecord
+        {
+            ItemId = "item-1",
+            FilePath = "=2+2.mkv",
+            ScanPhase = (int)ScanPhase.Header,
+            ScanStatus = (int)ScanStatus.Fail,
+            ScanTimestamp = "2026-01-01T00:00:00.0000000Z",
+            ErrorOutput = "@SUM(A1:A9)"
+        });
+
+        var controller = CreateController();
+        var result = await controller.ExportResults(format: format);
+
+        var file = Assert.IsType<FileContentResult>(result);
+        var text = System.Text.Encoding.UTF8.GetString(file.FileContents);
+
+        // A field starting with =, +, -, or @ gets a leading straight quote so
+        // Excel/LibreOffice/Sheets render it as text instead of evaluating it
+        // as a formula when the export is opened.
+        Assert.Contains("'=2+2.mkv", text, StringComparison.Ordinal);
+        Assert.Contains("'@SUM(A1:A9)", text, StringComparison.Ordinal);
+    }
+
     // --- GetUpdateStatus / RefreshUpdateStatus / InstallUpdate ---
 
     [Fact]

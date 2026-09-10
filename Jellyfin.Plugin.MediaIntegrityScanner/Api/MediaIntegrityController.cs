@@ -504,6 +504,8 @@ public partial class MediaIntegrityController : ControllerBase
     /// </summary>
     private static string FormatField(string value, bool isTsv)
     {
+        value = NeutralizeFormulaInjection(value);
+
         if (isTsv)
         {
             return value.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
@@ -515,6 +517,22 @@ public partial class MediaIntegrityController : ControllerBase
         }
 
         return value;
+    }
+
+    /// <summary>
+    /// Prefixes a leading formula-trigger character (<c>=</c>, <c>+</c>, <c>-</c>,
+    /// <c>@</c>) with a single quote so spreadsheet apps (Excel, LibreOffice,
+    /// Google Sheets) treat the cell as plain text instead of evaluating it as a
+    /// formula -- CSV/TSV injection, CWE-1236. The exported FilePath and
+    /// ErrorOutput fields both originate from real filesystem content (media
+    /// filenames, ffmpeg/ffprobe output), which isn't trusted input just
+    /// because it's an admin running the export.
+    /// </summary>
+    private static string NeutralizeFormulaInjection(string value)
+    {
+        return value.Length > 0 && (value[0] == '=' || value[0] == '+' || value[0] == '-' || value[0] == '@')
+            ? "'" + value
+            : value;
     }
 
     /// <summary>

@@ -435,7 +435,7 @@
                         '</div>' +
                         '<div class="field-row">' +
                             '<label>API Key</label>' +
-                            '<input type="text" value="' + escapeAttr(server.ApiKey) + '" ' +
+                            '<input type="password" autocomplete="off" value="' + escapeAttr(server.ApiKey) + '" ' +
                                 'oninput="settings_updateServerField(\'' + app + '\', ' + index + ', \'ApiKey\', this.value)">' +
                             '<div class="field-hint">Found in ' + (app === 'radarr' ? 'Radarr' : 'Sonarr') + ' under Settings &gt; General &gt; Security.</div>' +
                         '</div>' +
