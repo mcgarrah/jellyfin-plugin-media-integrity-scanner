@@ -29,10 +29,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 9
+      - name: Setup .NET 9 and .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: |
+            9.0.x
+            10.0.x
 
       - name: Restore dependencies
         run: dotnet restore --verbosity normal
@@ -51,10 +53,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 9
+      - name: Setup .NET 9 and .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: |
+            9.0.x
+            10.0.x
 
       - name: Restore dependencies
         run: dotnet restore --verbosity normal
@@ -65,15 +69,23 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release --no-restore --verbosity normal
 
-      - name: Publish
-        run: dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./artifacts --no-build
+      - name: Publish (both targets)
+        # Multi-targeted project: publish needs an explicit --framework per
+        # invocation, unlike build/test which handle all TFMs automatically.
+        run: |
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --framework net9.0 --output ./artifacts-net9.0 --no-build
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --framework net10.0 --output ./artifacts-net10.0 --no-build
 
       - name: List artifacts
-        run: ls -la ./artifacts/
+        run: |
+          ls -la ./artifacts-net9.0/
+          ls -la ./artifacts-net10.0/
 
-      - name: Upload build artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
           name: media-integrity-scanner
-          path: ./artifacts/
+          path: |
+            ./artifacts-net9.0/
+            ./artifacts-net10.0/
           retention-days: 30

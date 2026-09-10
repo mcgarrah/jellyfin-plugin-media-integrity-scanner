@@ -24,10 +24,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 9
+      - name: Setup .NET 9 and .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: |
+            9.0.x
+            10.0.x
 
       - name: Compute dev version and bump Directory.Build.props (build-only, not committed)
         id: version
@@ -60,13 +62,15 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj
 
-      - name: Build Release
-        run: dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
-
-      - name: Package
+      - name: Build Release (both targets)
         run: |
-          cd publish
-          zip -r "../media-integrity-scanner-${{ steps.version.outputs.tag }}.zip" .
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --framework net9.0 --output ./publish-net9.0
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --framework net10.0 --output ./publish-net10.0
+
+      - name: Package (both targets)
+        run: |
+          (cd publish-net9.0 && zip -r "../media-integrity-scanner-${{ steps.version.outputs.tag }}-jf10.11.zip" .)
+          (cd publish-net10.0 && zip -r "../media-integrity-scanner-${{ steps.version.outputs.tag }}-jf12.0.zip" .)
 
       - name: Create GitHub pre-release
         uses: softprops/action-gh-release@v3
@@ -74,7 +78,9 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }} (development build)
           prerelease: true
-          files: media-integrity-scanner-${{ steps.version.outputs.tag }}.zip
+          files: |
+            media-integrity-scanner-${{ steps.version.outputs.tag }}-jf10.11.zip
+            media-integrity-scanner-${{ steps.version.outputs.tag }}-jf12.0.zip
           generate_release_notes: true
 
       - name: Update manifest-unstable.json
@@ -91,12 +97,18 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           for attempt in 1 2 3 4 5; do
-            python3 scripts/update-manifest.py "${{ steps.version.outputs.tag }}" "media-integrity-scanner-${{ steps.version.outputs.tag }}.zip" \
+            python3 scripts/update-manifest.py "${{ steps.version.outputs.tag }}" "media-integrity-scanner-${{ steps.version.outputs.tag }}-jf10.11.zip" \
+              --target-framework net9.0 \
+              --manifest manifest-unstable.json \
+              --manifest-version "${{ steps.version.outputs.manifest_version }}" \
+              --prerelease
+            python3 scripts/update-manifest.py "${{ steps.version.outputs.tag }}" "media-integrity-scanner-${{ steps.version.outputs.tag }}-jf12.0.zip" \
+              --target-framework net10.0 \
               --manifest manifest-unstable.json \
               --manifest-version "${{ steps.version.outputs.manifest_version }}" \
               --prerelease
             git add manifest-unstable.json
-            git commit -m "chore: dev release ${{ steps.version.outputs.tag }} (manifest-unstable.json)"
+            git commit -m "chore: dev release ${{ steps.version.outputs.tag }} (manifest-unstable.json, both targets)"
 
             if git push origin HEAD:main; then
               echo "Pushed manifest-unstable.json update on attempt $attempt"

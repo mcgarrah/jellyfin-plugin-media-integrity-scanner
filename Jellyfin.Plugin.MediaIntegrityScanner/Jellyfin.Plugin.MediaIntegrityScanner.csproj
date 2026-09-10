@@ -1,7 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <!-- Multi-targeting, not separate branches: confirmed via a real build,
+         424 unit tests, and a full Docker integration-test run against an
+         actual jellyfin/jellyfin:12.0 container that this plugin's C# source
+         needs zero changes between Jellyfin 10.11 and 12.0; only the
+         TargetFramework and Jellyfin.Controller/Jellyfin.Model package
+         majors differ. That makes multi-targeting the right call over the
+         intro-skipper-style branch-per-version split: one bug fix lands in
+         both builds automatically instead of needing to be cherry-picked
+         between two long-lived branches forever. Revisit only if a future
+         Jellyfin version genuinely needs different code, not just different
+         package references. -->
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
   </PropertyGroup>
 
@@ -9,17 +20,24 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- ExcludeAssets="runtime" on these two: Jellyfin's own host process
-         already has MediaBrowser.Controller/MediaBrowser.Model (and their
-         whole transitive dependency tree, e.g. EF Core, ICU4N, Polly)
-         loaded. Without this, `dotnet publish` copies a second copy of all
-         of it into the plugin's own output folder alongside the plugin DLL:
-         pure bloat, not something a plugin should ship. Reference
-         assemblies are still available at compile time; only the
-         runtime/copy-to-output behavior is suppressed. -->
+  <!-- ExcludeAssets="runtime" on the Jellyfin.Controller/Jellyfin.Model refs
+       below: Jellyfin's own host process already has MediaBrowser.Controller/
+       MediaBrowser.Model (and their whole transitive dependency tree, e.g.
+       EF Core, ICU4N, Polly) loaded. Without this, `dotnet publish` copies a
+       second copy of all of it into the plugin's own output folder alongside
+       the plugin DLL: pure bloat, not something a plugin should ship.
+       Reference assemblies are still available at compile time; only the
+       runtime/copy-to-output behavior is suppressed. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
     <PackageReference Include="Jellyfin.Controller" Version="10.11.*" ExcludeAssets="runtime" />
     <PackageReference Include="Jellyfin.Model" Version="10.11.*" ExcludeAssets="runtime" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Jellyfin.Controller" Version="12.0.*" ExcludeAssets="runtime" />
+    <PackageReference Include="Jellyfin.Model" Version="12.0.*" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.*" />
     <!-- Pin SQLitePCLRaw to 3.0+ to resolve CVE in SQLitePCLRaw.lib.e_sqlite3 <= 2.1.11.
          Version 3.0 replaces the vulnerable native lib with SourceGear.sqlite3 (SQLite 3.50.3+). -->

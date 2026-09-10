@@ -158,7 +158,7 @@ info "Authenticating..."
 
 AUTH_RESPONSE=$(curl -s -X POST "$JELLYFIN_URL/Users/AuthenticateByName" \
     -H "Content-Type: application/json" \
-    -H "X-Emby-Authorization: MediaBrowser Client=\"Integration Test\", Device=\"Local\", DeviceId=\"local-test\", Version=\"1.0.0\"" \
+    -H "Authorization: MediaBrowser Client=\"Integration Test\", Device=\"Local\", DeviceId=\"local-test\", Version=\"1.0.0\"" \
     -d '{
         "Username": "testadmin",
         "Pw": "testpassword123"
@@ -177,7 +177,7 @@ pass "Authenticated successfully"
 info "Creating test media library..."
 
 curl -sf -X POST "$JELLYFIN_URL/Library/VirtualFolders?name=TestMovies&collectionType=movies&refreshLibrary=true" \
-    -H "X-Emby-Token: $TOKEN" \
+    -H "Authorization: MediaBrowser Token=\"$TOKEN\"" \
     -H "Content-Type: application/json" \
     -d '{
         "LibraryOptions": {
@@ -195,7 +195,7 @@ curl -sf -X POST "$JELLYFIN_URL/Library/VirtualFolders?name=TestMovies&collectio
 # as Video/Audio media first.
 EXPECTED_MEDIA_COUNT=7
 for i in $(seq 1 60); do
-    ITEMS=$(curl -sf "$JELLYFIN_URL/Items?Recursive=true" -H "X-Emby-Token: $TOKEN")
+    ITEMS=$(curl -sf "$JELLYFIN_URL/Items?Recursive=true" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
     ITEM_COUNT=$(echo "$ITEMS" | jq '[.Items[] | select(.MediaType == "Video" or .MediaType == "Audio")] | length')
     if [ "$ITEM_COUNT" -ge "$EXPECTED_MEDIA_COUNT" ]; then
         pass "Media library created with $ITEM_COUNT media item(s) (after ${i}s)"
@@ -216,7 +216,7 @@ done
 # MaxConcurrentScans (1) can take longer than a single file to fully drain.
 info "Waiting for automatic scan-on-add to settle..."
 for i in $(seq 1 60); do
-    AUTO_STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+    AUTO_STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
     AUTO_SCANNING=$(echo "$AUTO_STATUS" | jq -r '.IsScanning')
     if [ "$AUTO_SCANNING" = "false" ]; then
         pass "No automatic scan in progress (after ${i}s)"

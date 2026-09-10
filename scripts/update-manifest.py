@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
 """Updates a plugin manifest with a new release entry after a build.
 
-Usage: update-manifest.py <tag> <zip-path> [--manifest PATH] [--manifest-version VERSION] [--prerelease]
+Usage: update-manifest.py <tag> <zip-path> --target-framework net9.0|net10.0
+       [--manifest PATH] [--manifest-version VERSION] [--prerelease]
 
 Run from the repository root, after the release zip has been built (see
 .github/workflows/release.yml and release-dev.yml). Normalizes the git tag
 (e.g. "v0.2.0") into the 4-part version format Jellyfin's plugin manifest
 expects, computes the MD5 checksum of the release archive, derives
-targetAbi from the Jellyfin.Controller package reference in the csproj, and
-prepends a new version entry to the manifest (replacing any existing entry
-for the same version, so re-running for the same tag is idempotent).
+targetAbi from the Jellyfin.Controller package reference for the given
+--target-framework's conditional ItemGroup in the csproj, and prepends a
+new version entry to the manifest.
+
+Since the csproj multi-targets net9.0/net10.0 with two separate conditional
+Jellyfin.Controller references (one per Jellyfin major version), the release
+workflow calls this script once per framework/zip for the same tag -- both
+entries share the same "version" string but have different "targetAbi"
+values, which is expected and matches how the official Jellyfin-repo plugins
+publish multi-version support. Dedup is keyed on (version, targetAbi)
+together, not version alone, specifically so the second call doesn't clobber
+the first call's entry for the same tag.
 
 --manifest-version exists because Jellyfin manifest version strings must be
 a clean 4-part numeric System.Version (no semver "-dev"/"-rc" suffixes,
@@ -44,13 +54,30 @@ def normalize_version(tag: str) -> str:
     return ".".join(parts)
 
 
-def read_target_abi() -> str:
-    """Derives the plugin's targetAbi from the Jellyfin.Controller package reference."""
+def read_target_abi(target_framework: str) -> str:
+    """Derives targetAbi from the Jellyfin.Controller reference for one TFM's conditional ItemGroup.
+
+    The csproj multi-targets net9.0/net10.0, each with its own
+    Condition="'$(TargetFramework)' == '...'" ItemGroup carrying a different
+    Jellyfin.Controller major version -- a plain whole-file regex would just
+    match whichever one appears first, silently picking the wrong ABI half
+    the time. Scopes the search to the specific ItemGroup block instead.
+    """
     text = CSPROJ_PATH.read_text(encoding="utf-8")
-    match = re.search(r'Jellyfin\.Controller"\s+Version="([\d.]+)\*?"', text)
+    block_pattern = (
+        r"<ItemGroup\s+Condition=\"'\$\(TargetFramework\)'\s*==\s*'"
+        + re.escape(target_framework)
+        + r"'\">(.*?)</ItemGroup>"
+    )
+    block_match = re.search(block_pattern, text, re.DOTALL)
+    if not block_match:
+        raise RuntimeError(
+            f"Could not find a conditional ItemGroup for TargetFramework '{target_framework}' in csproj"
+        )
+    match = re.search(r'Jellyfin\.Controller"\s+Version="([\d.]+)\*?"', block_match.group(1))
     if not match:
         raise RuntimeError(
-            "Could not determine targetAbi from csproj Jellyfin.Controller reference"
+            f"Could not determine targetAbi from csproj Jellyfin.Controller reference for '{target_framework}'"
         )
     base = match.group(1).rstrip(".")
     parts = (base.split(".") + ["0"] * 4)[:4]
@@ -70,6 +97,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tag", help="Git tag / GitHub release tag (e.g. v0.2.0 or v0.1.0-dev.147)")
     parser.add_argument("zip_path", help="Path to the built release archive")
+    parser.add_argument(
+        "--target-framework",
+        required=True,
+        choices=["net9.0", "net10.0"],
+        help="Which multi-targeted build this zip is for -- selects which conditional "
+        "ItemGroup's Jellyfin.Controller reference to read the targetAbi from.",
+    )
     parser.add_argument(
         "--manifest",
         default=str(REPO_ROOT / "manifest.json"),
@@ -108,21 +142,31 @@ def main() -> None:
         else f"Automated release {args.tag}. See [release notes]({release_url}) for details."
     )
 
+    target_abi = read_target_abi(args.target_framework)
+
     entry = {
         "version": version,
         "changelog": changelog,
-        "targetAbi": read_target_abi(),
+        "targetAbi": target_abi,
         "sourceUrl": f"{REPO_URL}/releases/download/{args.tag}/{zip_path.name}",
         "checksum": compute_checksum(zip_path),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
-    versions = [v for v in plugin.get("versions", []) if v.get("version") != version]
+    # Keyed on (version, targetAbi) together, not version alone: one tag now
+    # produces two entries (net9.0/10.11 and net10.0/12.0) that legitimately
+    # share the same version string but differ by targetAbi. Deduping on
+    # version alone would make the second call silently overwrite the first.
+    versions = [
+        v
+        for v in plugin.get("versions", [])
+        if not (v.get("version") == version and v.get("targetAbi") == target_abi)
+    ]
     versions.insert(0, entry)
     plugin["versions"] = versions
 
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(f"{manifest_path.name} updated with version {version}")
+    print(f"{manifest_path.name} updated with version {version} (targetAbi {target_abi})")
 
 
 if __name__ == "__main__":

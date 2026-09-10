@@ -66,7 +66,7 @@ test.describe('Report a Bug', () => {
     // Confirms the withholding behavior end-to-end through the real HTTP
     // stack, not just the unit-tested controller method in isolation.
     const diag = await request.get('/MediaIntegrity/Diagnostics', {
-      headers: { 'X-Emby-Token': await page.evaluate(() => window.ApiClient.accessToken()) }
+      headers: { Authorization: `MediaBrowser Token="${await page.evaluate(() => window.ApiClient.accessToken())}"` }
     });
     const diagBody = await diag.json();
 

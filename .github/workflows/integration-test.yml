@@ -6,6 +6,19 @@ name: Integration Test
 # containers) to just retarget the same compose file. Cross-platform coverage
 # lives in build.yml's dotnet-test matrix instead, which has no such
 # dependency -- see that file's comment for the full scoping rationale.
+#
+# Matrixed across both multi-targeted builds and their real Jellyfin server
+# lines (net9.0/10.11.11, net10.0/12.0) -- confirming the plugin actually
+# works against both, not just that it compiles against both (build.yml's
+# dotnet-test only proves the latter, with mocked interfaces).
+#
+# Delegates to tests/setup-jellyfin.sh (sourced by run-integration-tests.sh)
+# instead of reimplementing the startup-wizard/auth/library-setup sequence
+# inline in YAML -- this workflow used to carry its own ~500-line duplicate
+# of that sequence, which had silently drifted out of sync with the shared
+# script (still using the pre-12.0 X-Emby-Authorization/X-Emby-Token headers
+# after the shared script was already fixed). One implementation, used by
+# this workflow, the Playwright suite, and local dev alike.
 
 on:
   push:
@@ -18,40 +31,33 @@ jobs:
   integration-test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_framework: net9.0
+            jellyfin_image: jellyfin/jellyfin:10.11.11
+          - target_framework: net10.0
+            jellyfin_image: jellyfin/jellyfin:12.0
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 9
+      - name: Setup .NET 9 and .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: |
+            9.0.x
+            10.0.x
 
-      - name: Build plugin
+      - name: Build plugin (${{ matrix.target_framework }})
         run: |
           dotnet restore Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj
-          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --framework ${{ matrix.target_framework }} --output ./publish
 
       - name: List build output
         run: ls -la ./publish/
-
-      - name: Create Jellyfin directories
-        run: |
-          mkdir -p jellyfin-config/plugins/MediaIntegrityScanner
-          mkdir -p jellyfin-cache
-          mkdir -p test-media
-
-      - name: Install plugin into Jellyfin config
-        run: |
-          cp ./publish/Jellyfin.Plugin.MediaIntegrityScanner.dll \
-             jellyfin-config/plugins/MediaIntegrityScanner/
-          cp ./publish/Microsoft.Data.Sqlite.dll \
-             jellyfin-config/plugins/MediaIntegrityScanner/ 2>/dev/null || true
-          cp ./publish/SQLitePCLRaw.*.dll \
-             jellyfin-config/plugins/MediaIntegrityScanner/ 2>/dev/null || true
-          echo "Plugin files installed:"
-          ls -la jellyfin-config/plugins/MediaIntegrityScanner/
 
       - name: Create test media file
         run: |
@@ -61,559 +67,44 @@ jobs:
           # since /usr/lib/jellyfin-ffmpeg isn't present on the runner itself
           # (only inside the Jellyfin container started below).
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          bash tests/generate-test-media.sh test-media
+          bash tests/generate-test-media.sh tests/test-media
           echo "Test media created:"
-          ls -la test-media/
+          ls -la tests/test-media/
 
-      - name: Start Jellyfin container
+      - name: Pre-create plugin directory with correct ownership
+        # Must happen before the container ever starts: if
+        # tests/jellyfin-config doesn't exist yet when `docker compose up`
+        # runs, Docker creates the bind-mount target as root, and every
+        # subsequent non-root mkdir/cp into it (including the ones
+        # setup-jellyfin.sh does on its own) fails with Permission denied.
+        # Pre-creating and populating it here as the runner user avoids that
+        # entirely -- confirmed by hitting this exact failure locally when
+        # testing this workflow before adding this step.
         run: |
-          docker run -d \
-            --name jellyfin-test \
-            -p 8096:8096 \
-            -v ${{ github.workspace }}/jellyfin-config:/config \
-            -v ${{ github.workspace }}/jellyfin-cache:/cache \
-            -v ${{ github.workspace }}/test-media:/media \
-            -e JELLYFIN_LOG_LEVEL=Information \
-            jellyfin/jellyfin:10.11.11
-          echo "Jellyfin container started"
+          mkdir -p tests/jellyfin-config/plugins/MediaIntegrityScanner
+          mkdir -p tests/jellyfin-cache
+          cp ./publish/Jellyfin.Plugin.MediaIntegrityScanner.dll tests/jellyfin-config/plugins/MediaIntegrityScanner/
+          cp ./publish/Microsoft.Data.Sqlite.dll tests/jellyfin-config/plugins/MediaIntegrityScanner/ 2>/dev/null || true
+          cp ./publish/SQLitePCLRaw.*.dll tests/jellyfin-config/plugins/MediaIntegrityScanner/ 2>/dev/null || true
+          cp ./publish/meta.json tests/jellyfin-config/plugins/MediaIntegrityScanner/ 2>/dev/null || true
 
-      - name: Wait for Jellyfin to be fully ready
-        run: |
-          echo "Waiting for Jellyfin health check..."
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:8096/health > /dev/null 2>&1; then
-              echo "Health check passed after ${i} seconds"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "ERROR: Jellyfin failed to start within 60 seconds"
-              docker logs jellyfin-test
-              exit 1
-            fi
-            sleep 1
-          done
+      - name: Start Jellyfin container (${{ matrix.jellyfin_image }})
+        env:
+          JELLYFIN_IMAGE: ${{ matrix.jellyfin_image }}
+        run: docker compose -f tests/docker-compose.integration.yml up -d
 
-          # Health check passes before initialization completes.
-          # Wait for the startup wizard API to become available.
-          echo "Waiting for startup wizard API..."
-          for i in $(seq 1 60); do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8096/Startup/Configuration || true)
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "Startup wizard API ready after ${i} additional seconds"
-              break
-            fi
-            echo "  Attempt ${i}: HTTP $HTTP_CODE (waiting...)"
-            if [ "$i" -eq 60 ]; then
-              echo "ERROR: Startup wizard API not available after 60 seconds (last HTTP code: $HTTP_CODE)"
-              docker logs jellyfin-test 2>&1 | tail -30
-              exit 1
-            fi
-            sleep 1
-          done
-
-      - name: Complete Jellyfin initial setup
-        run: |
-          # Complete the startup wizard via API
-          # Step 1: Set startup configuration (language/metadata)
-          echo "Setting startup configuration..."
-          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-            -X POST http://localhost:8096/Startup/Configuration \
-            -H "Content-Type: application/json" \
-            -d '{
-              "UICulture": "en-US",
-              "MetadataCountryCode": "US",
-              "PreferredMetadataLanguage": "en"
-            }' || true)
-          echo "  Configuration response: HTTP $HTTP_CODE"
-          if [ "$HTTP_CODE" -ge 400 ]; then
-            echo "  Response body: $(cat /tmp/response.txt)"
-            exit 1
-          fi
-
-          # Step 2: Initialize and update admin user
-          # GET /Startup/User triggers user initialization in 10.11+
-          echo "Initializing default user..."
-          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-            http://localhost:8096/Startup/User || true)
-          echo "  Get user response: HTTP $HTTP_CODE"
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "  WARNING: GET /Startup/User returned $HTTP_CODE (response: $(cat /tmp/response.txt 2>/dev/null))"
-          fi
-
-          echo "Setting admin username and password..."
-          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-            -X POST http://localhost:8096/Startup/User \
-            -H "Content-Type: application/json" \
-            -d '{
-              "Name": "testadmin",
-              "Password": "testpassword123"
-            }' || true)
-          echo "  User creation response: HTTP $HTTP_CODE"
-          if [ "$HTTP_CODE" -ge 400 ]; then
-            echo "  Response body: $(cat /tmp/response.txt)"
-            exit 1
-          fi
-
-          # Step 3: Set remote access (required by 10.11 wizard)
-          echo "Setting remote access..."
-          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-            -X POST http://localhost:8096/Startup/RemoteAccess \
-            -H "Content-Type: application/json" \
-            -d '{
-              "EnableRemoteAccess": true,
-              "EnableAutomaticPortMapping": false
-            }' || true)
-          echo "  Remote access response: HTTP $HTTP_CODE"
-          # RemoteAccess may not exist on all versions, don't fail
-          if [ "$HTTP_CODE" -ge 500 ]; then
-            echo "  Response body: $(cat /tmp/response.txt)"
-            exit 1
-          fi
-
-          # Step 4: Complete the wizard
-          echo "Completing wizard..."
-          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-            -X POST http://localhost:8096/Startup/Complete || true)
-          echo "  Complete response: HTTP $HTTP_CODE"
-          if [ "$HTTP_CODE" -ge 400 ]; then
-            echo "  Response body: $(cat /tmp/response.txt)"
-            exit 1
-          fi
-
-          echo "Startup wizard completed successfully"
-
-          # Give Jellyfin a moment to restart/reconfigure after wizard completion
-          sleep 3
-
-      - name: Authenticate and get API key
-        id: auth
-        run: |
-          # Authenticate to get an access token
-          echo "Authenticating as testadmin..."
-          AUTH_RESPONSE=$(curl -s -X POST http://localhost:8096/Users/AuthenticateByName \
-            -H "Content-Type: application/json" \
-            -H "X-Emby-Authorization: MediaBrowser Client=\"Integration Test\", Device=\"GitHub Actions\", DeviceId=\"gh-actions-runner\", Version=\"1.0.0\"" \
-            -d '{
-              "Username": "testadmin",
-              "Pw": "testpassword123"
-            }')
-
-          TOKEN=$(echo "$AUTH_RESPONSE" | jq -r '.AccessToken')
-
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "ERROR: Failed to get access token"
-            echo "Response: $AUTH_RESPONSE"
-            exit 1
-          fi
-
-          echo "api_token=$TOKEN" >> "$GITHUB_OUTPUT"
-          echo "Successfully authenticated"
-
-      - name: Verify plugin is loaded
-        run: |
-          TOKEN="${{ steps.auth.outputs.api_token }}"
-
-          # Get list of installed plugins
-          PLUGINS=$(curl -sf http://localhost:8096/Plugins \
-            -H "X-Emby-Token: $TOKEN")
-
-          echo "Installed plugins:"
-          echo "$PLUGINS" | jq '.[].Name'
-
-          # Check our plugin is present
-          PLUGIN_FOUND=$(echo "$PLUGINS" | jq '[.[] | select(.Id == "c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c")] | length')
-
-          if [ "$PLUGIN_FOUND" -eq 0 ]; then
-            echo "ERROR: Media Integrity Scanner plugin not found in loaded plugins"
-            echo "Full plugin list:"
-            echo "$PLUGINS" | jq .
-            docker logs jellyfin-test 2>&1 | grep -i -A5 "integrity\|plugin\|error" || true
-            exit 1
-          fi
-
-          echo "SUCCESS: Media Integrity Scanner plugin is loaded"
-          echo "$PLUGINS" | jq '.[] | select(.Id == "c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c")'
-
-      - name: Verify plugin configuration endpoint
-        run: |
-          TOKEN="${{ steps.auth.outputs.api_token }}"
-
-          # Get plugin configuration
-          CONFIG=$(curl -sf http://localhost:8096/Plugins/c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c/Configuration \
-            -H "X-Emby-Token: $TOKEN") || true
-
-          if [ -n "$CONFIG" ]; then
-            echo "Plugin configuration accessible:"
-            echo "$CONFIG" | jq .
-          else
-            echo "WARNING: Plugin configuration endpoint not available (may be expected for scaffold)"
-          fi
-
-      - name: Verify FFmpeg is available in container
-        run: |
-          set -euo pipefail
-          echo "Checking FFmpeg availability inside Jellyfin container..."
-          # jellyfin-ffmpeg is not symlinked onto PATH in the jellyfin/jellyfin
-          # image, so a bare `ffmpeg`/`ffprobe` exec always fails. This step
-          # previously piped into `head -5` without pipefail, which masked
-          # that failure (head's own exit code is 0) and let this pass
-          # silently for a long time without actually verifying anything.
-          docker exec jellyfin-test /usr/lib/jellyfin-ffmpeg/ffmpeg -version | head -5
-          docker exec jellyfin-test /usr/lib/jellyfin-ffmpeg/ffprobe -version | head -5
-          echo "FFmpeg is available"
-
-      - name: Verify settings page configuration round-trip
-        run: |
-          set -euo pipefail
-          TOKEN="${{ steps.auth.outputs.api_token }}"
-          PLUGIN_GUID="c8f4a3b21d5e4f6a9b7c2e8d0f1a3b5c"
-
-          ORIGINAL_CONFIG=$(curl -sf "http://localhost:8096/Plugins/$PLUGIN_GUID/Configuration" -H "X-Emby-Token: $TOKEN")
-
-          UPDATED_CONFIG='{
-            "MaxConcurrentScans": 3,
-            "DelayBetweenFilesMs": 1234,
-            "PauseDuringPlayback": false,
-            "EnableDeepScan": true,
-            "MaxReadRateMbPerSec": 7,
-            "UseQuietHoursOnly": true,
-            "QuietHoursStart": "23:00",
-            "QuietHoursEnd": "05:30",
-            "FfmpegPathOverride": "/custom/ffmpeg",
-            "FfprobePathOverride": "/custom/ffprobe",
-            "ScanOnItemAdded": false,
-            "PurgeOnItemRemoved": false
-          }'
-
-          echo "Saving updated configuration (simulating the settings page Save button)..."
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8096/Plugins/$PLUGIN_GUID/Configuration" \
-            -H "X-Emby-Token: $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$UPDATED_CONFIG")
-          if [ "$HTTP_CODE" -ge 300 ]; then
-            echo "ERROR: Settings save failed with HTTP $HTTP_CODE"
-            exit 1
-          fi
-
-          SAVED_CONFIG=$(curl -sf "http://localhost:8096/Plugins/$PLUGIN_GUID/Configuration" -H "X-Emby-Token: $TOKEN")
-          SAVED_MAX_CONCURRENT=$(echo "$SAVED_CONFIG" | jq '.MaxConcurrentScans')
-          SAVED_QUIET_START=$(echo "$SAVED_CONFIG" | jq -r '.QuietHoursStart')
-          SAVED_FFMPEG_OVERRIDE=$(echo "$SAVED_CONFIG" | jq -r '.FfmpegPathOverride')
-
-          if [ "$SAVED_MAX_CONCURRENT" = "3" ] && [ "$SAVED_QUIET_START" = "23:00" ] && [ "$SAVED_FFMPEG_OVERRIDE" = "/custom/ffmpeg" ]; then
-            echo "SUCCESS: configuration saved and persisted correctly"
-          else
-            echo "ERROR: saved configuration did not round-trip correctly: $SAVED_CONFIG"
-            exit 1
-          fi
-
-          echo "Restoring original configuration..."
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8096/Plugins/$PLUGIN_GUID/Configuration" \
-            -H "X-Emby-Token: $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$ORIGINAL_CONFIG")
-          if [ "$HTTP_CODE" -ge 300 ]; then
-            echo "ERROR: failed to restore original configuration (HTTP $HTTP_CODE)"
-            exit 1
-          fi
-          echo "Original configuration restored"
-
-      - name: Verify plugin web pages are served
-        run: |
-          set -euo pipefail
-          TOKEN="${{ steps.auth.outputs.api_token }}"
-
-          DASHBOARD_CODE=$(curl -s -o /tmp/dashboard_page.html -w "%{http_code}" \
-            "http://localhost:8096/web/configurationpage?name=Media+Integrity+Scanner" -H "X-Emby-Token: $TOKEN")
-          SETTINGS_CODE=$(curl -s -o /tmp/settings_page.html -w "%{http_code}" \
-            "http://localhost:8096/web/configurationpage?name=Media+Integrity+Scanner+Settings" -H "X-Emby-Token: $TOKEN")
-
-          if [ "$DASHBOARD_CODE" = "200" ] && grep -q "MediaIntegrity" /tmp/dashboard_page.html; then
-            echo "SUCCESS: dashboard page served (HTTP $DASHBOARD_CODE)"
-          else
-            echo "ERROR: dashboard page not served correctly (HTTP $DASHBOARD_CODE)"
-            exit 1
-          fi
-
-          if [ "$SETTINGS_CODE" = "200" ] && grep -q "getPluginConfiguration" /tmp/settings_page.html; then
-            echo "SUCCESS: settings page served (HTTP $SETTINGS_CODE)"
-          else
-            echo "ERROR: settings page not served correctly (HTTP $SETTINGS_CODE)"
-            exit 1
-          fi
-
-      - name: Add test media library
-        run: |
-          TOKEN="${{ steps.auth.outputs.api_token }}"
-
-          # Create a media library pointing to our test media
-          curl -sf -X POST "http://localhost:8096/Library/VirtualFolders?name=TestMovies&collectionType=movies&refreshLibrary=true" \
-            -H "X-Emby-Token: $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "LibraryOptions": {
-                "PathInfos": [{"Path": "/media"}],
-                "EnableRealtimeMonitor": false
-              }
-            }'
-
-          echo "Test library created, waiting for scan..."
-
-          # Poll for all 7 test-media items (not just "any"): the matrix
-          # includes deliberately unreadable files (bad-empty, bad-garbage)
-          # whose own metadata probing takes Jellyfin's indexer longer than
-          # a single well-formed file -- breaking on the first item visible
-          # left the library only partially indexed for later exact-count
-          # assertions, since the plugin's own file count depends on
-          # Jellyfin having finished classifying every item as Video/Audio
-          # media first.
-          for i in $(seq 1 60); do
-            ITEMS=$(curl -sf "http://localhost:8096/Items?Recursive=true" \
-              -H "X-Emby-Token: $TOKEN")
-            ITEM_COUNT=$(echo "$ITEMS" | jq '[.Items[] | select(.MediaType == "Video" or .MediaType == "Audio")] | length')
-            if [ "$ITEM_COUNT" -ge 7 ]; then
-              echo "Library items found: $ITEM_COUNT (after ${i} seconds)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "ERROR: expected 7 media items after 60 seconds, only found $ITEM_COUNT"
-              exit 1
-            fi
-            sleep 1
-          done
-
-          # Adding the library triggers Jellyfin's own scan, which fires
-          # ItemAdded events. Since ScanOnItemAdded defaults to true, the
-          # plugin's LibraryMonitor kicks off its own fire-and-forget header
-          # scan of the new item. Wait for that background scan to settle
-          # so it doesn't race with (and 409) the scan triggered manually
-          # in the next step. 7 files at the default DelayBetweenFilesMs
-          # (5000ms) and MaxConcurrentScans (1) can take longer than 30s to
-          # fully drain -- verified end-to-end at 60s.
-          echo "Waiting for automatic scan-on-add to settle..."
-          for i in $(seq 1 60); do
-            AUTO_STATUS=$(curl -sf "http://localhost:8096/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
-            AUTO_SCANNING=$(echo "$AUTO_STATUS" | jq -r '.IsScanning')
-            if [ "$AUTO_SCANNING" = "false" ]; then
-              echo "No automatic scan in progress (after ${i} seconds)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "WARNING: automatic scan-on-add still in progress after 60 seconds, proceeding anyway"
-            fi
-            sleep 1
-          done
-
-      - name: Trigger scan and verify results
-        run: |
-          set -euo pipefail
-          TOKEN="${{ steps.auth.outputs.api_token }}"
-
-          echo "Triggering a header scan of the library..."
-          # Retry on 409 (a lingering automatic scan-on-add can still be
-          # finishing up even after the settle-check above) instead of
-          # failing outright.
-          HTTP_CODE=""
-          for i in $(seq 1 10); do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8096/MediaIntegrity/Scan" \
-              -H "X-Emby-Token: $TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"deepScan": false}')
-            if [ "$HTTP_CODE" = "202" ]; then
-              break
-            fi
-            if [ "$HTTP_CODE" != "409" ]; then
-              break
-            fi
-            sleep 1
-          done
-          if [ "$HTTP_CODE" != "202" ]; then
-            echo "ERROR: triggering scan failed with HTTP $HTTP_CODE (expected 202 Accepted)"
-            exit 1
-          fi
-          echo "Scan triggered (HTTP 202)"
-
-          echo "Waiting for scan to complete..."
-          for i in $(seq 1 60); do
-            STATUS=$(curl -sf "http://localhost:8096/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
-            # Note: Jellyfin's host serializes controller responses in
-            # PascalCase (not the ASP.NET Core camelCase default) -- the
-            # dashboard's JS needed the same fix, see CODE_REVIEW.md.
-            IS_SCANNING=$(echo "$STATUS" | jq -r '.IsScanning')
-            if [ "$IS_SCANNING" = "false" ]; then
-              echo "Scan completed (after ${i} seconds)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "ERROR: scan did not complete within 60 seconds. Last status: $STATUS"
-              exit 1
-            fi
-            sleep 1
-          done
-
-          echo "Verifying scan results..."
-          # Expected counts after a Header scan of the 7-file good/bad
-          # matrix, verified by hand against the real jellyfin-ffmpeg
-          # binaries in this image (see generate-test-media.sh's header
-          # comment for the full pass/fail table):
-          #   good-header, good-alt-codec, bad-truncated, bad-middecode -> Pass (4)
-          #   bad-empty, bad-garbage, bad-header-corrupt                -> Fail (3)
-          # (bad-truncated/bad-middecode only fail once deep-scanned in the
-          # next step -- ffprobe's header-only read never touches the
-          # corrupted frame data.)
-          FINAL_STATUS=$(curl -sf "http://localhost:8096/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
-          TOTAL_FILES=$(echo "$FINAL_STATUS" | jq '.TotalFiles')
-          SCANNED_FILES=$(echo "$FINAL_STATUS" | jq '.ScannedFiles')
-          PASSED_FILES=$(echo "$FINAL_STATUS" | jq '.PassedFiles')
-          FAILED_FILES=$(echo "$FINAL_STATUS" | jq '.FailedFiles')
-
-          if [ "$TOTAL_FILES" != "7" ] || [ "$SCANNED_FILES" != "7" ]; then
-            echo "ERROR: expected 7 total/scanned files, got total=$TOTAL_FILES scanned=$SCANNED_FILES. Status: $FINAL_STATUS"
-            exit 1
-          fi
-          if [ "$PASSED_FILES" != "4" ] || [ "$FAILED_FILES" != "3" ]; then
-            echo "ERROR: expected 4 passed / 3 failed after the Header scan, got passed=$PASSED_FILES failed=$FAILED_FILES. Status: $FINAL_STATUS"
-            exit 1
-          fi
-          echo "SUCCESS: library health reflects the scan: $SCANNED_FILES scanned, $PASSED_FILES passed, $FAILED_FILES failed"
-
-          RESULTS=$(curl -sf "http://localhost:8096/MediaIntegrity/Results?status=1" -H "X-Emby-Token: $TOKEN")
-          RESULT_COUNT=$(echo "$RESULTS" | jq '.TotalCount')
-
-          if [ "$RESULT_COUNT" -lt 1 ]; then
-            echo "ERROR: expected at least 1 passed scan result via GET /MediaIntegrity/Results?status=1, got $RESULT_COUNT"
-            exit 1
-          fi
-          echo "SUCCESS: GET /MediaIntegrity/Results?status=1 returns $RESULT_COUNT passed result(s)"
-          echo "$RESULTS" | jq '.Items[0] | {FilePath, ScanStatus, ScanPhase, ScanDurationMs}'
-
-          echo "item_id=$(echo "$RESULTS" | jq -r '.Items[0].ItemId')" >> "$GITHUB_OUTPUT"
-        id: scan
-
-      - name: Verify item detail, deep scan, and cancel endpoints
-        run: |
-          set -euo pipefail
-          TOKEN="${{ steps.auth.outputs.api_token }}"
-          ITEM_ID="${{ steps.scan.outputs.item_id }}"
-
-          echo "Checking GET /MediaIntegrity/Results/{itemId}..."
-          DETAIL_CODE=$(curl -s -o /tmp/item_detail.json -w "%{http_code}" \
-            "http://localhost:8096/MediaIntegrity/Results/$ITEM_ID" -H "X-Emby-Token: $TOKEN")
-          if [ "$DETAIL_CODE" != "200" ]; then
-            echo "ERROR: GET /MediaIntegrity/Results/{itemId} failed with HTTP $DETAIL_CODE"
-            exit 1
-          fi
-          DETAIL_PHASE=$(jq '.ScanPhase' /tmp/item_detail.json)
-          if [ "$DETAIL_PHASE" != "1" ]; then
-            echo "ERROR: expected item detail ScanPhase 1 (Header) after the header scan, got $DETAIL_PHASE"
-            exit 1
-          fi
-          echo "SUCCESS: item detail endpoint returns the item's Header scan record"
-
-          NOT_FOUND_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            "http://localhost:8096/MediaIntegrity/Results/00000000-0000-0000-0000-000000000000" -H "X-Emby-Token: $TOKEN")
-          if [ "$NOT_FOUND_CODE" != "404" ]; then
-            echo "ERROR: expected HTTP 404 for an unknown item ID, got $NOT_FOUND_CODE"
-            exit 1
-          fi
-          echo "SUCCESS: item detail endpoint returns 404 for an unknown item ID"
-
-          # The library-wide scan trigger (and the scheduled tasks) skip
-          # files that already have a passing scan at or above the requested
-          # phase (IsCurrentAsync). bad-truncated.mp4 already passed its
-          # Header scan (ffprobe never reads past the intact moov atom), so
-          # a library-wide deep scan would skip it entirely. Scanning it
-          # directly by ItemId bypasses that currency check and forces the
-          # FullDecode pass to actually run against it -- this is also the
-          # only way to exercise the ItemId-scoped branch of TriggerScan at
-          # all.
-          #
-          # Look up its ItemId via the plugin's own Results endpoint, not
-          # Jellyfin's /Items -- Jellyfin's own API returns item IDs in
-          # dashless ("N") format, while this plugin stores/expects the
-          # standard dashed Guid.ToString(), so an ID lifted from /Items
-          # would 404 against /MediaIntegrity/Results/{itemId} without
-          # reformatting. Results?status=1 is already in the right format.
-          PASSED_RESULTS=$(curl -sf "http://localhost:8096/MediaIntegrity/Results?status=1&pageSize=50" -H "X-Emby-Token: $TOKEN")
-          TRUNCATED_ITEM_ID=$(echo "$PASSED_RESULTS" | jq -r '.Items[] | select(.FilePath | endswith("bad-truncated.mp4")) | .ItemId')
-          if [ -z "$TRUNCATED_ITEM_ID" ] || [ "$TRUNCATED_ITEM_ID" = "null" ]; then
-            echo "ERROR: could not find a passed Header scan result for bad-truncated.mp4. Results: $PASSED_RESULTS"
-            exit 1
-          fi
-
-          echo "Triggering a deep (FullDecode) scan of bad-truncated.mp4 (currently Pass at Header)..."
-          HTTP_CODE=""
-          for i in $(seq 1 10); do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8096/MediaIntegrity/Scan" \
-              -H "X-Emby-Token: $TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{\"itemId\": \"$TRUNCATED_ITEM_ID\", \"deepScan\": true}")
-            if [ "$HTTP_CODE" = "202" ]; then
-              break
-            fi
-            if [ "$HTTP_CODE" != "409" ]; then
-              break
-            fi
-            sleep 1
-          done
-          if [ "$HTTP_CODE" != "202" ]; then
-            echo "ERROR: triggering deep scan failed with HTTP $HTTP_CODE (expected 202 Accepted)"
-            exit 1
-          fi
-          echo "Deep scan triggered (HTTP 202)"
-
-          for i in $(seq 1 60); do
-            STATUS=$(curl -sf "http://localhost:8096/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
-            IS_SCANNING=$(echo "$STATUS" | jq -r '.IsScanning')
-            if [ "$IS_SCANNING" = "false" ]; then
-              echo "Deep scan completed (after ${i} seconds)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "ERROR: deep scan did not complete within 60 seconds. Last status: $STATUS"
-              exit 1
-            fi
-            sleep 1
-          done
-
-          DEEP_DETAIL=$(curl -sf "http://localhost:8096/MediaIntegrity/Results/$TRUNCATED_ITEM_ID" -H "X-Emby-Token: $TOKEN")
-          DEEP_PHASE=$(echo "$DEEP_DETAIL" | jq '.ScanPhase')
-          DEEP_STATUS=$(echo "$DEEP_DETAIL" | jq '.ScanStatus')
-          if [ "$DEEP_PHASE" != "2" ] || [ "$DEEP_STATUS" != "2" ]; then
-            echo "ERROR: expected ScanPhase 2 (FullDecode) / ScanStatus 2 (Fail) after the deep scan, got phase=$DEEP_PHASE status=$DEEP_STATUS. Detail: $DEEP_DETAIL"
-            exit 1
-          fi
-          echo "SUCCESS: bad-truncated.mp4 flipped from Pass (Header) to Fail (FullDecode) -- the two-phase split works"
-          echo "$DEEP_DETAIL" | jq '.ErrorOutput'
-
-          echo "Checking POST /MediaIntegrity/Cancel..."
-          CANCEL_CODE=$(curl -s -o /tmp/cancel_response.json -w "%{http_code}" -X POST "http://localhost:8096/MediaIntegrity/Cancel" \
-            -H "X-Emby-Token: $TOKEN")
-          if [ "$CANCEL_CODE" != "200" ]; then
-            echo "ERROR: POST /MediaIntegrity/Cancel failed with HTTP $CANCEL_CODE"
-            exit 1
-          fi
-          CANCEL_MESSAGE=$(jq -r '.message' /tmp/cancel_response.json)
-          if [ -z "$CANCEL_MESSAGE" ] || [ "$CANCEL_MESSAGE" = "null" ]; then
-            echo "ERROR: expected a message field in the Cancel response, got: $(cat /tmp/cancel_response.json)"
-            exit 1
-          fi
-          echo "SUCCESS: cancel endpoint responds 200 (idempotent -- safe to call with no active scan)"
+      - name: Run integration tests
+        run: bash tests/run-integration-tests.sh
 
       - name: Collect Jellyfin logs on failure
         if: failure()
         run: |
           echo "=== Jellyfin Container Logs ==="
-          docker logs jellyfin-test 2>&1 | tail -100
+          docker logs jellyfin-integration-test 2>&1 | tail -150
           echo ""
           echo "=== Plugin Directory Contents ==="
-          docker exec jellyfin-test ls -la /config/plugins/MediaIntegrityScanner/ 2>/dev/null || echo "Plugin directory not found"
-          echo ""
-          echo "=== Jellyfin Log File ==="
-          docker exec jellyfin-test cat /config/log/log_*.log 2>/dev/null | tail -50 || echo "No log file found"
+          docker exec jellyfin-integration-test ls -la /config/plugins/MediaIntegrityScanner/ 2>/dev/null || echo "Plugin directory not found"
 
       - name: Cleanup
         if: always()
-        run: |
-          docker stop jellyfin-test 2>/dev/null || true
-          docker rm jellyfin-test 2>/dev/null || true
+        run: docker compose -f tests/docker-compose.integration.yml down -v

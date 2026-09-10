@@ -1,10 +1,13 @@
 # Docker Compose for local integration testing
 # Usage:
-#   1. Build the plugin: dotnet publish --configuration Release --output ./publish
+#   1. Build the plugin: dotnet publish --configuration Release --framework net9.0|net10.0 --output ./publish
+#      (the project multi-targets net9.0/Jellyfin 10.11 and net10.0/Jellyfin 12.0 --
+#      --framework must match whichever JELLYFIN_IMAGE line below you're testing)
 #   2. Create test media: ffmpeg -f lavfi -i testsrc=duration=5:size=320x240:rate=25 \
 #        -f lavfi -i sine=frequency=440:duration=5 -c:v libx264 -c:a aac \
 #        -shortest tests/test-media/test-video.mp4
-#   3. Start: docker compose -f tests/docker-compose.integration.yml up -d
+#   3. Start: JELLYFIN_IMAGE=jellyfin/jellyfin:12.0 docker compose -f tests/docker-compose.integration.yml up -d
+#      (defaults to :12.0 if JELLYFIN_IMAGE is unset -- use :10.11.11 to test the other target)
 #   4. Run tests: ./tests/run-integration-tests.sh
 #   5. Teardown: docker compose -f tests/docker-compose.integration.yml down -v
 #
@@ -15,7 +18,7 @@
 
 services:
   jellyfin:
-    image: jellyfin/jellyfin:10.11.11
+    image: ${JELLYFIN_IMAGE:-jellyfin/jellyfin:12.0}
     container_name: jellyfin-integration-test
     restart: unless-stopped
     ports:

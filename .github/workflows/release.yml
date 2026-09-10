@@ -14,10 +14,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET 9
+      - name: Setup .NET 9 and .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: |
+            9.0.x
+            10.0.x
 
       - name: Compute plugin version and bump Directory.Build.props
         id: version
@@ -45,18 +47,25 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj
 
-      - name: Build Release
-        run: dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --output ./publish
-
-      - name: Package
+      - name: Build Release (both targets)
+        # Multi-targeted project (net9.0/Jellyfin 10.11, net10.0/Jellyfin
+        # 12.0) -- publish each framework to its own output directory so
+        # they package into two distinct release zips below.
         run: |
-          cd publish
-          zip -r ../media-integrity-scanner-${{ github.ref_name }}.zip .
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --framework net9.0 --output ./publish-net9.0
+          dotnet publish Jellyfin.Plugin.MediaIntegrityScanner/Jellyfin.Plugin.MediaIntegrityScanner.csproj --configuration Release --framework net10.0 --output ./publish-net10.0
+
+      - name: Package (both targets)
+        run: |
+          (cd publish-net9.0 && zip -r "../media-integrity-scanner-${{ github.ref_name }}-jf10.11.zip" .)
+          (cd publish-net10.0 && zip -r "../media-integrity-scanner-${{ github.ref_name }}-jf12.0.zip" .)
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: media-integrity-scanner-${{ github.ref_name }}.zip
+          files: |
+            media-integrity-scanner-${{ github.ref_name }}-jf10.11.zip
+            media-integrity-scanner-${{ github.ref_name }}-jf12.0.zip
           generate_release_notes: true
 
       - name: Update manifest.json
@@ -77,10 +86,12 @@ jobs:
             sed -i "s#<AssemblyVersion>[^<]*</AssemblyVersion>#<AssemblyVersion>${{ steps.version.outputs.version }}</AssemblyVersion>#" Directory.Build.props
             sed -i "s#<FileVersion>[^<]*</FileVersion>#<FileVersion>${{ steps.version.outputs.version }}</FileVersion>#" Directory.Build.props
 
-            python3 scripts/update-manifest.py "${{ github.ref_name }}" "media-integrity-scanner-${{ github.ref_name }}.zip" \
-              --manifest-version "${{ steps.version.outputs.version }}"
+            python3 scripts/update-manifest.py "${{ github.ref_name }}" "media-integrity-scanner-${{ github.ref_name }}-jf10.11.zip" \
+              --target-framework net9.0 --manifest-version "${{ steps.version.outputs.version }}"
+            python3 scripts/update-manifest.py "${{ github.ref_name }}" "media-integrity-scanner-${{ github.ref_name }}-jf12.0.zip" \
+              --target-framework net10.0 --manifest-version "${{ steps.version.outputs.version }}"
             git add manifest.json Directory.Build.props
-            git commit -m "chore: release ${{ github.ref_name }} (manifest.json + Directory.Build.props)"
+            git commit -m "chore: release ${{ github.ref_name }} (manifest.json + Directory.Build.props, both targets)"
 
             # Assumes the tag was created from the current tip of main.
             if git push origin HEAD:main; then

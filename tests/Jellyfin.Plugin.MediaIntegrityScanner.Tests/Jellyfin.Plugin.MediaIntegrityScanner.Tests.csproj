@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
     <AssemblyName>Jellyfin.Plugin.MediaIntegrityScanner.Tests</AssemblyName>
     <RootNamespace>Jellyfin.Plugin.MediaIntegrityScanner.Tests</RootNamespace>
     <Nullable>enable</Nullable>
@@ -17,13 +17,20 @@
     <PackageReference Include="xunit" Version="2.*" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.*" />
     <PackageReference Include="Moq" Version="4.*" />
-    <!-- The main project excludes these two packages' runtime assets
-         (ExcludeAssets="runtime": Jellyfin's own host process already
-         provides them when the plugin is actually loaded), so this test
-         project needs its own direct reference to get real copies for its
-         own standalone xUnit process, which is not running inside Jellyfin. -->
+  </ItemGroup>
+
+  <!-- The main project excludes these two packages' runtime assets
+       (ExcludeAssets="runtime": Jellyfin's own host process already
+       provides them when the plugin is actually loaded), so this test
+       project needs its own direct reference to get real copies for its
+       own standalone xUnit process, which is not running inside Jellyfin. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
     <PackageReference Include="Jellyfin.Controller" Version="10.11.*" />
     <PackageReference Include="Jellyfin.Model" Version="10.11.*" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Jellyfin.Controller" Version="12.0.*" />
+    <PackageReference Include="Jellyfin.Model" Version="12.0.*" />
   </ItemGroup>
 
   <ItemGroup>

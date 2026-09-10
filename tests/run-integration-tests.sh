@@ -19,7 +19,7 @@ source "$SCRIPT_DIR/setup-jellyfin.sh"
 
 info "Checking plugin is loaded..."
 
-PLUGINS=$(curl -sf "$JELLYFIN_URL/Plugins" -H "X-Emby-Token: $TOKEN")
+PLUGINS=$(curl -sf "$JELLYFIN_URL/Plugins" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 PLUGIN_FOUND=$(echo "$PLUGINS" | jq "[.[] | select(.Id == \"$PLUGIN_GUID\")] | length")
 
 if [ "$PLUGIN_FOUND" -eq 0 ]; then
@@ -36,7 +36,7 @@ echo "$PLUGINS" | jq ".[] | select(.Id == \"$PLUGIN_GUID\") | {Name, Version, St
 info "Checking plugin configuration endpoint..."
 
 CONFIG=$(curl -sf "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" \
-    -H "X-Emby-Token: $TOKEN" 2>/dev/null) || CONFIG=""
+    -H "Authorization: MediaBrowser Token=\"$TOKEN\"" 2>/dev/null) || CONFIG=""
 
 if [ -n "$CONFIG" ]; then
     pass "Plugin configuration endpoint is accessible"
@@ -63,7 +63,7 @@ fi
 
 info "Verifying settings page configuration round-trip..."
 
-ORIGINAL_CONFIG=$(curl -sf "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" -H "X-Emby-Token: $TOKEN")
+ORIGINAL_CONFIG=$(curl -sf "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 
 UPDATED_CONFIG='{
     "MaxConcurrentScans": 3,
@@ -81,14 +81,14 @@ UPDATED_CONFIG='{
 }'
 
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" \
-    -H "X-Emby-Token: $TOKEN" \
+    -H "Authorization: MediaBrowser Token=\"$TOKEN\"" \
     -H "Content-Type: application/json" \
     -d "$UPDATED_CONFIG")
 if [ "$HTTP_CODE" -ge 300 ]; then
     fail "Settings save (POST Configuration) failed with HTTP $HTTP_CODE"
 fi
 
-SAVED_CONFIG=$(curl -sf "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" -H "X-Emby-Token: $TOKEN")
+SAVED_CONFIG=$(curl -sf "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 SAVED_MAX_CONCURRENT=$(echo "$SAVED_CONFIG" | jq '.MaxConcurrentScans')
 SAVED_QUIET_START=$(echo "$SAVED_CONFIG" | jq -r '.QuietHoursStart')
 SAVED_FFMPEG_OVERRIDE=$(echo "$SAVED_CONFIG" | jq -r '.FfmpegPathOverride')
@@ -101,7 +101,7 @@ fi
 
 # Restore the original configuration so this script is safe to re-run locally
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/Plugins/$PLUGIN_GUID/Configuration" \
-    -H "X-Emby-Token: $TOKEN" \
+    -H "Authorization: MediaBrowser Token=\"$TOKEN\"" \
     -H "Content-Type: application/json" \
     -d "$ORIGINAL_CONFIG")
 if [ "$HTTP_CODE" -ge 300 ]; then
@@ -114,9 +114,9 @@ pass "Original configuration restored"
 info "Checking plugin web pages are served..."
 
 DASHBOARD_CODE=$(curl -s -o /tmp/dashboard_page.html -w "%{http_code}" \
-    "$JELLYFIN_URL/web/configurationpage?name=Media+Integrity+Scanner" -H "X-Emby-Token: $TOKEN")
+    "$JELLYFIN_URL/web/configurationpage?name=Media+Integrity+Scanner" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 SETTINGS_CODE=$(curl -s -o /tmp/settings_page.html -w "%{http_code}" \
-    "$JELLYFIN_URL/web/configurationpage?name=Media+Integrity+Scanner+Settings" -H "X-Emby-Token: $TOKEN")
+    "$JELLYFIN_URL/web/configurationpage?name=Media+Integrity+Scanner+Settings" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 
 if [ "$DASHBOARD_CODE" = "200" ] && grep -q "getPluginConfiguration\|MediaIntegrity" /tmp/dashboard_page.html 2>/dev/null; then
     pass "Dashboard page served (HTTP $DASHBOARD_CODE)"
@@ -140,7 +140,7 @@ info "Triggering a header scan of the library..."
 HTTP_CODE=""
 for i in $(seq 1 10); do
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/MediaIntegrity/Scan" \
-        -H "X-Emby-Token: $TOKEN" \
+        -H "Authorization: MediaBrowser Token=\"$TOKEN\"" \
         -H "Content-Type: application/json" \
         -d '{"deepScan": false}')
     if [ "$HTTP_CODE" = "202" ]; then
@@ -158,7 +158,7 @@ pass "Scan triggered (HTTP 202)"
 
 info "Waiting for scan to complete..."
 for i in $(seq 1 60); do
-    STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+    STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
     # Note: Jellyfin's host serializes controller responses in PascalCase
     # (not the ASP.NET Core camelCase default) -- confirmed by hand while
     # writing this test, which is also why the dashboard's JS needed the
@@ -183,7 +183,7 @@ info "Verifying scan results..."
 #   bad-empty, bad-garbage, bad-header-corrupt                 -> Fail (3)
 # (bad-truncated and bad-middecode only fail once deep-scanned below --
 # ffprobe's header-only read doesn't touch the corrupted frame data.)
-FINAL_STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+FINAL_STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 TOTAL_FILES=$(echo "$FINAL_STATUS" | jq '.TotalFiles')
 SCANNED_FILES=$(echo "$FINAL_STATUS" | jq '.ScannedFiles')
 PASSED_FILES=$(echo "$FINAL_STATUS" | jq '.PassedFiles')
@@ -197,7 +197,7 @@ if [ "$PASSED_FILES" != "4" ] || [ "$FAILED_FILES" != "3" ]; then
 fi
 pass "Library health reflects the scan: $SCANNED_FILES scanned, $PASSED_FILES passed, $FAILED_FILES failed"
 
-RESULTS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results?status=1" -H "X-Emby-Token: $TOKEN")
+RESULTS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results?status=1" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 RESULT_COUNT=$(echo "$RESULTS" | jq '.TotalCount')
 
 if [ "$RESULT_COUNT" -lt 1 ]; then
@@ -213,7 +213,7 @@ ITEM_ID=$(echo "$RESULTS" | jq -r '.Items[0].ItemId')
 info "Checking GET /MediaIntegrity/Results/{itemId}..."
 
 DETAIL_CODE=$(curl -s -o /tmp/item_detail.json -w "%{http_code}" \
-    "$JELLYFIN_URL/MediaIntegrity/Results/$ITEM_ID" -H "X-Emby-Token: $TOKEN")
+    "$JELLYFIN_URL/MediaIntegrity/Results/$ITEM_ID" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 if [ "$DETAIL_CODE" != "200" ]; then
     fail "GET /MediaIntegrity/Results/{itemId} failed with HTTP $DETAIL_CODE"
 fi
@@ -224,7 +224,7 @@ fi
 pass "Item detail endpoint returns the item's Header scan record"
 
 NOT_FOUND_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-    "$JELLYFIN_URL/MediaIntegrity/Results/00000000-0000-0000-0000-000000000000" -H "X-Emby-Token: $TOKEN")
+    "$JELLYFIN_URL/MediaIntegrity/Results/00000000-0000-0000-0000-000000000000" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 if [ "$NOT_FOUND_CODE" != "404" ]; then
     fail "Expected HTTP 404 for an unknown item ID, got $NOT_FOUND_CODE"
 fi
@@ -246,7 +246,7 @@ rm -f /tmp/item_detail.json
 # while this plugin stores/expects the standard dashed Guid.ToString(), so
 # an ID lifted from /Items would 404 against /MediaIntegrity/Results/{itemId}
 # without reformatting. Results?status=1 is already in the right format.
-PASSED_RESULTS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results?status=1&pageSize=50" -H "X-Emby-Token: $TOKEN")
+PASSED_RESULTS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results?status=1&pageSize=50" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 TRUNCATED_ITEM_ID=$(echo "$PASSED_RESULTS" | jq -r '.Items[] | select(.FilePath | endswith("bad-truncated.mp4")) | .ItemId')
 if [ -z "$TRUNCATED_ITEM_ID" ] || [ "$TRUNCATED_ITEM_ID" = "null" ]; then
     fail "Could not find a passed Header scan result for bad-truncated.mp4. Results: $PASSED_RESULTS"
@@ -257,7 +257,7 @@ info "Triggering a deep (FullDecode) scan of bad-truncated.mp4 (currently Pass a
 HTTP_CODE=""
 for i in $(seq 1 10); do
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$JELLYFIN_URL/MediaIntegrity/Scan" \
-        -H "X-Emby-Token: $TOKEN" \
+        -H "Authorization: MediaBrowser Token=\"$TOKEN\"" \
         -H "Content-Type: application/json" \
         -d "{\"itemId\": \"$TRUNCATED_ITEM_ID\", \"deepScan\": true}")
     if [ "$HTTP_CODE" = "202" ]; then
@@ -274,7 +274,7 @@ fi
 pass "Deep scan triggered (HTTP 202)"
 
 for i in $(seq 1 60); do
-    STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "X-Emby-Token: $TOKEN")
+    STATUS=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Status" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
     IS_SCANNING=$(echo "$STATUS" | jq -r '.IsScanning')
     if [ "$IS_SCANNING" = "false" ]; then
         pass "Deep scan completed (after ${i}s)"
@@ -286,7 +286,7 @@ for i in $(seq 1 60); do
     sleep 1
 done
 
-DEEP_DETAIL=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results/$TRUNCATED_ITEM_ID" -H "X-Emby-Token: $TOKEN")
+DEEP_DETAIL=$(curl -sf "$JELLYFIN_URL/MediaIntegrity/Results/$TRUNCATED_ITEM_ID" -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 DEEP_PHASE=$(echo "$DEEP_DETAIL" | jq '.ScanPhase')
 DEEP_STATUS=$(echo "$DEEP_DETAIL" | jq '.ScanStatus')
 if [ "$DEEP_PHASE" != "2" ] || [ "$DEEP_STATUS" != "2" ]; then
@@ -300,7 +300,7 @@ echo "$DEEP_DETAIL" | jq '.ErrorOutput'
 info "Checking POST /MediaIntegrity/Cancel..."
 
 CANCEL_CODE=$(curl -s -o /tmp/cancel_response.json -w "%{http_code}" -X POST "$JELLYFIN_URL/MediaIntegrity/Cancel" \
-    -H "X-Emby-Token: $TOKEN")
+    -H "Authorization: MediaBrowser Token=\"$TOKEN\"")
 if [ "$CANCEL_CODE" != "200" ]; then
     fail "POST /MediaIntegrity/Cancel failed with HTTP $CANCEL_CODE"
 fi

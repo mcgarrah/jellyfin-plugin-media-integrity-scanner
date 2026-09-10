@@ -1,6 +1,10 @@
 <Project>
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <!-- TargetFramework(s) deliberately not set here; each project defines
+         its own TargetFrameworks (plural) since the two entries need
+         different conditional PackageReferences for Jellyfin.Controller/
+         Jellyfin.Model per Jellyfin major version. A shared single-valued
+         TargetFramework here would conflict with that. -->
     <RootNamespace>Jellyfin.Plugin.MediaIntegrityScanner</RootNamespace>
     <AssemblyName>Jellyfin.Plugin.MediaIntegrityScanner</AssemblyName>
     <LangVersion>13.0</LangVersion>
@@ -17,8 +21,8 @@
     <Copyright>Copyright © 2026 Michael McGarrah &lt;mcgarrah@gmail.com&gt;</Copyright>
     <RepositoryUrl>https://github.com/mcgarrah/jellyfin-plugin-media-integrity-scanner</RepositoryUrl>
     <PackageLicenseExpression>GPL-2.0-or-later</PackageLicenseExpression>
-    <Version>0.3.0.0</Version>
-    <AssemblyVersion>0.3.0.0</AssemblyVersion>
-    <FileVersion>0.3.0.0</FileVersion>
+    <Version>0.4.0.0</Version>
+    <AssemblyVersion>0.4.0.0</AssemblyVersion>
+    <FileVersion>0.4.0.0</FileVersion>
   </PropertyGroup>
 </Project>
