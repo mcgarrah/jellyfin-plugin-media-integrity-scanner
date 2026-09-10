@@ -105,7 +105,7 @@ public partial class UpdateChecker : IUpdateChecker
             PackageInfo = package
         };
 
-        LogInstalling(channel.ToString(), version.Version);
+        LogInstalling(channel, version.Version);
         await _installationManager.InstallPackage(installationInfo, cancellationToken).ConfigureAwait(false);
     }
 
@@ -202,5 +202,5 @@ public partial class UpdateChecker : IUpdateChecker
     private partial void LogRefreshed(string current, string stable, string dev);
 
     [LoggerMessage(EventId = 21, Level = LogLevel.Information, Message = "Installing {Channel} update: version {Version}")]
-    private partial void LogInstalling(string channel, string version);
+    private partial void LogInstalling(UpdateChannel channel, string version);
 }

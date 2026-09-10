@@ -78,7 +78,7 @@ public partial class CheckForUpdatesTask : IScheduledTask
         var status = await _updateChecker.RefreshAsync(cancellationToken).ConfigureAwait(false);
         if (status.UpdateAvailable)
         {
-            LogUpdateAvailable(status.Channel.ToString(), status.AvailableVersion ?? "unknown");
+            LogUpdateAvailable(status.Channel, status.AvailableVersion ?? "unknown");
         }
 
         progress.Report(100);
@@ -88,5 +88,5 @@ public partial class CheckForUpdatesTask : IScheduledTask
     private partial void LogCheckStarting();
 
     [LoggerMessage(EventId = 23, Level = LogLevel.Information, Message = "Plugin update available on {Channel} channel: {Version}")]
-    private partial void LogUpdateAvailable(string channel, string version);
+    private partial void LogUpdateAvailable(UpdateChannel channel, string version);
 }

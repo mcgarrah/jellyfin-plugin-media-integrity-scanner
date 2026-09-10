@@ -107,7 +107,7 @@ public partial class AutoUpdateTask : IScheduledTask
             return;
         }
 
-        LogInstalling(status.Channel.ToString(), status.AvailableVersion ?? "unknown");
+        LogInstalling(status.Channel, status.AvailableVersion ?? "unknown");
         await _updateChecker.InstallAsync(status.Channel, cancellationToken).ConfigureAwait(false);
         progress.Report(80);
 
@@ -134,7 +134,7 @@ public partial class AutoUpdateTask : IScheduledTask
     private partial void LogAutoUpdateDisabled();
 
     [LoggerMessage(EventId = 25, Level = LogLevel.Information, Message = "Automatically installing {Channel} update: version {Version}")]
-    private partial void LogInstalling(string channel, string version);
+    private partial void LogInstalling(UpdateChannel channel, string version);
 
     [LoggerMessage(EventId = 26, Level = LogLevel.Information, Message = "Waiting for active playback to end before restarting")]
     private partial void LogWaitingForPlayback();
