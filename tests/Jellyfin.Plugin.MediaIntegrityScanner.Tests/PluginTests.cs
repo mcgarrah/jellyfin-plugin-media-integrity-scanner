@@ -28,15 +28,20 @@ using Xunit;
 namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
 
 /// <summary>
-/// Tests for the Plugin entry point: page registration and the assembly's
-/// embedded web resources. <see cref="MediaBrowser.Common.Plugins.BasePlugin{T}"/>'s
-/// constructor only builds a data-folder path string from
-/// <see cref="IApplicationPaths.PluginsPath"/> -- it never touches disk or the
-/// XML serializer -- so a real <see cref="Plugin"/> instance can be built here
-/// with bare mocks. That constructor's own real side effect (<c>Instance = this</c>)
-/// is exactly the process-wide static <see cref="TestPluginContext"/> exists to
-/// guard -- decorated with [Collection("PluginInstance")] for the same reason
-/// every other class using that static is, even though this class reaches
+/// Tests for the Plugin entry point: page registration, the assembly's
+/// embedded web resources, and configuration sanitization
+/// (CODE-REVIEW-ARCHITECTURE.md H2). The constructor now eagerly reads
+/// <see cref="MediaBrowser.Common.Plugins.BasePlugin{T}.Configuration"/> (to
+/// sanitize a hand-edited XML file the same way a settings-page save is),
+/// which touches both <see cref="IApplicationPaths.PluginConfigurationsPath"/>
+/// and the XML serializer -- so both must be stubbed here now, unlike before
+/// H2. The serializer is set up to throw, matching the real first-run case
+/// (no config file on disk yet), which drives <c>BasePlugin{T}</c>'s own
+/// fallback to a fresh <see cref="PluginConfiguration"/> instance. That
+/// constructor's own real side effect (<c>Instance = this</c>) is exactly the
+/// process-wide static <see cref="TestPluginContext"/> exists to guard --
+/// decorated with [Collection("PluginInstance")] for the same reason every
+/// other class using that static is, even though this class reaches
 /// Plugin.Instance via the real constructor rather than TestPluginContext itself.
 /// </summary>
 [Collection("PluginInstance")]
@@ -48,7 +53,13 @@ public class PluginTests : IDisposable
     {
         var appPaths = new Mock<IApplicationPaths>();
         appPaths.Setup(p => p.PluginsPath).Returns(Path.Combine(Path.GetTempPath(), "fake-plugins"));
-        return new Plugin(appPaths.Object, Mock.Of<IXmlSerializer>());
+        appPaths.Setup(p => p.PluginConfigurationsPath).Returns(Path.Combine(Path.GetTempPath(), "fake-plugin-configs"));
+
+        var xmlSerializer = new Mock<IXmlSerializer>();
+        xmlSerializer.Setup(s => s.DeserializeFromFile(It.IsAny<Type>(), It.IsAny<string>()))
+            .Throws<FileNotFoundException>();
+
+        return new Plugin(appPaths.Object, xmlSerializer.Object);
     }
 
     [Fact]

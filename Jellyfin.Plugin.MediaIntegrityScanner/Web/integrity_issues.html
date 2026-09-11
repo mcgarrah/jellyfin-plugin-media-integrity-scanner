@@ -227,9 +227,17 @@
 
             function apiFetch(path, options) {
                 var url = getApiUrl(path);
-                var opts = Object.assign({
-                    headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' }
-                }, options || {});
+                // Copy the caller's options, then deep-merge headers: the default
+                // auth header always applies and call-site headers (e.g.
+                // Content-Type) layer on top. A single Object.assign over the whole
+                // options object is a shallow merge -- any call site passing its own
+                // headers used to silently drop the auth header unless it repeated
+                // it, which is exactly how the Jellyfin 12 auth migration ended up
+                // needing the same fix at 14 sites (CODE-REVIEW-ARCHITECTURE.md H1).
+                var opts = Object.assign({}, options || {});
+                opts.headers = Object.assign(
+                    { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' },
+                    opts.headers || {});
                 return fetch(url, opts).then(function(resp) {
                     if (!resp.ok) throw new Error('HTTP ' + resp.status);
                     return resp.json();
@@ -441,8 +449,7 @@
 
             function sendOne(itemId) {
                 apiFetch('ArrRemediation/' + itemId, {
-                    method: 'POST',
-                    headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' }
+                    method: 'POST'
                 }).then(function() {
                     loadIssues();
                 }).catch(function(err) {
@@ -452,8 +459,7 @@
 
             function resetCycle(itemId) {
                 apiFetch('ArrRemediation/' + itemId + '/ResetCycle', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' }
+                    method: 'POST'
                 }).then(function() {
                     loadIssues();
                 }).catch(function(err) {
@@ -470,7 +476,7 @@
 
                 apiFetch('ArrRemediation/Bulk', {
                     method: 'POST',
-                    headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"', 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ itemIds: itemIds })
                 }).then(function() {
                     clearSelection();
