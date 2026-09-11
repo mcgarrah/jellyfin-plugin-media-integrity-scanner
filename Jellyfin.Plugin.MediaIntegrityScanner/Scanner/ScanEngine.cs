@@ -46,7 +46,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
     private readonly IArrRemediationService _arrRemediation;
     private readonly ILogger<ScanEngine> _logger;
     private readonly SharedBandwidthLimiter _bandwidthLimiter;
-    private CancellationTokenSource? _cts;
+    private CancellationTokenSource _cts;
     private int _activeScanCount;
     private int _isLibraryScanning;
     private int _currentLibraryScanPhase;
@@ -91,7 +91,16 @@ public partial class ScanEngine : IScanEngine, IDisposable
         _logger = logger;
         _bandwidthLimiter = bandwidthLimiter ?? new SharedBandwidthLimiter();
 
-        var maxConcurrent = Plugin.Instance?.Configuration?.MaxConcurrentScans ?? 1;
+        // Initialized eagerly, not lazily on first use -- ScanItemAsync is
+        // called concurrently from multiple unsynchronized entry points
+        // (LibraryMonitor's event handlers, the manual scan endpoint, and
+        // ScanLibraryAsync's own parallel loop), and a lazy `_cts ??= new(...)`
+        // is not atomic: two near-simultaneous first callers could each
+        // construct their own CancellationTokenSource, leaving one of them
+        // permanently disconnected from Cancel()'s ability to stop it.
+        _cts = new CancellationTokenSource();
+
+        var maxConcurrent = Math.Max(1, Plugin.Instance?.Configuration?.MaxConcurrentScans ?? 1);
         _scanLock = new SemaphoreSlim(maxConcurrent, maxConcurrent);
     }
 
@@ -116,7 +125,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
     public async Task ScanItemAsync(BaseItem item, ScanPhase phase, CancellationToken cancellationToken)
     {
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken, (_cts ??= new CancellationTokenSource()).Token);
+            cancellationToken, _cts.Token);
         var token = linkedCts.Token;
 
         await _scanLock.WaitAsync(token).ConfigureAwait(false);
@@ -295,7 +304,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
         IReadOnlyCollection<int>? seasons = null)
     {
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken, (_cts ??= new CancellationTokenSource()).Token);
+            cancellationToken, _cts.Token);
         var token = linkedCts.Token;
 
         Interlocked.Exchange(ref _currentLibraryScanPhase, (int)phase);
@@ -388,8 +397,8 @@ public partial class ScanEngine : IScanEngine, IDisposable
     public void Cancel()
     {
         LogScanCancellationRequested();
-        _cts?.Cancel();
-        _cts?.Dispose();
+        _cts.Cancel();
+        _cts.Dispose();
         _cts = new CancellationTokenSource();
         Interlocked.Exchange(ref _isLibraryScanning, 0);
         _currentScopeLibraryId = null;
@@ -452,7 +461,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
         if (!_disposed)
         {
             _scanLock.Dispose();
-            _cts?.Dispose();
+            _cts.Dispose();
             _disposed = true;
             GC.SuppressFinalize(this);
         }

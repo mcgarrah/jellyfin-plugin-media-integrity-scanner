@@ -546,6 +546,34 @@ public class ScanEngineTests : IDisposable
         Assert.True(maxObservedConcurrency >= 2, "Expected concurrency to actually reach the configured limit");
     }
 
+    [Fact]
+    public async Task MaxConcurrentScans_ZeroOrLess_ClampsToAtLeastOne()
+    {
+        // Regression test: the constructor used to build the semaphore
+        // directly from the configured value with no lower-bound clamp,
+        // unlike the matching call site in ScanLibraryAsync. A configured
+        // value of 0 -- reachable by hand-editing the plugin's XML config
+        // outside the settings page's own client-side clamp -- produced
+        // `new SemaphoreSlim(0, 0)`, which can never be entered: every scan
+        // would hang forever with no error.
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            MaxConcurrentScans = 0,
+            DelayBetweenFilesMs = 0
+        });
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 1 });
+
+        var engine = CreateEngine(wrapper);
+
+        var scanTask = engine.ScanItemAsync(MakeItem(), ScanPhase.Header, CancellationToken.None);
+        var completed = await Task.WhenAny(scanTask, Task.Delay(TimeSpan.FromSeconds(2)));
+
+        Assert.Same(scanTask, completed);
+    }
+
     // --- Cancellation ---
 
     [Fact]
@@ -567,6 +595,51 @@ public class ScanEngineTests : IDisposable
         engine.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scanTask);
+    }
+
+    [Fact]
+    public async Task Cancel_CancelsAllConcurrentFirstTimeScans()
+    {
+        // Regression test for a lazy `_cts ??= new CancellationTokenSource()`
+        // race that used to exist in ScanItemAsync/ScanLibraryAsync: multiple
+        // near-simultaneous *first* calls (as real callers can produce --
+        // LibraryMonitor's event handlers, the manual scan endpoint, and
+        // ScanLibraryAsync's own parallel loop are all unsynchronized with
+        // each other) could each construct their own CancellationTokenSource
+        // before observing another's write, leaving all but one permanently
+        // disconnected from Cancel()'s ability to stop them. _cts is now
+        // initialized eagerly in the constructor instead of lazily, so every
+        // caller shares exactly one CancellationTokenSource regardless of how
+        // many arrive at once before the first scan ever starts.
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            MaxConcurrentScans = 8,
+            DelayBetweenFilesMs = 0
+        });
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, CancellationToken ct) =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                return new ScanResult { Success = true, DurationMs = 1 };
+            });
+
+        var engine = CreateEngine(wrapper);
+
+        var tasks = new List<Task>();
+        for (var i = 0; i < 8; i++)
+        {
+            tasks.Add(engine.ScanItemAsync(MakeItem(), ScanPhase.Header, CancellationToken.None));
+        }
+
+        await Task.Delay(50);
+        engine.Cancel();
+
+        foreach (var task in tasks)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
+        }
     }
 
     // --- Playback pause gate ---

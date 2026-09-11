@@ -115,6 +115,16 @@ public partial class MediaIntegrityReconciliationTask : IScheduledTask
 
         LogReconciliationStarting();
 
+        // No Recursive/ParentId here, unlike the matching queries in ScanEngine
+        // and MediaIntegrityController -- this is intentional, not an
+        // oversight. Jellyfin's LibraryManager only gates folder descent on
+        // `query.Recursive && !query.ParentId.IsEmpty()` (see the comment in
+        // ScanEngine.ScanLibraryAsync); with no ParentId at all there's no
+        // folder to descend from, so Recursive is a no-op either way and this
+        // unscoped query already returns every real Video/Audio item,
+        // including TV episodes. Verified live against both a Jellyfin 10.11
+        // and a 12.0 instance with populated TV libraries (20k+ episodes each)
+        // -- running this task purged only genuinely-stale rows, not episodes.
         var currentItemIds = _library
             .GetItemIds(new InternalItemsQuery
             {
