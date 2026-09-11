@@ -20,6 +20,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Api;
+using Jellyfin.Plugin.MediaIntegrityScanner.Api.Models;
 using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
@@ -70,6 +71,15 @@ public class MediaIntegrityControllerTests : IDisposable
     private MediaIntegrityController CreateController()
     {
         _appHost.Setup(a => a.ApplicationVersionString).Returns("10.11.11.0");
+
+        // A loose Mock<IScanEngine> with no setup for RunTracked would
+        // otherwise satisfy the Task-returning call with an immediate
+        // Task.CompletedTask WITHOUT ever invoking the delegate passed in --
+        // real ScanEngine always invokes it (see ScanEngine.RunTracked).
+        // TriggerScan's own tests rely on the underlying ScanItemAsync/
+        // ScanLibraryAsync call actually happening, so this must run for real.
+        _scanner.Setup(s => s.RunTracked(It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns((Func<CancellationToken, Task> action, CancellationToken ct) => action(ct));
 
         var controller = new MediaIntegrityController(
             _dbFactory.Database,
@@ -642,6 +652,42 @@ public class MediaIntegrityControllerTests : IDisposable
         _scanner.Verify(
             s => s.ScanLibraryAsync(It.IsAny<string>(), It.IsAny<ScanPhase>(), It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>(), It.IsAny<string>(), It.IsAny<IReadOnlyCollection<int>>()),
             Times.Never);
+    }
+
+    [Fact]
+    public void TriggerScan_MalformedItemId_ReturnsBadRequest_WithoutDispatchingAnything()
+    {
+        // Regression test (CODE-REVIEW-ARCHITECTURE.md M3): ItemId used to be
+        // parsed with a bare Guid.Parse() inside the fire-and-forget dispatch
+        // task, so a malformed value threw a FormatException that only ever
+        // reached a log -- the caller got a 202 Accepted for a scan that
+        // never actually started. It's now validated synchronously, before
+        // dispatch, so the caller gets a real 400 instead.
+        var controller = CreateController();
+        var result = controller.TriggerScan(new ScanRequest { ItemId = "not-a-guid" });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        _scanner.Verify(s => s.RunTracked(It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TriggerScan_TracksTheDispatchedTask_ViaRunTracked()
+    {
+        // Regression test (CODE-REVIEW-ARCHITECTURE.md M3): the manual-scan
+        // dispatch used to be a bare, unobservable `_ = Task.Run(...)`. It
+        // must now go through IScanEngine.RunTracked so the resulting task is
+        // observable (for diagnostics, tests, or an orderly shutdown) instead
+        // of being permanently discarded.
+        var tcs = new TaskCompletionSource();
+        _scanner.Setup(s => s.ScanLibraryAsync(null, ScanPhase.Header, It.IsAny<CancellationToken>(), It.IsAny<IProgress<double>>(), null, null))
+            .Returns(Task.CompletedTask)
+            .Callback(() => tcs.TrySetResult());
+
+        var controller = CreateController();
+        controller.TriggerScan(new ScanRequest());
+
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        _scanner.Verify(s => s.RunTracked(It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // --- GetIssues ---

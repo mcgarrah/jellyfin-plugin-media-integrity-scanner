@@ -328,6 +328,50 @@ public class LibraryMonitorTests : IDisposable
     }
 
     [Fact]
+    public async Task OnItemRemoved_RoutesThroughABoundedChannel_NotABareTaskRun()
+    {
+        // Regression test (CODE-REVIEW-ARCHITECTURE.md M3): OnItemRemoved
+        // used to dispatch via a bare, untracked `_ = Task.Run(...)` per
+        // event. It now writes to a bounded channel drained by a dedicated
+        // background consumer -- multiple removals in quick succession must
+        // all still be purged, not just the first (which a naive
+        // single-purge test wouldn't distinguish from the old behavior).
+        TestPluginContext.SetConfiguration(new PluginConfiguration { PurgeOnItemRemoved = true });
+
+        var library = new Mock<ILibraryManager>();
+        var scanner = new Mock<IScanEngine>();
+        var db = new Mock<IDatabaseManager>();
+        var purged = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var allPurged = new TaskCompletionSource();
+        db.Setup(d => d.PurgeItemAsync(It.IsAny<string>()))
+            .Returns((string id) =>
+            {
+                purged.Add(id);
+                if (purged.Count == 3)
+                {
+                    allPurged.TrySetResult();
+                }
+
+                return Task.CompletedTask;
+            });
+
+        var monitor = CreateMonitor(library, scanner, db);
+        await monitor.StartAsync(CancellationToken.None);
+
+        var items = new[] { MakeMediaItem(), MakeMediaItem(), MakeMediaItem() };
+        foreach (var item in items)
+        {
+            library.Raise(l => l.ItemRemoved += null, library.Object, new ItemChangeEventArgs { Item = item });
+        }
+
+        await allPurged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        foreach (var item in items)
+        {
+            Assert.Contains(item.Id.ToString(), purged);
+        }
+    }
+
+    [Fact]
     public async Task ConsumerPoolSize_MatchesMaxConcurrentScans_ProcessesQueuedItemsConcurrently()
     {
         // Regression test for the bounded-channel rewrite of the old raw

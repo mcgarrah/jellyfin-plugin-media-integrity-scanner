@@ -50,14 +50,28 @@ public partial class LibraryMonitor : IHostedService, IDisposable
     // restart mid-burst.
     private const int ScanQueueCapacity = 1000;
 
+    // Same bounded-channel treatment as the scan queue above, but kept as a
+    // separate channel/consumer rather than folded into ScanRequest --
+    // a purge is a single cheap SQLite delete with none of the
+    // CheckCurrentFirst/dedup semantics scans need, so sharing one channel
+    // would mean branching consumer logic for two request shapes that don't
+    // otherwise overlap. One consumer is enough; purges never need
+    // MaxConcurrentScans-sized parallelism the way scans do. Previously a raw
+    // per-event Task.Run (CODE-REVIEW-ARCHITECTURE.md M3) -- untracked and
+    // invisible to shutdown, same class of issue the scan queue already fixed.
+    private const int PurgeQueueCapacity = 1000;
+
     private readonly ILibraryManager _library;
     private readonly IScanEngine _scanner;
     private readonly IDatabaseManager _db;
     private readonly ILogger<LibraryMonitor> _logger;
     private readonly Channel<ScanRequest> _scanQueue = Channel.CreateBounded<ScanRequest>(
         new BoundedChannelOptions(ScanQueueCapacity) { FullMode = BoundedChannelFullMode.DropWrite });
+    private readonly Channel<string> _purgeQueue = Channel.CreateBounded<string>(
+        new BoundedChannelOptions(PurgeQueueCapacity) { FullMode = BoundedChannelFullMode.DropWrite });
     private CancellationTokenSource? _consumerCts;
     private Task[]? _consumerTasks;
+    private Task? _purgeConsumerTask;
     private bool _disposed;
 
     // Shared between OnItemAdded and OnItemUpdated: Jellyfin's own metadata
@@ -112,6 +126,8 @@ public partial class LibraryMonitor : IHostedService, IDisposable
         {
             _consumerTasks[i] = ConsumeScanQueueAsync(_consumerCts.Token);
         }
+
+        _purgeConsumerTask = ConsumePurgeQueueAsync(_consumerCts.Token);
 
         _library.ItemAdded += OnItemAdded;
         _library.ItemUpdated += OnItemUpdated;
@@ -265,6 +281,33 @@ public partial class LibraryMonitor : IHostedService, IDisposable
         }
     }
 
+    /// <summary>
+    /// Drains <see cref="_purgeQueue"/> until <paramref name="cancellationToken"/>
+    /// fires. See <see cref="_purgeQueue"/>'s field comment for why this is a
+    /// separate channel/consumer from the scan queue above.
+    /// </summary>
+    private async Task ConsumePurgeQueueAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (var itemId in _purgeQueue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                try
+                {
+                    await _db.PurgeItemAsync(itemId).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    LogPurgeError(ex, itemId);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected on shutdown (StopAsync cancels _consumerCts) -- not an error.
+        }
+    }
+
     private void OnItemRemoved(object? sender, ItemChangeEventArgs e)
     {
         var config = Plugin.Instance?.Configuration;
@@ -281,17 +324,10 @@ public partial class LibraryMonitor : IHostedService, IDisposable
 
         LogItemPurgeQueued(item.Name);
 
-        _ = Task.Run(async () =>
+        if (!_purgeQueue.Writer.TryWrite(item.Id.ToString()))
         {
-            try
-            {
-                await _db.PurgeItemAsync(item.Id.ToString()).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                LogPurgeError(ex, item.Id);
-            }
-        });
+            LogPurgeQueueFull(item.Id);
+        }
     }
 
     private static bool IsMediaItem(BaseItem item)
@@ -334,8 +370,8 @@ public partial class LibraryMonitor : IHostedService, IDisposable
     [LoggerMessage(EventId = 5, Level = LogLevel.Debug, Message = "Item removed: {Name}, purging scan records")]
     private partial void LogItemPurgeQueued(string? name);
 
-    [LoggerMessage(EventId = 6, Level = LogLevel.Error, Message = "Error purging scan records for removed item: {Id}")]
-    private partial void LogPurgeError(Exception ex, Guid id);
+    [LoggerMessage(EventId = 6, Level = LogLevel.Error, Message = "Error purging scan records for removed item: {ItemId}")]
+    private partial void LogPurgeError(Exception ex, string itemId);
 
     [LoggerMessage(EventId = 7, Level = LogLevel.Debug, Message = "Item updated: {Name} ({Path}), queuing for rescan")]
     private partial void LogItemUpdateQueuedForScan(string? name, string? path);
@@ -345,4 +381,7 @@ public partial class LibraryMonitor : IHostedService, IDisposable
 
     [LoggerMessage(EventId = 9, Level = LogLevel.Warning, Message = "Event-driven scan queue is full, dropping trigger for: {Path} -- scheduled scans will still catch it")]
     private partial void LogScanQueueFull(string? path);
+
+    [LoggerMessage(EventId = 10, Level = LogLevel.Warning, Message = "Event-driven purge queue is full, dropping purge for item: {ItemId} -- the weekly reconciliation task will still catch it")]
+    private partial void LogPurgeQueueFull(Guid itemId);
 }

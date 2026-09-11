@@ -88,7 +88,26 @@ public partial class ArrRemediationWorker : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
-    private void OnTick(object? state) => _ = ProcessQueueAsync();
+    /// <summary>
+    /// Timer callback -- wraps <see cref="ProcessQueueAsync"/> in a try/catch
+    /// rather than discarding its task bare. <see cref="ProcessQueueAsync"/>'s
+    /// own per-row processing already can't throw (each row's own try/catch
+    /// logs and continues), but an unhandled exception from its outer body --
+    /// e.g. <see cref="Data.IDatabaseManager.GetPendingRemediationsAsync"/>
+    /// itself failing -- would otherwise vanish into an unobserved task
+    /// instead of ever reaching a log (CODE-REVIEW-ARCHITECTURE.md M3).
+    /// </summary>
+    private async void OnTick(object? state)
+    {
+        try
+        {
+            await ProcessQueueAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LogTickFailed(ex);
+        }
+    }
 
     /// <summary>
     /// Processes every currently-pending row once. Internal (not private) so
@@ -205,6 +224,9 @@ public partial class ArrRemediationWorker : IHostedService, IDisposable
 
     [LoggerMessage(EventId = 1, Level = LogLevel.Error, Message = "Failed to process pending Arr remediation {RecordId}")]
     private partial void LogProcessingFailed(Exception ex, long recordId);
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Error, Message = "Unhandled error while processing the pending Arr remediation queue")]
+    private partial void LogTickFailed(Exception ex);
 
     [LoggerMessage(EventId = 2, Level = LogLevel.Debug, Message = "Skipping pending remediation {RecordId} -- server \"{ServerName}\" already failed earlier this tick")]
     private partial void LogSkippedKnownBadServer(long recordId, string serverName);

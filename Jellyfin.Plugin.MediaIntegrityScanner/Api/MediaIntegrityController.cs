@@ -24,6 +24,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.MediaIntegrityScanner.Api.Models;
 using Jellyfin.Plugin.MediaIntegrityScanner.ArrIntegration;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
 using Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
@@ -50,7 +51,7 @@ public partial class MediaIntegrityController : ControllerBase
     private readonly IScanEngine _scanner;
     private readonly ILibraryManager _library;
     private readonly IUpdateChecker _updateChecker;
-    private readonly FfmpegWrapper _ffmpeg;
+    private readonly IFfmpegWrapper _ffmpeg;
     private readonly IServerApplicationHost _appHost;
     private readonly IArrRemediationService _arrRemediation;
     private readonly ILogger<MediaIntegrityController> _logger;
@@ -71,7 +72,7 @@ public partial class MediaIntegrityController : ControllerBase
         IScanEngine scanner,
         ILibraryManager library,
         IUpdateChecker updateChecker,
-        FfmpegWrapper ffmpeg,
+        IFfmpegWrapper ffmpeg,
         IServerApplicationHost appHost,
         IArrRemediationService arrRemediation,
         ILogger<MediaIntegrityController> logger)
@@ -91,7 +92,7 @@ public partial class MediaIntegrityController : ControllerBase
     /// environment/version info and aggregate scan counts only, never file
     /// paths, library names, or error text, so it's safe to prefill into a
     /// public GitHub issue without the reporter needing to redact anything.
-    /// When <see cref="FfmpegWrapper.IsUsingCustomOverride"/> is set, the
+    /// When <see cref="IFfmpegWrapper.IsUsingCustomOverride"/> is set, the
     /// resolved ffmpeg/ffprobe paths are withheld too, since those come
     /// directly from an admin-entered path that could reveal local directory
     /// structure -- only the fact that an override is configured is reported.
@@ -542,6 +543,7 @@ public partial class MediaIntegrityController : ControllerBase
     /// <returns>Accepted if scan was started.</returns>
     [HttpPost("Scan")]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public ActionResult TriggerScan([FromBody] ScanRequest request)
     {
@@ -550,38 +552,60 @@ public partial class MediaIntegrityController : ControllerBase
             return Conflict(new { message = "A scan is already in progress." });
         }
 
+        // Parsed synchronously, before dispatch, so a malformed ItemId is a
+        // real 400 response instead of silently failing inside the
+        // fire-and-forget task below and only ever reaching a log
+        // (CODE-REVIEW-ARCHITECTURE.md M3).
+        Guid? itemGuid = null;
+        if (!string.IsNullOrEmpty(request.ItemId))
+        {
+            if (!Guid.TryParse(request.ItemId, out var parsed))
+            {
+                return BadRequest(new { message = "Invalid itemId." });
+            }
+
+            itemGuid = parsed;
+        }
+
         var phase = request.DeepScan ? ScanPhase.FullDecode : ScanPhase.Header;
 
-        // Fire-and-forget with error logging
-        _ = Task.Run(async () =>
-        {
-            try
+        // Tracked via ScanEngine.RunTracked instead of a bare Task.Run --
+        // still fire-and-forget from this endpoint's own point of view (a
+        // 202 Accepted response can't wait for a potentially hours-long
+        // library scan), but the resulting task is now observable via
+        // IScanEngine.CurrentTrackedTask for diagnostics/tests instead of
+        // being permanently discarded.
+        _scanner.RunTracked(
+            async cancellationToken =>
             {
-                if (!string.IsNullOrEmpty(request.ItemId))
+                try
                 {
-                    var item = _library.GetItemById(Guid.Parse(request.ItemId));
-                    if (item != null)
+                    if (itemGuid.HasValue)
                     {
-                        await _scanner.ScanItemAsync(item, phase, CancellationToken.None)
+                        var item = _library.GetItemById(itemGuid.Value);
+                        if (item != null)
+                        {
+                            await _scanner.ScanItemAsync(item, phase, cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                    }
+                    else
+                    {
+                        await _scanner.ScanLibraryAsync(
+                            request.LibraryId,
+                            phase,
+                            cancellationToken,
+                            nameFilter: request.NameFilter,
+                            seasons: request.Seasons)
                             .ConfigureAwait(false);
                     }
                 }
-                else
+                catch (Exception ex)
                 {
-                    await _scanner.ScanLibraryAsync(
-                        request.LibraryId,
-                        phase,
-                        CancellationToken.None,
-                        nameFilter: request.NameFilter,
-                        seasons: request.Seasons)
-                        .ConfigureAwait(false);
+                    LogManualScanError(ex);
                 }
-            }
-            catch (Exception ex)
-            {
-                LogManualScanError(ex);
-            }
-        });
+            },
+            CancellationToken.None);
 
         return Accepted();
     }
@@ -768,202 +792,4 @@ public partial class MediaIntegrityController : ControllerBase
 
     [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Error restoring database backup")]
     private partial void LogRestoreError(Exception ex);
-}
-
-/// <summary>
-/// Response model for the bug-report diagnostic snapshot. Deliberately holds
-/// only environment/version info and aggregate counts -- never file paths,
-/// library names, or error text -- so it's safe to prefill into a public
-/// GitHub issue.
-/// </summary>
-public class DiagnosticsResponse
-{
-    /// <summary>Gets or sets the currently running plugin version.</summary>
-    public string PluginVersion { get; set; } = string.Empty;
-
-    /// <summary>Gets or sets the configured update channel (Stable/Dev).</summary>
-    public string UpdateChannel { get; set; } = string.Empty;
-
-    /// <summary>Gets or sets the running Jellyfin server version.</summary>
-    public string JellyfinServerVersion { get; set; } = string.Empty;
-
-    /// <summary>Gets or sets the server OS description (e.g. "Linux ... " or "Microsoft Windows ...").</summary>
-    public string OperatingSystem { get; set; } = string.Empty;
-
-    /// <summary>Gets or sets the .NET runtime description.</summary>
-    public string DotNetVersion { get; set; } = string.Empty;
-
-    /// <summary>Gets or sets a value indicating whether an admin-configured ffmpeg/ffprobe path override is in use.</summary>
-    public bool UsingCustomFfmpegOverride { get; set; }
-
-    /// <summary>Gets or sets the resolved ffmpeg path, or a placeholder if a custom override is configured.</summary>
-    public string FfmpegPath { get; set; } = string.Empty;
-
-    /// <summary>Gets or sets the resolved ffprobe path, or a placeholder if a custom override is configured.</summary>
-    public string FfprobePath { get; set; } = string.Empty;
-
-    /// <summary>Gets or sets the configured hardware acceleration type.</summary>
-    public string HardwareAccelerationType { get; set; } = string.Empty;
-
-    /// <summary>Gets or sets the configured maximum concurrent scans.</summary>
-    public int MaxConcurrentScans { get; set; }
-
-    /// <summary>Gets or sets the total number of scanned files.</summary>
-    public int TotalFiles { get; set; }
-
-    /// <summary>Gets or sets the number of files that passed.</summary>
-    public int PassedFiles { get; set; }
-
-    /// <summary>Gets or sets the number of files that failed.</summary>
-    public int FailedFiles { get; set; }
-
-    /// <summary>Gets or sets the number of files whose most recent scan ended in an error.</summary>
-    public int ErroredFiles { get; set; }
-
-    /// <summary>Gets or sets the library health percentage.</summary>
-    public double HealthPercentage { get; set; }
-}
-
-/// <summary>
-/// Response model for scan status.
-/// </summary>
-public class ScanStatusResponse
-{
-    /// <summary>Gets or sets a value indicating whether a scan is in progress.</summary>
-    public bool IsScanning { get; set; }
-
-    /// <summary>Gets or sets the <see cref="Scanner.ScanPhase"/> (as an int) the current library scan is running, or null when idle or between library scans.</summary>
-    public int? CurrentPhase { get; set; }
-
-    /// <summary>Gets or sets the library ID the current library scan is scoped to, or null when idle/unscoped.</summary>
-    public string? CurrentLibraryId { get; set; }
-
-    /// <summary>Gets or sets the name filter the current library scan is scoped to, or null when idle/unscoped.</summary>
-    public string? CurrentNameFilter { get; set; }
-
-    /// <summary>Gets or sets the season filter the current library scan is scoped to, or null when idle/unscoped.</summary>
-    public IReadOnlyCollection<int>? CurrentSeasons { get; set; }
-
-    /// <summary>Gets or sets the total number of tracked files.</summary>
-    public int TotalFiles { get; set; }
-
-    /// <summary>Gets or sets the number of files that have been scanned.</summary>
-    public int ScannedFiles { get; set; }
-
-    /// <summary>Gets or sets the number of files that passed.</summary>
-    public int PassedFiles { get; set; }
-
-    /// <summary>Gets or sets the number of files that failed.</summary>
-    public int FailedFiles { get; set; }
-
-    /// <summary>Gets or sets the number of files whose most recent scan ended in an error.</summary>
-    public int ErroredFiles { get; set; }
-
-    /// <summary>
-    /// Gets or sets the number of files still pending a Header (light/quick) scan.
-    /// </summary>
-    public int PendingHeaderFiles { get; set; }
-
-    /// <summary>
-    /// Gets or sets the number of files still pending a FullDecode (deep) scan.
-    /// A file already scanned at the Header phase but not yet deep-scanned
-    /// counts here, even though it does not count toward <see cref="PendingHeaderFiles"/>.
-    /// </summary>
-    public int PendingDeepFiles { get; set; }
-
-    /// <summary>Gets or sets the timestamp of the last scan.</summary>
-    public string? LastScanTimestamp { get; set; }
-
-    /// <summary>Gets or sets the library health percentage.</summary>
-    public double HealthPercentage { get; set; }
-}
-
-/// <summary>
-/// Request model for triggering a scan.
-/// </summary>
-public class ScanRequest
-{
-    /// <summary>Gets or sets an optional item ID to scan a specific file.</summary>
-    public string? ItemId { get; set; }
-
-    /// <summary>Gets or sets an optional library ID to scope the scan.</summary>
-    public string? LibraryId { get; set; }
-
-    /// <summary>Gets or sets a value indicating whether to run a deep (Phase 2) scan.</summary>
-    public bool DeepScan { get; set; }
-
-    /// <summary>
-    /// Gets or sets an optional case-insensitive name filter. Matched against a
-    /// movie's title or an episode's series title -- e.g. "Simpsons" scopes the
-    /// scan to every episode of that show, not just an episode literally titled
-    /// "Simpsons".
-    /// </summary>
-    public string? NameFilter { get; set; }
-
-    /// <summary>
-    /// Gets or sets an optional set of season numbers to restrict TV episodes
-    /// to (e.g. <c>[1, 2, 3]</c>). Ignored for movies and other non-episode items.
-    /// </summary>
-    public int[]? Seasons { get; set; }
-}
-
-/// <summary>
-/// Request model for installing a plugin update.
-/// </summary>
-public class InstallUpdateRequest
-{
-    /// <summary>Gets or sets which channel to install the latest available version from.</summary>
-    public UpdateChannel Channel { get; set; }
-}
-
-/// <summary>
-/// Request model for restoring a database backup.
-/// </summary>
-public class RestoreBackupRequest
-{
-    /// <summary>Gets or sets the backup file name to restore, as returned by <c>GET Database/Backups</c>.</summary>
-    public string FileName { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Request model for the "Send N Selected" bulk Arr-remediation action on
-/// the Media Issues page.
-/// </summary>
-public class ArrRemediationBulkRequest
-{
-    /// <summary>Gets or sets the Jellyfin item IDs to remediate.</summary>
-    public List<string> ItemIds { get; set; } = new();
-}
-
-/// <summary>
-/// Response model for a manual ffmpeg/ffprobe path re-resolution.
-/// </summary>
-public class FfmpegRefreshResult
-{
-    /// <summary>Gets or sets a value indicating whether either resolved path actually changed.</summary>
-    public bool Changed { get; set; }
-
-    /// <summary>Gets or sets the currently resolved ffmpeg path.</summary>
-    public string FfmpegPath { get; set; } = string.Empty;
-
-    /// <summary>Gets or sets the currently resolved ffprobe path.</summary>
-    public string FfprobePath { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Paginated response model for scan results.
-/// </summary>
-public class PagedResultResponse
-{
-    /// <summary>Gets or sets the list of scan result items.</summary>
-    public System.Collections.Generic.List<Data.Models.ScanRecord> Items { get; set; } = new();
-
-    /// <summary>Gets or sets the total count of matching records.</summary>
-    public int TotalCount { get; set; }
-
-    /// <summary>Gets or sets the current page number.</summary>
-    public int Page { get; set; }
-
-    /// <summary>Gets or sets the page size.</summary>
-    public int PageSize { get; set; }
 }

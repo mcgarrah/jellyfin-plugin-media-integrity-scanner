@@ -33,9 +33,17 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     /// <inheritdoc />
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
-        // Scanner components
+        // Scanner components. FfmpegWrapper/SharedBandwidthLimiter registered
+        // once as concrete singletons -- IFfmpegWrapper forwards to the same
+        // instance both resolve identically (same pattern as IDatabaseManager
+        // below). SharedBandwidthLimiter has no interface: it's registered
+        // directly so every consumer (currently just ScanEngine) draws from
+        // one shared instance via DI, rather than each constructing its own
+        // if the parameter were left optional with a `new` fallback.
         serviceCollection.AddSingleton<FfmpegResolver>();
         serviceCollection.AddSingleton<FfmpegWrapper>();
+        serviceCollection.AddSingleton<IFfmpegWrapper>(sp => sp.GetRequiredService<FfmpegWrapper>());
+        serviceCollection.AddSingleton<SharedBandwidthLimiter>();
         serviceCollection.AddSingleton<IScanEngine, ScanEngine>();
 
         // Database — registered once as the concrete type; IDatabaseManager

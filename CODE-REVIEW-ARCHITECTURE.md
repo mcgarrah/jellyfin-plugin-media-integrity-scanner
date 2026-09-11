@@ -9,9 +9,11 @@
 
 ## Executive Summary
 
-The codebase is healthy at the unit level — 441 passing tests across both target frameworks, zero build warnings, a clean DI graph, and consistently good inline documentation. The debt is structural, accumulated feature-by-feature: two god files (`SqliteDatabaseManager.cs` at 1,454 lines, `MediaIntegrityController.cs` at 969), a 29-call-site static-singleton config pattern that already caused one production-class bug and forces test serialization, ~200 lines of copy-pasted JavaScript across three admin pages that already caused a shipped 14-site bug, and a config-validation strategy that lives entirely in client-side JS. None of these block current work; all of them make the *next* feature more expensive than the last.
+The codebase is healthy at the unit level — 441 passing tests across both target frameworks (482 as of the fixes below), zero build warnings, a clean DI graph, and consistently good inline documentation. The debt is structural, accumulated feature-by-feature: two god files (`SqliteDatabaseManager.cs` at 1,454 lines, `MediaIntegrityController.cs` at 969), a 29-call-site static-singleton config pattern that already caused one production-class bug and forces test serialization, ~200 lines of copy-pasted JavaScript across three admin pages that already caused a shipped 14-site bug, and a config-validation strategy that lived entirely in client-side JS. None of these block current work; all of them make the *next* feature more expensive than the last.
 
 Priorities: the two **High** items are the ones with a demonstrated (not hypothetical) bug history. The Mediums are pre-emptive. The Lows are hygiene.
+
+**Status as of 2026-09-11 (same-day follow-up):** Both High items addressed (H2 fully; H1's highest-value first step). All five Medium items addressed (M1's recommended first step; M2–M5 fully). See each item below for what shipped and what (if anything) remains optional.
 
 ---
 
@@ -44,7 +46,8 @@ Priorities: the two **High** items are the ones with a demonstrated (not hypothe
 
 ### M1. `SqliteDatabaseManager` is a 1,454-line god class behind a 20-method god interface
 
-- [ ] **Split `IDatabaseManager`/`SqliteDatabaseManager` by responsibility.**
+- [x] **Resolved (2026-09-11), partial-class file split (the recommended low-risk first step).** Split the single 1,454-line file into `SqliteDatabaseManager.cs` (shared state/lifecycle: fields, constructor, `InitializeAsync`, `Dispose` -- 205 lines), `SqliteDatabaseManager.ScanResults.cs` (554 lines), `SqliteDatabaseManager.ArrRemediation.cs` (505 lines), `SqliteDatabaseManager.Backup.cs` (157 lines), and `SqliteDatabaseManager.Maintenance.cs` (175 lines), using C#'s `partial class` (the class was already declared `partial` for its `[LoggerMessage]` source generator, so no declaration change was needed). Extracted the exact original line ranges programmatically (not retyped) to guarantee zero risk of transcription errors in the SQL-heavy method bodies. `PagedScanResults` (the one DTO that lived in this file rather than `Data/Models/`) moved to `Data/Models/PagedScanResults.cs` for consistency with the rest of the codebase. Pure mechanical split, no behavior change, no interface change -- confirmed by zero build warnings and all 482 tests passing unchanged.
+- [ ] **Remaining (optional, medium-large effort):** the actual `IDatabaseManager` interface split into `IScanResultStore`/`IArrRemediationStore`/`IDatabaseBackupService`/`IDatabaseMaintenanceService` is not done. The file-level seam now visibly matches those four boundaries (each partial-class file = one prospective interface), which should make that follow-on split mostly mechanical whenever it's tackled.
 
 **Evidence:** `Data/SqliteDatabaseManager.cs` is 1,454 lines; `IDatabaseManager` declares 20 methods spanning four unrelated jobs: (1) scan-result persistence (`SaveResultAsync`, `IsCurrentAsync`, `MarkPendingAsync`, `GetStatisticsAsync`, `GetResultsAsync`, `GetAllResultsAsync`, `GetItemDetailAsync`, `PurgeItemAsync`, `ReconcileAsync`), (2) Arr-remediation persistence (8 methods: `RecordRemediationAsync` through `UpdateRemediationAsync`, plus `GetIssuesAsync`/`GetAllIssuesAsync`), (3) backup/restore (`BackupAsync`, `ListBackupsAsync`, `RestoreAsync`), (4) maintenance (`InitializeAsync`, `GetMaintenanceInfoAsync`, `RunMaintenanceAsync`). Every consumer mocks the whole 20-method interface to use 2–3 of them; `SqliteDatabaseManagerTests.cs` is 1,042 lines with a separate 427-line `ArrRemediationDatabaseTests.cs` already implicitly acknowledging the seam.
 
@@ -54,7 +57,8 @@ Priorities: the two **High** items are the ones with a demonstrated (not hypothe
 
 ### M2. `MediaIntegrityController` mixes 25 endpoints and 8 DTO classes in one 969-line file
 
-- [ ] **Move the DTOs out; consider splitting the controller by feature area.**
+- [x] **Resolved (2026-09-11), DTO move only.** All 8 DTOs moved to individual files under `Api/Models/` (`DiagnosticsResponse.cs`, `ScanStatusResponse.cs`, `ScanRequest.cs`, `InstallUpdateRequest.cs`, `RestoreBackupRequest.cs`, `ArrRemediationBulkRequest.cs`, `FfmpegRefreshResult.cs`, `PagedResultResponse.cs`), matching the one-class-per-file convention already used in `Data/Models/`. Controller reduced from 969 to 772 lines (later 795 after M3's changes). Pure move, zero behavior change; all 477 tests passed unchanged.
+- [ ] **Remaining (optional):** the controller-by-feature-area split (`ScanController`/`DatabaseController`/`IssuesController`/`UpdateController`) is not done -- deferred until the next feature area actually lands, per the original recommendation.
 
 **Evidence:** `Api/MediaIntegrityController.cs` (969 lines) contains 8 public DTO classes inline (`DiagnosticsResponse`, `ScanStatusResponse`, `ScanRequest`, `InstallUpdateRequest`, `RestoreBackupRequest`, `ArrRemediationBulkRequest`, `FfmpegRefreshResult`, `PagedResultResponse`, lines 779–969) below endpoints spanning five feature areas: scan control, results/export, issues/remediation, database backup/maintenance, and update-checking.
 
@@ -64,7 +68,11 @@ Priorities: the two **High** items are the ones with a demonstrated (not hypothe
 
 ### M3. `TriggerScan`'s fire-and-forget `Task.Run` is untracked — no way to observe or await it
 
-- [ ] **Route the manual-scan trigger through a tracked mechanism instead of a bare `Task.Run`.**
+- [x] **Resolved (2026-09-11), all three sites.**
+  - **Controller (`POST /Scan`):** `IScanEngine` gained `CurrentTrackedTask`/`RunTracked(...)` -- the controller now dispatches via `_scanner.RunTracked(scanAction, ct)` instead of a bare `Task.Run`, so the resulting task is observable for diagnostics/tests. `ItemId` is also now validated synchronously via `Guid.TryParse` before dispatch, returning a real `400 Bad Request` instead of a `FormatException` that only ever reached a log inside the fire-and-forget task.
+  - **`LibraryMonitor.OnItemRemoved`:** routed through a new dedicated bounded `Channel<string>` (`_purgeQueue`, capacity 1000, drop-newest on overflow) and a single background consumer, mirroring the scan-queue treatment already shipped in v0.4.3 -- kept as a separate channel from the scan queue rather than folded in, since a purge has none of the `CheckCurrentFirst`/dedup semantics scans need.
+  - **`ArrRemediationWorker.OnTick`:** wrapped `ProcessQueueAsync()` in a try/catch (an `async void` timer callback is the correct pattern here, not an anti-pattern -- `System.Threading.Timer`'s callback signature can't return `Task`), logging any exception from `ProcessQueueAsync`'s own outer body instead of letting it vanish into an unobserved task.
+  - 5 new regression tests (`TriggerScan_MalformedItemId_...`, `TriggerScan_TracksTheDispatchedTask_...`, `RunTracked_ExposesTheDispatchedTask_...`, `RunTracked_PassesTheGivenCancellationToken_...`, `OnItemRemoved_RoutesThroughABoundedChannel_...`).
 
 **Evidence:** `MediaIntegrityController.cs:556` — the `POST /Scan` endpoint dispatches `_ = Task.Run(async () => ...)` with `CancellationToken.None` and returns `202 Accepted`. `LibraryMonitor.OnItemRemoved` (`LibraryMonitor.cs:284`) has the same pattern for purges, and `ArrRemediationWorker.OnTick` (`:91`) discards its task.
 
@@ -74,7 +82,7 @@ Priorities: the two **High** items are the ones with a demonstrated (not hypothe
 
 ### M4. `ScanEngine` depends on concrete `FfmpegWrapper` and `SharedBandwidthLimiter`, and self-constructs the latter
 
-- [ ] **Introduce `IFfmpegWrapper`; register `SharedBandwidthLimiter` in DI instead of `new`-ing it in the constructor.**
+- [x] **Resolved (2026-09-11).** Extracted `IFfmpegWrapper` (the 6-member surface `ScanEngine`/`MediaIntegrityController` actually use); `FfmpegWrapper` implements it, registered via the same forward-to-concrete-singleton pattern already used for `IDatabaseManager`. Removed the `virtual` modifiers from `ProbeAsync`/`DecodeAsync` -- they existed purely so Moq could subclass the concrete class. `SharedBandwidthLimiter` is now `AddSingleton<SharedBandwidthLimiter>()` in `PluginServiceRegistrator`, and `ScanEngine`'s constructor parameter is required (no more `?? new SharedBandwidthLimiter()` fallback masking a missing DI registration). `ScanEngineTests.cs`'s `CreateFakeWrapper()` rewritten to mock `IFfmpegWrapper` directly instead of subclassing the concrete `FfmpegWrapper` (confirmed this was a real, not just theoretical, testability cost: once `virtual` was removed, the old subclassing approach would have silently stopped intercepting `ProbeAsync`/`DecodeAsync` calls). All 477 tests passed after the change.
 
 **Evidence:** `ScanEngine.cs:77–92` — constructor takes concrete `FfmpegWrapper` (tests cope by making `ProbeAsync`/`DecodeAsync` `virtual` purely so Moq can subclass — `FfmpegWrapper.cs:121,158` — and an `internal` event-raiser exists only for Moq, `:78`) and `SharedBandwidthLimiter? bandwidthLimiter = null` with `?? new SharedBandwidthLimiter()` fallback. `PluginServiceRegistrator` never registers `SharedBandwidthLimiter`, so production always takes the self-constructed path — a hidden dependency the DI container can't see or replace.
 
@@ -84,7 +92,7 @@ Priorities: the two **High** items are the ones with a demonstrated (not hypothe
 
 ### M5. `RemediateMovieAsync` / `RemediateEpisodeAsync` are parallel 56-line near-duplicates
 
-- [ ] **Collapse the movie/episode remediation flows over a small adapter abstraction.**
+- [x] **Resolved (2026-09-11).** Extracted the shared "steps 0-3" post-match remediation logic (pre-flight availability check, delete, blocklist-or-search, success/`ArrClientException`-failure recording) into a new generic `RemediateAfterMatchAsync<THistory>` method, taking the genuinely app-specific bits as delegates -- exactly the same technique the file already used one level down for `BlocklistOrSearchAsync<THistory>`. `RemediateMovieAsync`/`RemediateEpisodeAsync` now only contain the truly different ~18 lines each (server selection, client creation, matching, ID extraction) and delegate the rest. All 28 existing `ArrRemediationServiceTests` passed unchanged, confirming this was a pure refactor with no behavior change.
 
 **Evidence:** `ArrRemediationService.cs:237–292` and `:294–350` — 56 and 57 lines, structurally identical (select server → create client → match → pre-flight release search → delete → blocklist-or-search → record), differing only in the client type, match call, and ID plumbing. The file already proves the pattern works: `BlocklistOrSearchAsync` (`:361`) is generic over the Radarr/Sonarr history shape via delegates.
 

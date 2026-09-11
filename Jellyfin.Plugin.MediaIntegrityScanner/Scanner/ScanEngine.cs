@@ -39,7 +39,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
     private static readonly TimeSpan BandwidthPollInterval = TimeSpan.FromMilliseconds(200);
 
     private readonly SemaphoreSlim _scanLock;
-    private readonly FfmpegWrapper _ffmpeg;
+    private readonly IFfmpegWrapper _ffmpeg;
     private readonly IDatabaseManager _db;
     private readonly ISessionManager _sessions;
     private readonly ILibraryManager _library;
@@ -53,6 +53,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
     private string? _currentScopeLibraryId;
     private string? _currentScopeNameFilter;
     private IReadOnlyCollection<int>? _currentScopeSeasons;
+    private Task? _currentTrackedTask;
     private bool _disposed;
 
     /// <summary>
@@ -69,19 +70,18 @@ public partial class ScanEngine : IScanEngine, IDisposable
     /// </param>
     /// <param name="logger">Logger instance.</param>
     /// <param name="bandwidthLimiter">
-    /// Shared bandwidth budget. Optional -- no DI registration exists for
-    /// this type, so the default (a real, wall-clock-driven instance) is
-    /// what production always gets; tests can supply one built with a fake
-    /// <see cref="TimeProvider"/> for deterministic control.
+    /// Shared bandwidth budget -- registered as a DI singleton
+    /// (<see cref="PluginServiceRegistrator"/>) so every consumer draws from
+    /// the same instance, matching what "shared" in its name promises.
     /// </param>
     public ScanEngine(
-        FfmpegWrapper ffmpeg,
+        IFfmpegWrapper ffmpeg,
         IDatabaseManager db,
         ISessionManager sessions,
         ILibraryManager library,
         IArrRemediationService arrRemediation,
         ILogger<ScanEngine> logger,
-        SharedBandwidthLimiter? bandwidthLimiter = null)
+        SharedBandwidthLimiter bandwidthLimiter)
     {
         _ffmpeg = ffmpeg;
         _db = db;
@@ -89,7 +89,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
         _library = library;
         _arrRemediation = arrRemediation;
         _logger = logger;
-        _bandwidthLimiter = bandwidthLimiter ?? new SharedBandwidthLimiter();
+        _bandwidthLimiter = bandwidthLimiter;
 
         // Initialized eagerly, not lazily on first use -- ScanItemAsync is
         // called concurrently from multiple unsynchronized entry points
@@ -117,6 +117,17 @@ public partial class ScanEngine : IScanEngine, IDisposable
 
     /// <inheritdoc />
     public string? CurrentNameFilter => Volatile.Read(ref _isLibraryScanning) > 0 ? _currentScopeNameFilter : null;
+
+    /// <inheritdoc />
+    public Task? CurrentTrackedTask => Volatile.Read(ref _currentTrackedTask);
+
+    /// <inheritdoc />
+    public Task RunTracked(Func<CancellationToken, Task> scanAction, CancellationToken cancellationToken)
+    {
+        var task = scanAction(cancellationToken);
+        Volatile.Write(ref _currentTrackedTask, task);
+        return task;
+    }
 
     /// <inheritdoc />
     public IReadOnlyCollection<int>? CurrentSeasons => Volatile.Read(ref _isLibraryScanning) > 0 ? _currentScopeSeasons : null;

@@ -101,4 +101,28 @@ public interface IScanEngine
     /// Cancels the currently running scan.
     /// </summary>
     void Cancel();
+
+    /// <summary>
+    /// Gets the <see cref="Task"/> most recently dispatched via
+    /// <see cref="RunTracked"/>, or <c>null</c> if none has been dispatched
+    /// yet. Exists so a caller that intentionally fires a scan without
+    /// directly awaiting it -- the manual-scan API endpoint returns
+    /// <c>202 Accepted</c> immediately -- still has a way to observe
+    /// completion for diagnostics or tests (CODE-REVIEW-ARCHITECTURE.md M3;
+    /// previously a bare, unobservable <c>Task.Run</c>).
+    /// </summary>
+    Task? CurrentTrackedTask { get; }
+
+    /// <summary>
+    /// Invokes <paramref name="scanAction"/> and records the resulting
+    /// <see cref="Task"/> as <see cref="CurrentTrackedTask"/> before
+    /// returning it. Does not itself catch exceptions -- <paramref name="scanAction"/>
+    /// remains responsible for its own error handling, exactly as it was when
+    /// called directly from a bare <c>Task.Run</c>; this only makes the
+    /// resulting task observable instead of discarding it.
+    /// </summary>
+    /// <param name="scanAction">The scan work to run, given a cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token passed through to <paramref name="scanAction"/>.</param>
+    /// <returns>The same task now tracked as <see cref="CurrentTrackedTask"/>.</returns>
+    Task RunTracked(Func<CancellationToken, Task> scanAction, CancellationToken cancellationToken);
 }

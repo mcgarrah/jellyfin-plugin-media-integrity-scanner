@@ -252,43 +252,24 @@ public partial class ArrRemediationService : IArrRemediationService
             return await RecordAsync(movie, scanRecordId, "radarr", serverConfig.Name, match.MatchMethod, "unmatched", "skipped", match.ArrItemId, match.ArrFileId, requestedAt, cancellationToken, existing: existing).ConfigureAwait(false);
         }
 
-        try
-        {
-            // Step 0: pre-flight availability check (section 4).
-            var candidates = await client.SearchReleasesAsync(movieId, cancellationToken).ConfigureAwait(false);
-            if (candidates.All(c => c.Rejected))
-            {
-                LogNoReplacementAvailable("radarr", movie.Id);
-                return await RecordAsync(movie, scanRecordId, "radarr", serverConfig.Name, match.MatchMethod, "no_replacement_available", "skipped", movieId, movieFileId, requestedAt, cancellationToken, existing: existing).ConfigureAwait(false);
-            }
-
-            // Step 1: delete (skipped in dry-run -- see BlocklistOrSearchAsync for the matching skip on steps 2/3).
-            if (!dryRun)
-            {
-                await client.DeleteMovieFileAsync(movieFileId, cancellationToken).ConfigureAwait(false);
-            }
-
-            // Steps 2/3: blocklist the recent grab if one exists, otherwise a plain search.
-            var actionTaken = await BlocklistOrSearchAsync(
-                () => client.GetHistoryForMovieAsync(movieId, cancellationToken),
-                h => h.EventType,
-                h => h.Date,
-                h => h.Id,
-                client.MarkHistoryAsFailedAsync,
-                () => client.TriggerMovieSearchAsync(movieId, cancellationToken),
-                config?.HistoryLookbackDays ?? 30,
-                dryRun,
-                cancellationToken).ConfigureAwait(false);
-
-            var status = dryRun ? "skipped" : "success";
-            LogRemediated("radarr", movie.Id, actionTaken);
-            return await RecordAsync(movie, scanRecordId, "radarr", serverConfig.Name, match.MatchMethod, actionTaken, status, movieId, movieFileId, requestedAt, cancellationToken, existing: existing).ConfigureAwait(false);
-        }
-        catch (ArrClientException ex)
-        {
-            LogRemediationFailed(ex, "radarr", movie.Id);
-            return await RecordAsync(movie, scanRecordId, "radarr", serverConfig.Name, match.MatchMethod, null, "failed", movieId, movieFileId, requestedAt, cancellationToken, ex.Message, existing).ConfigureAwait(false);
-        }
+        return await RemediateAfterMatchAsync(
+            movie, scanRecordId, requestedAt, dryRun, existing,
+            appName: "radarr",
+            serverConfig,
+            match.MatchMethod,
+            arrItemId: movieId,
+            arrFileId: movieFileId,
+            allReleaseCandidatesRejected: async ct =>
+                (await client.SearchReleasesAsync(movieId, ct).ConfigureAwait(false)).All(c => c.Rejected),
+            deleteFile: ct => client.DeleteMovieFileAsync(movieFileId, ct),
+            getHistory: () => client.GetHistoryForMovieAsync(movieId, cancellationToken),
+            getEventType: h => h.EventType,
+            getDate: h => h.Date,
+            getHistoryId: h => h.Id,
+            markAsFailed: client.MarkHistoryAsFailedAsync,
+            triggerSearch: () => client.TriggerMovieSearchAsync(movieId, cancellationToken),
+            historyLookbackDays: config?.HistoryLookbackDays ?? 30,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<ArrRemediationRecord> RemediateEpisodeAsync(Episode episode, long? scanRecordId, string requestedAt, PluginConfiguration? config, bool dryRun, ArrRemediationRecord? existing, CancellationToken cancellationToken)
@@ -310,42 +291,94 @@ public partial class ArrRemediationService : IArrRemediationService
             return await RecordAsync(episode, scanRecordId, "sonarr", serverConfig.Name, match.MatchMethod, "unmatched", "skipped", match.ArrItemId, match.ArrFileId, requestedAt, cancellationToken, existing: existing).ConfigureAwait(false);
         }
 
+        return await RemediateAfterMatchAsync(
+            episode, scanRecordId, requestedAt, dryRun, existing,
+            appName: "sonarr",
+            serverConfig,
+            match.MatchMethod,
+            arrItemId: seriesId,
+            arrFileId: episodeFileId,
+            allReleaseCandidatesRejected: async ct =>
+                (await client.SearchReleasesAsync(episodeId, ct).ConfigureAwait(false)).All(c => c.Rejected),
+            deleteFile: ct => client.DeleteEpisodeFileAsync(episodeFileId, ct),
+            getHistory: () => client.GetHistoryForEpisodeAsync(seriesId, episodeId, cancellationToken),
+            getEventType: h => h.EventType,
+            getDate: h => h.Date,
+            getHistoryId: h => h.Id,
+            markAsFailed: client.MarkHistoryAsFailedAsync,
+            triggerSearch: () => client.TriggerEpisodeSearchAsync(episodeId, cancellationToken),
+            historyLookbackDays: config?.HistoryLookbackDays ?? 30,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Section 4 steps 0-3, shared between <see cref="RemediateMovieAsync"/>
+    /// and <see cref="RemediateEpisodeAsync"/> -- pre-flight availability
+    /// check, delete, blocklist-or-search, and result recording (success or
+    /// <see cref="ArrClientException"/> failure) are identical once a match
+    /// already exists; only how each of those steps talks to Radarr vs.
+    /// Sonarr differs, captured here as delegates the same way
+    /// <see cref="BlocklistOrSearchAsync{THistory}"/> already does one level
+    /// down for the history-record shape specifically
+    /// (CODE-REVIEW-ARCHITECTURE.md M5).
+    /// </summary>
+    private async Task<ArrRemediationRecord> RemediateAfterMatchAsync<THistory>(
+        BaseItem item,
+        long? scanRecordId,
+        string requestedAt,
+        bool dryRun,
+        ArrRemediationRecord? existing,
+        string appName,
+        ArrServerConfig serverConfig,
+        string matchMethod,
+        int arrItemId,
+        int arrFileId,
+        Func<CancellationToken, Task<bool>> allReleaseCandidatesRejected,
+        Func<CancellationToken, Task> deleteFile,
+        Func<Task<IReadOnlyList<THistory>>> getHistory,
+        Func<THistory, string> getEventType,
+        Func<THistory, string> getDate,
+        Func<THistory, int> getHistoryId,
+        Func<int, CancellationToken, Task> markAsFailed,
+        Func<Task> triggerSearch,
+        int historyLookbackDays,
+        CancellationToken cancellationToken)
+    {
         try
         {
             // Step 0: pre-flight availability check (section 4).
-            var candidates = await client.SearchReleasesAsync(episodeId, cancellationToken).ConfigureAwait(false);
-            if (candidates.All(c => c.Rejected))
+            if (await allReleaseCandidatesRejected(cancellationToken).ConfigureAwait(false))
             {
-                LogNoReplacementAvailable("sonarr", episode.Id);
-                return await RecordAsync(episode, scanRecordId, "sonarr", serverConfig.Name, match.MatchMethod, "no_replacement_available", "skipped", seriesId, episodeFileId, requestedAt, cancellationToken, existing: existing).ConfigureAwait(false);
+                LogNoReplacementAvailable(appName, item.Id);
+                return await RecordAsync(item, scanRecordId, appName, serverConfig.Name, matchMethod, "no_replacement_available", "skipped", arrItemId, arrFileId, requestedAt, cancellationToken, existing: existing).ConfigureAwait(false);
             }
 
-            // Step 1: delete (skipped in dry-run).
+            // Step 1: delete (skipped in dry-run -- see BlocklistOrSearchAsync for the matching skip on steps 2/3).
             if (!dryRun)
             {
-                await client.DeleteEpisodeFileAsync(episodeFileId, cancellationToken).ConfigureAwait(false);
+                await deleteFile(cancellationToken).ConfigureAwait(false);
             }
 
             // Steps 2/3: blocklist the recent grab if one exists, otherwise a plain search.
             var actionTaken = await BlocklistOrSearchAsync(
-                () => client.GetHistoryForEpisodeAsync(seriesId, episodeId, cancellationToken),
-                h => h.EventType,
-                h => h.Date,
-                h => h.Id,
-                client.MarkHistoryAsFailedAsync,
-                () => client.TriggerEpisodeSearchAsync(episodeId, cancellationToken),
-                config?.HistoryLookbackDays ?? 30,
+                getHistory,
+                getEventType,
+                getDate,
+                getHistoryId,
+                markAsFailed,
+                triggerSearch,
+                historyLookbackDays,
                 dryRun,
                 cancellationToken).ConfigureAwait(false);
 
             var status = dryRun ? "skipped" : "success";
-            LogRemediated("sonarr", episode.Id, actionTaken);
-            return await RecordAsync(episode, scanRecordId, "sonarr", serverConfig.Name, match.MatchMethod, actionTaken, status, seriesId, episodeFileId, requestedAt, cancellationToken, existing: existing).ConfigureAwait(false);
+            LogRemediated(appName, item.Id, actionTaken);
+            return await RecordAsync(item, scanRecordId, appName, serverConfig.Name, matchMethod, actionTaken, status, arrItemId, arrFileId, requestedAt, cancellationToken, existing: existing).ConfigureAwait(false);
         }
         catch (ArrClientException ex)
         {
-            LogRemediationFailed(ex, "sonarr", episode.Id);
-            return await RecordAsync(episode, scanRecordId, "sonarr", serverConfig.Name, match.MatchMethod, null, "failed", seriesId, episodeFileId, requestedAt, cancellationToken, ex.Message, existing).ConfigureAwait(false);
+            LogRemediationFailed(ex, appName, item.Id);
+            return await RecordAsync(item, scanRecordId, appName, serverConfig.Name, matchMethod, null, "failed", arrItemId, arrFileId, requestedAt, cancellationToken, ex.Message, existing).ConfigureAwait(false);
         }
     }
 

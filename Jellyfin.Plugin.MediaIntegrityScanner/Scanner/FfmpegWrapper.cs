@@ -25,8 +25,10 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Scanner;
 
 /// <summary>
 /// Wraps FFmpeg and FFprobe process execution for media integrity scanning.
+/// See <see cref="IFfmpegWrapper"/> for the abstraction consumers should
+/// depend on.
 /// </summary>
-public partial class FfmpegWrapper
+public partial class FfmpegWrapper : IFfmpegWrapper
 {
     private readonly FfmpegResolver _resolver;
     private readonly ILogger<FfmpegWrapper> _logger;
@@ -118,7 +120,7 @@ public partial class FfmpegWrapper
     /// <param name="filePath">Path to the media file.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Scan result indicating pass/fail.</returns>
-    public virtual async Task<ScanResult> ProbeAsync(string filePath, CancellationToken cancellationToken)
+    public async Task<ScanResult> ProbeAsync(string filePath, CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
 
@@ -155,7 +157,7 @@ public partial class FfmpegWrapper
     /// <param name="filePath">Path to the media file.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Scan result indicating pass/fail.</returns>
-    public virtual async Task<ScanResult> DecodeAsync(string filePath, CancellationToken cancellationToken)
+    public async Task<ScanResult> DecodeAsync(string filePath, CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
 

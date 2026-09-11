@@ -66,18 +66,21 @@ public class ScanEngineTests : IDisposable
 
     public void Dispose() => TestPluginContext.Clear();
 
-    private static Mock<FfmpegWrapper> CreateFakeWrapper()
+    private static Mock<IFfmpegWrapper> CreateFakeWrapper()
     {
-        var resolverMock = new Mock<FfmpegResolver>(
-            Mock.Of<IServerConfigurationManager>(), NullLogger<FfmpegResolver>.Instance);
-        resolverMock.Setup(r => r.ResolveFfmpegPath()).Returns("/fake/ffmpeg");
-        resolverMock.Setup(r => r.ResolveFfprobePath()).Returns("/fake/ffprobe");
-
-        return new Mock<FfmpegWrapper>(resolverMock.Object, NullLogger<FfmpegWrapper>.Instance);
+        // Mocked via IFfmpegWrapper (CODE-REVIEW-ARCHITECTURE.md M4), not the
+        // concrete FfmpegWrapper class -- ProbeAsync/DecodeAsync are no
+        // longer `virtual` on the concrete class now that ScanEngine depends
+        // on the interface, so subclassing it here would silently fail to
+        // intercept calls.
+        var wrapper = new Mock<IFfmpegWrapper>();
+        wrapper.Setup(w => w.FfmpegPath).Returns("/fake/ffmpeg");
+        wrapper.Setup(w => w.FfprobePath).Returns("/fake/ffprobe");
+        return wrapper;
     }
 
     private static ScanEngine CreateEngine(
-        Mock<FfmpegWrapper> wrapper,
+        Mock<IFfmpegWrapper> wrapper,
         Mock<IDatabaseManager>? db = null,
         Mock<ISessionManager>? sessions = null,
         Mock<ILibraryManager>? library = null,
@@ -91,7 +94,7 @@ public class ScanEngineTests : IDisposable
             (library ?? new Mock<ILibraryManager>()).Object,
             (arrRemediation ?? new Mock<IArrRemediationService>()).Object,
             NullLogger<ScanEngine>.Instance,
-            bandwidthLimiter);
+            bandwidthLimiter ?? new SharedBandwidthLimiter());
     }
 
     private static Movie MakeItem()
@@ -572,6 +575,49 @@ public class ScanEngineTests : IDisposable
         var completed = await Task.WhenAny(scanTask, Task.Delay(TimeSpan.FromSeconds(2)));
 
         Assert.Same(scanTask, completed);
+    }
+
+    // --- RunTracked ---
+
+    [Fact]
+    public void RunTracked_ExposesTheDispatchedTask_ViaCurrentTrackedTask()
+    {
+        // Regression test (CODE-REVIEW-ARCHITECTURE.md M3): the manual-scan
+        // API endpoint used to dispatch via a bare `_ = Task.Run(...)`,
+        // making the resulting task permanently unobservable. RunTracked
+        // exists so a caller that fires work without directly awaiting it
+        // still has a handle to that task afterward.
+        var wrapper = CreateFakeWrapper();
+        var engine = CreateEngine(wrapper);
+        var tcs = new TaskCompletionSource();
+
+        Assert.Null(engine.CurrentTrackedTask);
+
+        var returned = engine.RunTracked(_ => tcs.Task, CancellationToken.None);
+
+        Assert.Same(tcs.Task, returned);
+        Assert.Same(tcs.Task, engine.CurrentTrackedTask);
+
+        tcs.TrySetResult();
+    }
+
+    [Fact]
+    public void RunTracked_PassesTheGivenCancellationToken_ThroughToTheAction()
+    {
+        var wrapper = CreateFakeWrapper();
+        var engine = CreateEngine(wrapper);
+        using var cts = new CancellationTokenSource();
+        var observedToken = CancellationToken.None;
+
+        engine.RunTracked(
+            ct =>
+            {
+                observedToken = ct;
+                return Task.CompletedTask;
+            },
+            cts.Token);
+
+        Assert.Equal(cts.Token, observedToken);
     }
 
     // --- Cancellation ---
