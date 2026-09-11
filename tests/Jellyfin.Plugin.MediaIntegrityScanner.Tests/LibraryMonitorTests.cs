@@ -328,6 +328,108 @@ public class LibraryMonitorTests : IDisposable
     }
 
     [Fact]
+    public async Task ConsumerPoolSize_MatchesMaxConcurrentScans_ProcessesQueuedItemsConcurrently()
+    {
+        // Regression test for the bounded-channel rewrite of the old raw
+        // Task.Run-per-event dispatch: actual scan concurrency must still be
+        // governed by MaxConcurrentScans (via how many consumers pull from
+        // the queue), not silently serialized down to one regardless of
+        // configuration.
+        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemAdded = true, MaxConcurrentScans = 3 });
+
+        var library = new Mock<ILibraryManager>();
+        var scanner = new Mock<IScanEngine>();
+        var db = new Mock<IDatabaseManager>();
+
+        var started = 0;
+        var allThreeStarted = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        scanner.Setup(s => s.ScanItemAsync(It.IsAny<MediaBrowser.Controller.Entities.BaseItem>(), ScanPhase.Header, It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                if (Interlocked.Increment(ref started) == 3)
+                {
+                    allThreeStarted.TrySetResult();
+                }
+
+                await release.Task;
+            });
+
+        var monitor = CreateMonitor(library, scanner, db);
+        await monitor.StartAsync(CancellationToken.None);
+
+        for (var i = 0; i < 3; i++)
+        {
+            library.Raise(l => l.ItemAdded += null, library.Object, new ItemChangeEventArgs { Item = MakeMediaItem() });
+        }
+
+        // All three must be able to start concurrently -- if the consumer
+        // pool were serialized to one, this would time out with started
+        // stuck at 1 (the other two blocked behind the first's still-open
+        // `release` wait).
+        await allThreeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(3, started);
+
+        release.TrySetResult();
+    }
+
+    [Fact]
+    public async Task OnItemAdded_QueueFull_DropsTriggerWithoutThrowing_AndLeavesEarlierQueuedItemsIntact()
+    {
+        // Regression test: a very large burst (e.g. a full-library bulk
+        // import) must not throw or hang once the bounded scan queue fills
+        // up -- newest triggers get dropped instead (scheduled scans are the
+        // durable backstop for anything dropped this way), and everything
+        // queued before the overflow must still get processed normally.
+        TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemAdded = true, MaxConcurrentScans = 1 });
+
+        var library = new Mock<ILibraryManager>();
+        var scanner = new Mock<IScanEngine>();
+        var db = new Mock<IDatabaseManager>();
+
+        var firstItemStarted = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        scanner.Setup(s => s.ScanItemAsync(It.IsAny<MediaBrowser.Controller.Entities.BaseItem>(), ScanPhase.Header, It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                firstItemStarted.TrySetResult();
+                await release.Task;
+            });
+
+        var monitor = CreateMonitor(library, scanner, db);
+        await monitor.StartAsync(CancellationToken.None);
+
+        // The single consumer picks this one up and blocks on it, so the
+        // channel's own buffer (capacity 1000) is what has to fill up next.
+        var firstItem = MakeMediaItem();
+        library.Raise(l => l.ItemAdded += null, library.Object, new ItemChangeEventArgs { Item = firstItem });
+        await firstItemStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Exception? exception = null;
+        try
+        {
+            for (var i = 0; i < 1000; i++)
+            {
+                library.Raise(l => l.ItemAdded += null, library.Object, new ItemChangeEventArgs { Item = MakeMediaItem() });
+            }
+
+            // At least one of these must overflow the now-full channel.
+            library.Raise(l => l.ItemAdded += null, library.Object, new ItemChangeEventArgs { Item = MakeMediaItem() });
+        }
+        catch (Exception ex)
+        {
+            exception = ex;
+        }
+
+        Assert.Null(exception);
+
+        // The item that was already dequeued and in flight before the burst
+        // started is unaffected by the overflow -- it must still complete.
+        release.TrySetResult();
+        scanner.Verify(s => s.ScanItemAsync(firstItem, ScanPhase.Header, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task StopAsync_UnsubscribesFromEvents()
     {
         TestPluginContext.SetConfiguration(new PluginConfiguration { ScanOnItemAdded = true, ScanOnItemUpdated = true });

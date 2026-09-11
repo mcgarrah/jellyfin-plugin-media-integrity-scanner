@@ -15,9 +15,11 @@
 // with this program; if not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaIntegrityScanner.Data;
+using Jellyfin.Plugin.MediaIntegrityScanner.Data.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -41,6 +43,7 @@ public partial class ArrRemediationWorker : IHostedService, IDisposable
 
     private readonly IArrRemediationService _remediation;
     private readonly IDatabaseManager _db;
+    private readonly IArrServerSelector _serverSelector;
     private readonly ILogger<ArrRemediationWorker> _logger;
     private Timer? _timer;
     private int _isProcessing;
@@ -51,11 +54,23 @@ public partial class ArrRemediationWorker : IHostedService, IDisposable
     /// </summary>
     /// <param name="remediation">Processes each pending row's actual matching/delete/blocklist flow.</param>
     /// <param name="db">Database manager, for reading the pending queue and the daily-cap count.</param>
+    /// <param name="serverSelector">
+    /// Same routing logic <see cref="ArrRemediationService"/> uses internally,
+    /// used here only to predict -- cheaply, with no I/O -- which configured
+    /// server a pending row would route to, so a server that just failed this
+    /// tick can be skipped for the rest of the pass (see the circuit-breaker
+    /// comment in <see cref="ProcessQueueAsync"/>).
+    /// </param>
     /// <param name="logger">Logger instance.</param>
-    public ArrRemediationWorker(IArrRemediationService remediation, IDatabaseManager db, ILogger<ArrRemediationWorker> logger)
+    public ArrRemediationWorker(
+        IArrRemediationService remediation,
+        IDatabaseManager db,
+        IArrServerSelector serverSelector,
+        ILogger<ArrRemediationWorker> logger)
     {
         _remediation = remediation;
         _db = db;
+        _serverSelector = serverSelector;
         _logger = logger;
     }
 
@@ -107,6 +122,17 @@ public partial class ArrRemediationWorker : IHostedService, IDisposable
             var todayCount = await _db.CountAutoRemediationsSinceAsync(DateTime.UtcNow.Date).ConfigureAwait(false);
             var cap = config.MaxAutoRemediationsPerDay;
 
+            // Per-tick circuit breaker: an exception escaping ProcessPendingAsync
+            // (below) means the failure happened at the transport level -- a
+            // timed-out or unreachable server, not a normal "unmatched"/"no
+            // replacement available" outcome, which ProcessPendingAsync already
+            // reports as a plain status instead of throwing. Without this, a
+            // single down server with N queued items pays N full HttpClient
+            // timeouts (15s each, see ArrClientBase) serially in one tick,
+            // starving every other item -- including ones routed to an
+            // otherwise-healthy server -- queued after it in the same pass.
+            var failedServersThisTick = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var record in pending)
             {
                 if (todayCount >= cap)
@@ -115,6 +141,13 @@ public partial class ArrRemediationWorker : IHostedService, IDisposable
                     record.ActionTaken = "skipped_daily_cap";
                     record.CompletedAt = DateTime.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
                     await _db.UpdateRemediationAsync(record).ConfigureAwait(false);
+                    continue;
+                }
+
+                var predictedServer = PredictServerName(record, config);
+                if (predictedServer is not null && failedServersThisTick.Contains(predictedServer))
+                {
+                    LogSkippedKnownBadServer(record.Id, predictedServer);
                     continue;
                 }
 
@@ -129,6 +162,10 @@ public partial class ArrRemediationWorker : IHostedService, IDisposable
                 catch (Exception ex)
                 {
                     LogProcessingFailed(ex, record.Id);
+                    if (predictedServer is not null)
+                    {
+                        failedServersThisTick.Add(predictedServer);
+                    }
                 }
             }
         }
@@ -136,6 +173,21 @@ public partial class ArrRemediationWorker : IHostedService, IDisposable
         {
             Volatile.Write(ref _isProcessing, 0);
         }
+    }
+
+    /// <summary>
+    /// Predicts which configured server a pending row would route to, using
+    /// the same cheap, no-I/O logic <see cref="ArrRemediationService"/> uses
+    /// for real -- <see cref="IArrServerSelector.SelectForPath"/> against the
+    /// path this row was queued with. Returns <c>null</c> if no server of the
+    /// right type is configured at all (nothing to attribute a failure to).
+    /// </summary>
+    private string? PredictServerName(ArrRemediationRecord record, PluginConfiguration config)
+    {
+        var servers = string.Equals(record.ArrApp, "radarr", StringComparison.OrdinalIgnoreCase)
+            ? config.RadarrServers
+            : config.SonarrServers;
+        return _serverSelector.SelectForPath(servers, record.FilePath)?.Name;
     }
 
     /// <inheritdoc />
@@ -153,4 +205,7 @@ public partial class ArrRemediationWorker : IHostedService, IDisposable
 
     [LoggerMessage(EventId = 1, Level = LogLevel.Error, Message = "Failed to process pending Arr remediation {RecordId}")]
     private partial void LogProcessingFailed(Exception ex, long recordId);
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Debug, Message = "Skipping pending remediation {RecordId} -- server \"{ServerName}\" already failed earlier this tick")]
+    private partial void LogSkippedKnownBadServer(long recordId, string serverName);
 }

@@ -29,8 +29,10 @@ namespace Jellyfin.Plugin.MediaIntegrityScanner.Tests;
 
 /// <summary>
 /// Tests for <see cref="ArrRemediationWorker"/> -- the Phase 2 <c>IHostedService</c>
-/// that drains the pending-remediation queue. Drives <c>ProcessQueueAsync</c>
-/// directly (internal, not the real one-minute timer) for determinism.
+/// that drains the pending-remediation queue, and its per-tick circuit
+/// breaker for a down server (see the "Circuit breaker" region). Drives
+/// <c>ProcessQueueAsync</c> directly (internal, not the real one-minute
+/// timer) for determinism.
 /// </summary>
 [Collection("PluginInstance")]
 public class ArrRemediationWorkerTests : IDisposable
@@ -40,11 +42,11 @@ public class ArrRemediationWorkerTests : IDisposable
 
     public void Dispose() => TestPluginContext.Clear();
 
-    private ArrRemediationWorker CreateWorker() =>
-        new(_remediation.Object, _db.Object, NullLogger<ArrRemediationWorker>.Instance);
+    private ArrRemediationWorker CreateWorker(IArrServerSelector? serverSelector = null) =>
+        new(_remediation.Object, _db.Object, serverSelector ?? new ArrServerSelector(), NullLogger<ArrRemediationWorker>.Instance);
 
-    private static ArrRemediationRecord MakePending(string itemId, long id) =>
-        new() { Id = id, ItemId = itemId, FilePath = "/x.mkv", ArrApp = "radarr", MatchMethod = "pending", Status = "pending", RequestedAt = DateTime.UtcNow.ToString("O") };
+    private static ArrRemediationRecord MakePending(string itemId, long id, string app = "radarr", string filePath = "/x.mkv") =>
+        new() { Id = id, ItemId = itemId, FilePath = filePath, ArrApp = app, MatchMethod = "pending", Status = "pending", RequestedAt = DateTime.UtcNow.ToString("O") };
 
     [Fact]
     public async Task ProcessQueueAsync_ForwardingDisabled_NeverReadsThePendingQueue()
@@ -120,8 +122,12 @@ public class ArrRemediationWorkerTests : IDisposable
     [Fact]
     public async Task ProcessQueueAsync_OneRowThrows_StillProcessesTheRest()
     {
+        // Distinct file paths (not the shared default "/x.mkv") so the
+        // circuit breaker doesn't attribute both rows to the same predicted
+        // server and skip the second one -- that specific behavior has its
+        // own dedicated tests below.
         TestPluginContext.SetConfiguration(new PluginConfiguration { EnableArrForwarding = true, MaxAutoRemediationsPerDay = 10 });
-        var pending = new List<ArrRemediationRecord> { MakePending("a", 1), MakePending("b", 2) };
+        var pending = new List<ArrRemediationRecord> { MakePending("a", 1, filePath: "/data/movies/a.mkv"), MakePending("b", 2, filePath: "/data/movies/b.mkv") };
         _db.Setup(d => d.GetPendingRemediationsAsync()).ReturnsAsync(pending);
         _db.Setup(d => d.CountAutoRemediationsSinceAsync(It.IsAny<DateTime>())).ReturnsAsync(0);
         _remediation.Setup(r => r.ProcessPendingAsync(It.Is<ArrRemediationRecord>(x => x.Id == 1), It.IsAny<CancellationToken>()))
@@ -132,6 +138,10 @@ public class ArrRemediationWorkerTests : IDisposable
         var worker = CreateWorker();
         await worker.ProcessQueueAsync();
 
+        // Both rows have no server configured at all (default empty
+        // RadarrServers), so SelectForPath predicts null for both --
+        // "no server configured" can't be attributed to a specific server
+        // failing, so the breaker must not suppress row 2 here.
         _remediation.Verify(r => r.ProcessPendingAsync(It.Is<ArrRemediationRecord>(x => x.Id == 2), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -155,5 +165,93 @@ public class ArrRemediationWorkerTests : IDisposable
         await firstPass;
 
         _remediation.Verify(r => r.ProcessPendingAsync(It.IsAny<ArrRemediationRecord>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // --- Circuit breaker ---
+
+    [Fact]
+    public async Task ProcessQueueAsync_ServerFailsOnFirstItem_SkipsLaterItemsRoutedToSameServer()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            EnableArrForwarding = true,
+            MaxAutoRemediationsPerDay = 10,
+            RadarrServers = new List<ArrServerConfig>
+            {
+                new() { Name = "Main", Url = "http://radarr.local", ApiKey = "key" }
+            }
+        });
+
+        var records = new[]
+        {
+            MakePending("a", 1, filePath: "/data/movies/a.mkv"),
+            MakePending("b", 2, filePath: "/data/movies/b.mkv"),
+            MakePending("c", 3, filePath: "/data/movies/c.mkv")
+        };
+
+        _db.Setup(d => d.GetPendingRemediationsAsync()).ReturnsAsync(records);
+        _db.Setup(d => d.CountAutoRemediationsSinceAsync(It.IsAny<DateTime>())).ReturnsAsync(0);
+
+        var callCount = 0;
+        _remediation.Setup(r => r.ProcessPendingAsync(It.IsAny<ArrRemediationRecord>(), It.IsAny<CancellationToken>()))
+            .Returns((ArrRemediationRecord record, CancellationToken _) =>
+            {
+                callCount++;
+                // Simulate the real failure mode: a timeout/connection error
+                // escapes ProcessPendingAsync entirely rather than coming back
+                // as a normal "failed" status -- see ArrClientBase's 15s
+                // HttpClient.Timeout and the comment in ProcessQueueAsync.
+                throw new ArrClientException($"[RadarrClient] GET movie failed for record {record.Id}");
+            });
+
+        var worker = CreateWorker();
+
+        await worker.ProcessQueueAsync();
+
+        // Only the first item should have actually reached the remediation
+        // service -- the second and third are routed to the same (now known
+        // to have just failed) "Main" server and should be skipped without
+        // ever calling ProcessPendingAsync again this tick.
+        Assert.Equal(1, callCount);
+    }
+
+    [Fact]
+    public async Task ProcessQueueAsync_ServerFailsOnFirstItem_StillProcessesItemsRoutedToADifferentServer()
+    {
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            EnableArrForwarding = true,
+            MaxAutoRemediationsPerDay = 10,
+            RadarrServers = new List<ArrServerConfig>
+            {
+                new() { Name = "Main", Url = "http://radarr.local", ApiKey = "key" }
+            },
+            SonarrServers = new List<ArrServerConfig>
+            {
+                new() { Name = "TV", Url = "http://sonarr.local", ApiKey = "key" }
+            }
+        });
+
+        var records = new[]
+        {
+            MakePending("a", 1, app: "radarr", filePath: "/data/movies/a.mkv"),
+            MakePending("b", 2, app: "sonarr", filePath: "/data/tv/b.mkv")
+        };
+
+        _db.Setup(d => d.GetPendingRemediationsAsync()).ReturnsAsync(records);
+        _db.Setup(d => d.CountAutoRemediationsSinceAsync(It.IsAny<DateTime>())).ReturnsAsync(0);
+
+        _remediation.Setup(r => r.ProcessPendingAsync(It.Is<ArrRemediationRecord>(rec => rec.Id == 1), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ArrClientException("[RadarrClient] unreachable"));
+        _remediation.Setup(r => r.ProcessPendingAsync(It.Is<ArrRemediationRecord>(rec => rec.Id == 2), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(records[1]);
+
+        var worker = CreateWorker();
+
+        await worker.ProcessQueueAsync();
+
+        // Record 2 routes to Sonarr's "TV" server, unrelated to the Radarr
+        // "Main" server that just failed -- it must still be attempted.
+        _remediation.Verify(r => r.ProcessPendingAsync(It.Is<ArrRemediationRecord>(rec => rec.Id == 2), It.IsAny<CancellationToken>()), Times.Once);
     }
 }
