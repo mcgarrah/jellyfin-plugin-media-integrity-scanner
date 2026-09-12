@@ -67,7 +67,18 @@
             .results-table th,
             .results-table td { padding: 0.6em 1em; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }
             .results-table th { opacity: 0.7; font-weight: 600; }
-            .filter-row { display: flex; gap: 1em; margin: 1em 0; align-items: center; }
+            .panel {
+                background: rgba(255,255,255,0.03);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 8px;
+                padding: 1em 1.2em;
+                margin: 1.2em 0;
+            }
+            .panel-header { font-weight: 600; margin-bottom: 0.3em; }
+            .panel-header-hint { font-weight: normal; opacity: 0.65; font-size: 0.85em; }
+            .field { display: flex; flex-direction: column; gap: 0.25em; }
+            .field label { opacity: 0.7; font-size: 0.8em; }
+            .filter-row { display: flex; gap: 1.2em; margin: 0.6em 0; align-items: flex-end; flex-wrap: wrap; }
             .pagination { display: flex; gap: 0.5em; margin-top: 1em; align-items: center; }
             .error-msg { color: #f44336; font-style: italic; margin: 1em 0; }
             .loading { opacity: 0.5; font-style: italic; }
@@ -131,46 +142,61 @@
                 </div>
             </div>
 
-            <div class="filter-row">
-                <select id="issues-filter-status" onchange="issues_applyFilters()">
-                    <option value="">All (Fail + Error)</option>
-                    <option value="2" selected>Fail Only</option>
-                    <option value="3">Error Only</option>
-                </select>
-                <select id="issues-filter-phase" onchange="issues_applyFilters()">
-                    <option value="">All Phases</option>
-                    <option value="1">Header Only</option>
-                    <option value="2">Deep Only</option>
-                </select>
-                <select id="filter-arr-action" onchange="issues_applyFilters()">
-                    <option value="">Any Arr Action</option>
-                    <option value="not_sent">Not sent</option>
-                    <option value="pending">Pending</option>
-                    <option value="sent">Sent, searching</option>
-                    <option value="unmatched">Unmatched</option>
-                    <option value="no_replacement">No replacement found</option>
-                    <option value="blocked">Blocked</option>
-                    <option value="failed">Failed</option>
-                    <option value="dry_run">Dry-run</option>
-                </select>
-                <select id="issues-page-size-select" onchange="changePageSize()">
-                    <option value="25">25 / page</option>
-                    <option value="50" selected>50 / page</option>
-                    <option value="100">100 / page</option>
-                </select>
-                <button class="btn btn-primary" onclick="issues_loadIssues()">Refresh</button>
-                <select id="export-format-select">
-                    <option value="csv">CSV</option>
-                    <option value="tsv">TSV</option>
-                </select>
-                <button class="btn btn-primary" onclick="issues_exportIssues()">Export</button>
+            <div class="panel">
+                <div class="panel-header">
+                    Filters
+                    <span class="panel-header-hint">— shows Fail only by default. "Error" means the scan itself broke (ffprobe crashed, a read error) -- a weaker signal than a completed scan that affirmatively found corruption. Switch to "All" or "Error Only" to include those too.</span>
+                </div>
+                <div class="filter-row">
+                    <div class="field">
+                        <label for="issues-filter-status">Result</label>
+                        <select id="issues-filter-status" onchange="issues_applyFilters()">
+                            <option value="">All (Fail + Error)</option>
+                            <option value="2" selected>Fail only</option>
+                            <option value="3">Error only</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="issues-filter-phase">Phase</label>
+                        <select id="issues-filter-phase" onchange="issues_applyFilters()">
+                            <option value="">All phases</option>
+                            <option value="1">Header only</option>
+                            <option value="2">Deep only</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="filter-arr-action">Radarr / Sonarr action</label>
+                        <select id="filter-arr-action" onchange="issues_applyFilters()">
+                            <option value="">Any action</option>
+                            <option value="not_sent">Not sent</option>
+                            <option value="pending">Pending</option>
+                            <option value="sent">Sent, searching</option>
+                            <option value="unmatched">Unmatched</option>
+                            <option value="no_replacement">No replacement found</option>
+                            <option value="blocked">Blocked</option>
+                            <option value="failed">Failed</option>
+                            <option value="dry_run">Dry-run</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="issues-page-size-select">Rows per page</label>
+                        <select id="issues-page-size-select" onchange="issues_changePageSize()">
+                            <option value="25">25</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="issues_loadIssues()">Refresh</button>
+                    <div class="field">
+                        <label for="export-format-select">Export as</label>
+                        <select id="export-format-select">
+                            <option value="csv">CSV</option>
+                            <option value="tsv">TSV</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="issues_exportIssues()">Export</button>
+                </div>
             </div>
-            <p style="opacity:0.6;font-size:0.85em;margin:-0.6em 0 0.6em;">
-                Defaults to Fail Only -- Error means the scan itself broke (ffprobe crashed, a
-                read error), a weaker signal that the media is actually bad than a completed
-                scan that affirmatively found corruption. Switch to "All" or "Error Only" to
-                include those too.
-            </p>
 
             <div class="bulk-bar" id="bulk-bar">
                 <span id="bulk-count">0 selected</span>

@@ -75,7 +75,7 @@
             .btn-primary { background: #00a4dc; color: white; }
             .btn-danger { background: #f44336; color: white; }
             .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-            .controls { margin: 1em 0; display: flex; gap: 0.5em; align-items: center; flex-wrap: wrap; }
+            .controls { margin: 0.6em 0 0; display: flex; gap: 0.8em; align-items: flex-end; flex-wrap: wrap; }
             .results-table {
                 width: 100%;
                 border-collapse: collapse;
@@ -89,7 +89,23 @@
             }
             .results-table th { opacity: 0.7; font-weight: 600; }
             .filter-row { display: flex; gap: 1em; margin: 1em 0; align-items: center; }
-            .scope-row { display: flex; gap: 0.8em; margin: 1em 0 0.3em; align-items: center; flex-wrap: wrap; }
+            .panel {
+                background: rgba(255,255,255,0.03);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 8px;
+                padding: 1em 1.2em;
+                margin: 1.2em 0;
+            }
+            .panel-header { font-weight: 600; margin-bottom: 0.3em; }
+            .panel-header-hint { font-weight: normal; opacity: 0.65; font-size: 0.85em; }
+            .field { display: flex; flex-direction: column; gap: 0.25em; }
+            .field label { opacity: 0.7; font-size: 0.8em; }
+            .field-hint-inline { opacity: 0.6; font-weight: normal; }
+            .scope-row { display: flex; gap: 1.2em; margin: 0.6em 0 0.6em; align-items: flex-end; flex-wrap: wrap; }
+            .scope-row select,
+            .scope-row input[type="text"] {
+                min-width: 12em;
+            }
             .scope-row input[type="text"] {
                 padding: 0.4em 0.6em;
                 border-radius: 4px;
@@ -97,7 +113,7 @@
                 background: rgba(255,255,255,0.05);
                 color: inherit;
             }
-            .scope-summary { opacity: 0.7; font-size: 0.85em; margin: 0 0 0.8em; }
+            .scope-summary { opacity: 0.7; font-size: 0.85em; margin: 0.6em 0 0; }
             .active-scan-banner {
                 display: none;
                 align-items: center;
@@ -219,55 +235,91 @@
             </div>
 
             <!-- Scan Scope -->
-            <div class="scope-row">
-                <select id="scan-library" onchange="dash_updateScopeSummary(); dash_loadResults();">
-                    <option value="">All Libraries</option>
-                </select>
-                <input type="text" id="scan-name-filter" placeholder="Name contains (show or movie title)"
-                       oninput="dash_updateScopeSummary()">
-                <input type="text" id="scan-seasons" placeholder="Seasons, e.g. 1,2,5 or 1-3 (TV only)"
-                       oninput="dash_updateScopeSummary()">
+            <div class="panel">
+                <div class="panel-header">
+                    Scan Scope
+                    <span class="panel-header-hint">— optional. Narrows both the scan buttons below and the file list, until cleared.</span>
+                </div>
+                <div class="scope-row">
+                    <div class="field">
+                        <label for="scan-library">Library</label>
+                        <select id="scan-library" onchange="dash_updateScopeSummary(); dash_loadResults();">
+                            <option value="">All libraries</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="scan-name-filter">Movie / show name contains</label>
+                        <input type="text" id="scan-name-filter" placeholder="e.g. Batman"
+                               oninput="dash_updateScopeSummary()">
+                    </div>
+                    <div class="field">
+                        <label for="scan-seasons">TV seasons <span class="field-hint-inline">(e.g. 1,2,5 or 1-3)</span></label>
+                        <input type="text" id="scan-seasons" placeholder="e.g. 1-3"
+                               oninput="dash_updateScopeSummary()">
+                    </div>
+                </div>
+                <div class="scope-summary" id="scope-summary">Scope: entire library</div>
             </div>
-            <div class="scope-summary" id="scope-summary">Scope: entire library</div>
-            <div class="scope-summary">The scope above also filters the file list below and "Refresh File List" -- not just the scan buttons.</div>
 
-            <!-- Controls -->
-            <div class="controls">
-                <button class="btn btn-primary" id="btn-scan-headers" onclick="dash_triggerScan(false)">
-                    Run Header Scan
-                </button>
-                <button class="btn btn-primary" id="btn-scan-deep" onclick="dash_triggerScan(true)">
-                    Run Deep Scan
-                </button>
-                <button class="btn btn-danger" id="btn-cancel" onclick="dash_cancelScan()" disabled>
-                    Cancel Scan
-                </button>
-                <button class="btn btn-primary" id="btn-refresh-list" onclick="dash_loadResults()">
-                    Refresh File List
-                </button>
-                <select id="filter-status" onchange="dash_loadResults()">
-                    <option value="">All Results</option>
-                    <option value="0">Pending Only</option>
-                    <option value="2">Failed Only</option>
-                    <option value="1">Passed Only</option>
-                    <option value="3">Errors Only</option>
-                </select>
-                <select id="filter-phase" onchange="dash_loadResults()">
-                    <option value="">All Phases</option>
-                    <option value="1">Header Only</option>
-                    <option value="2">Deep Only</option>
-                </select>
-                <select id="page-size-select" onchange="dash_changePageSize()">
-                    <option value="25">25 / page</option>
-                    <option value="50" selected>50 / page</option>
-                    <option value="100">100 / page</option>
-                    <option value="250">250 / page</option>
-                </select>
-                <select id="export-format">
-                    <option value="csv">CSV</option>
-                    <option value="tsv">TSV</option>
-                </select>
-                <button class="btn btn-primary" id="btn-export" onclick="dash_exportResults()">Export</button>
+            <!-- Scan Actions -->
+            <div class="panel">
+                <div class="panel-header">Run a Scan</div>
+                <div class="controls">
+                    <button class="btn btn-primary" id="btn-scan-headers" onclick="dash_triggerScan(false)">
+                        Run Header Scan
+                    </button>
+                    <button class="btn btn-primary" id="btn-scan-deep" onclick="dash_triggerScan(true)">
+                        Run Deep Scan
+                    </button>
+                    <button class="btn btn-danger" id="btn-cancel" onclick="dash_cancelScan()" disabled>
+                        Cancel Scan
+                    </button>
+                </div>
+            </div>
+
+            <!-- File List Filters -->
+            <div class="panel">
+                <div class="panel-header">File List</div>
+                <div class="controls">
+                    <button class="btn btn-primary" id="btn-refresh-list" onclick="dash_loadResults()">
+                        Refresh File List
+                    </button>
+                    <div class="field">
+                        <label for="filter-status">Status</label>
+                        <select id="filter-status" onchange="dash_loadResults()">
+                            <option value="">All results</option>
+                            <option value="0">Pending only</option>
+                            <option value="2">Failed only</option>
+                            <option value="1">Passed only</option>
+                            <option value="3">Errors only</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="filter-phase">Phase</label>
+                        <select id="filter-phase" onchange="dash_loadResults()">
+                            <option value="">All phases</option>
+                            <option value="1">Header only</option>
+                            <option value="2">Deep only</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="page-size-select">Rows per page</label>
+                        <select id="page-size-select" onchange="dash_changePageSize()">
+                            <option value="25">25</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="250">250</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="export-format">Export as</label>
+                        <select id="export-format">
+                            <option value="csv">CSV</option>
+                            <option value="tsv">TSV</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" id="btn-export" onclick="dash_exportResults()">Export</button>
+                </div>
             </div>
 
             <!-- Error display -->
