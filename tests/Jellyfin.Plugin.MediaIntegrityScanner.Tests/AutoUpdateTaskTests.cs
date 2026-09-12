@@ -60,12 +60,13 @@ public class AutoUpdateTaskTests : IDisposable
             NullLogger<AutoUpdateTask>.Instance);
     }
 
-    private static Mock<IUpdateChecker> UpdateAvailableChecker(UpdateChannel channel = UpdateChannel.Stable)
+    private static Mock<IUpdateChecker> UpdateAvailableChecker(UpdateChannel channel = UpdateChannel.Stable, UpdateChannel? availableVersionChannel = null)
     {
+        var effectiveChannel = availableVersionChannel ?? channel;
         var updateChecker = new Mock<IUpdateChecker>();
         updateChecker.Setup(u => u.RefreshAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpdateStatus { UpdateAvailable = true, Channel = channel, AvailableVersion = "0.2.0.0" });
-        updateChecker.Setup(u => u.InstallAsync(channel, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpdateStatus { UpdateAvailable = true, Channel = channel, AvailableVersionChannel = effectiveChannel, AvailableVersion = "0.2.0.0" });
+        updateChecker.Setup(u => u.InstallAsync(effectiveChannel, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return updateChecker;
     }
@@ -147,6 +148,33 @@ public class AutoUpdateTaskTests : IDisposable
 
         updateChecker.Verify(u => u.InstallAsync(UpdateChannel.Stable, It.IsAny<CancellationToken>()), Times.Once);
         systemManager.Verify(s => s.Restart(), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DevChannelConfiguredButEffectiveVersionIsStable_InstallsFromStableNotDev()
+    {
+        // Regression test for a live incident (2026-09-12): both jellyfin-test
+        // instances were configured for the Development channel, and a dev
+        // pre-release (0.4.3-dev.63) landed with a *lower* version number than
+        // the already-installed stable release (0.4.4.0) -- a normal state,
+        // since dev version numbers reset per release line. AutoUpdateTask used
+        // to pass status.Channel (the raw "Development" preference) straight to
+        // InstallAsync, which re-derives "latest in that one manifest" from
+        // scratch and installed the older dev build over the newer stable one.
+        // Jellyfin then loaded both plugin-version directories on next restart
+        // and crashed with an InvalidCastException (two assemblies define the
+        // same PluginConfiguration type name in different load contexts),
+        // taking the server down. Fix: install from AvailableVersionChannel
+        // (which channel the already-compared AvailableVersion actually came
+        // from), not the admin's raw channel preference.
+        SetConfig(enableAutoUpdate: true);
+        var updateChecker = UpdateAvailableChecker(channel: UpdateChannel.Development, availableVersionChannel: UpdateChannel.Stable);
+        var task = CreateTask(updateChecker);
+
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        updateChecker.Verify(u => u.InstallAsync(UpdateChannel.Stable, It.IsAny<CancellationToken>()), Times.Once);
+        updateChecker.Verify(u => u.InstallAsync(UpdateChannel.Development, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

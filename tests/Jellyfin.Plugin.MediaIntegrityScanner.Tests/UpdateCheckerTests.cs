@@ -184,6 +184,7 @@ public class UpdateCheckerTests : IDisposable
 
         Assert.True(status.UpdateAvailable);
         Assert.Equal(newerDev.ToString(), status.AvailableVersion);
+        Assert.Equal(UpdateChannel.Development, status.AvailableVersionChannel);
     }
 
     [Fact]
@@ -201,8 +202,15 @@ public class UpdateCheckerTests : IDisposable
 
         var status = await CreateChecker(manager).RefreshAsync(CancellationToken.None);
 
+        // Regression test (live incident, 2026-09-12): this is the exact shape
+        // that crashed both jellyfin-test instances -- Development channel
+        // configured, but the dev manifest's newest entry is older than
+        // stable's. AvailableVersionChannel must say Stable here so the
+        // caller (AutoUpdateTask) installs from the manifest that actually
+        // produced AvailableVersion, not from the raw "Development" preference.
         Assert.True(status.UpdateAvailable);
         Assert.Equal(newerStable.ToString(), status.AvailableVersion);
+        Assert.Equal(UpdateChannel.Stable, status.AvailableVersionChannel);
     }
 
     [Fact]

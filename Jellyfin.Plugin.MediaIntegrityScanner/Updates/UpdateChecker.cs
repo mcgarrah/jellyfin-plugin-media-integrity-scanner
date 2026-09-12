@@ -70,6 +70,7 @@ public partial class UpdateChecker : IUpdateChecker
             LatestDevVersion = latestDev?.Version,
             Channel = config.UpdateChannel,
             AvailableVersion = effective?.Version,
+            AvailableVersionChannel = effective != null && ReferenceEquals(effective, latestDev) ? UpdateChannel.Development : UpdateChannel.Stable,
             UpdateAvailable = effective != null && effective.VersionNumber > currentVersion,
             CheckedAt = DateTime.UtcNow
         };

@@ -107,8 +107,16 @@ public partial class AutoUpdateTask : IScheduledTask
             return;
         }
 
-        LogInstalling(status.Channel, status.AvailableVersion ?? "unknown");
-        await _updateChecker.InstallAsync(status.Channel, cancellationToken).ConfigureAwait(false);
+        // Install from AvailableVersionChannel (which manifest the already
+        // version-compared AvailableVersion actually came from), not
+        // status.Channel (the admin's raw preference) -- on the Development
+        // channel these can differ when the dev manifest's newest entry is
+        // older than stable's, and InstallAsync(status.Channel) would
+        // re-derive "latest in that one manifest" from scratch, ignoring the
+        // comparison RefreshAsync already did and downgrade-installing an
+        // older dev build over an already-newer stable one.
+        LogInstalling(status.AvailableVersionChannel, status.AvailableVersion ?? "unknown");
+        await _updateChecker.InstallAsync(status.AvailableVersionChannel, cancellationToken).ConfigureAwait(false);
         progress.Report(80);
 
         if (config.AutoRestartAfterUpdate)

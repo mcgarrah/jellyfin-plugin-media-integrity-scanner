@@ -53,9 +53,23 @@ public class UpdateStatus
     public string? AvailableVersion { get; set; }
 
     /// <summary>
-    /// Gets or sets which channel this status was computed against.
+    /// Gets or sets which channel this status was computed against (i.e. the
+    /// admin's configured preference).
     /// </summary>
     public UpdateChannel Channel { get; set; }
+
+    /// <summary>
+    /// Gets or sets which channel <see cref="AvailableVersion"/> actually
+    /// came from. On the Development channel this can differ from
+    /// <see cref="Channel"/>: when the dev manifest's newest entry is older
+    /// than the stable manifest's (a normal state -- dev version numbers
+    /// reset per release line and don't always lead stable), the effective
+    /// pick falls back to Stable. Installing must use this value, not
+    /// <see cref="Channel"/> -- using the configured channel directly would
+    /// re-derive "latest in that one manifest" from scratch and could
+    /// install an older dev build over an already-newer stable one.
+    /// </summary>
+    public UpdateChannel AvailableVersionChannel { get; set; }
 
     /// <summary>
     /// Gets or sets when this status was computed.
