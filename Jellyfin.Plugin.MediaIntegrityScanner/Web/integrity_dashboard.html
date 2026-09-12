@@ -142,6 +142,19 @@
                 padding: 0.8em 1.2em;
                 margin: 1em 0;
             }
+            .empty-state-banner {
+                display: none;
+                align-items: center;
+                gap: 1.2em;
+                background: rgba(76,175,80,0.1);
+                border: 1px solid rgba(76,175,80,0.35);
+                border-radius: 8px;
+                padding: 1.2em 1.4em;
+                margin: 1.2em 0;
+            }
+            .empty-state-banner.open { display: flex; }
+            .empty-state-banner h3 { margin: 0 0 0.2em; }
+            .empty-state-banner p { margin: 0; opacity: 0.75; font-size: 0.9em; }
             .modal-overlay {
                 display: none;
                 position: fixed;
@@ -232,6 +245,18 @@
             <!-- Shown only while a scoped scan is actively running -->
             <div class="active-scan-banner" id="active-scan-banner">
                 <span id="active-scan-banner-text"></span>
+            </div>
+
+            <!-- Shown only when this library has no scan history at all yet
+                 (TotalFiles === 0), so a brand-new install doesn't present a
+                 cold grid of zeroed stats and a wall of filters with no
+                 indication of what to do first. Hidden as soon as any scan
+                 has ever recorded a single file. -->
+            <div class="empty-state-banner" id="empty-state-banner">
+                <div>
+                    <h3>No scan history yet</h3>
+                    <p>Click "Run Header Scan" below to check your library for corrupt or truncated files. A header scan is quick -- it just reads each file's metadata, not the full contents.</p>
+                </div>
             </div>
 
             <!-- Scan Scope -->
@@ -481,6 +506,7 @@
 
                     updateActiveScanBanner(data);
                     updateIssuesNavLink(data);
+                    updateEmptyStateBanner(data);
 
                     // Update button states
                     document.getElementById('btn-cancel').disabled = !data.IsScanning;
@@ -879,6 +905,16 @@
                     ? 'Scanning: ' + parts.join(', ')
                     : 'Scanning: entire library (no scope filter)';
                 banner.classList.add('open');
+            }
+
+            // Shows the "No scan history yet" banner only for a genuinely
+            // untouched install (zero files ever scanned) and only while
+            // idle -- once a scan is running, updateActiveScanBanner already
+            // communicates that something is happening, so showing both at
+            // once would be redundant.
+            function updateEmptyStateBanner(data) {
+                var banner = document.getElementById('empty-state-banner');
+                banner.classList.toggle('open', data.TotalFiles === 0 && !data.IsScanning);
             }
 
             // The dashboard's only footprint for the Media Issues page
