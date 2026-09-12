@@ -101,12 +101,14 @@ jobs:
               --target-framework net9.0 \
               --manifest manifest-unstable.json \
               --manifest-version "${{ steps.version.outputs.manifest_version }}" \
-              --prerelease
+              --prerelease \
+              --max-versions-per-abi 15
             python3 scripts/update-manifest.py "${{ steps.version.outputs.tag }}" "media-integrity-scanner-${{ steps.version.outputs.tag }}-jf12.0.zip" \
               --target-framework net10.0 \
               --manifest manifest-unstable.json \
               --manifest-version "${{ steps.version.outputs.manifest_version }}" \
-              --prerelease
+              --prerelease \
+              --max-versions-per-abi 15
             git add manifest-unstable.json
             git commit -m "chore: dev release ${{ steps.version.outputs.tag }} (manifest-unstable.json, both targets)"
 

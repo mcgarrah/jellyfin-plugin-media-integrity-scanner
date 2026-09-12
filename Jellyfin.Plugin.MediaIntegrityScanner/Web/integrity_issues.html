@@ -201,17 +201,23 @@
             <div class="pagination" id="issues-pagination"></div>
         </div>
 
+        <!-- getApiUrl/apiFetch/escapeHtml/formatDate shared with
+             integrity_dashboard.html/integrity_settings.html
+             (CODE-REVIEW-ARCHITECTURE.md H1) -- see the comment on this same
+             tag in integrity_dashboard.html for why a plain <script src>
+             here is safe despite putting these names on window. -->
+        <script src="ConfigurationPage?name=Media%20Integrity%20Scanner%20Shared%20JS"></script>
         <script>
         // Wrapped in an IIFE so this page's top-level function/var names
-        // (loadIssues, currentPage, apiFetch, showError, goToPage, ...)
-        // never leak onto window -- a real, live bug found 2026-08-23:
-        // Jellyfin never unmounts a previously-visited plugin config page's
-        // <script>, so every same-named global here silently clobbered the
-        // dashboard's own copy (and vice versa) once a user had visited both
-        // pages in one session (e.g. the dashboard's own pagination started
-        // calling this page's loadIssues() instead of its own loadResults()
-        // after a visit to Media Issues). Only the handful of functions
-        // actually invoked from inline onclick/onchange HTML attributes are
+        // (loadIssues, currentPage, showError, goToPage, ...) never leak onto
+        // window -- a real, live bug found 2026-08-23: Jellyfin never
+        // unmounts a previously-visited plugin config page's <script>, so
+        // every same-named global here silently clobbered the dashboard's
+        // own copy (and vice versa) once a user had visited both pages in
+        // one session (e.g. the dashboard's own pagination started calling
+        // this page's loadIssues() instead of its own loadResults() after a
+        // visit to Media Issues). Only the handful of functions actually
+        // invoked from inline onclick/onchange HTML attributes are
         // deliberately re-exposed on window below, each under an
         // "issues_"-prefixed name unique across this plugin's three pages.
         (function () {
@@ -221,29 +227,6 @@
             var currentIssues = [];
             var selectedItemIds = {};
 
-            function getApiUrl(path) {
-                return ApiClient.getUrl('MediaIntegrity/' + path);
-            }
-
-            function apiFetch(path, options) {
-                var url = getApiUrl(path);
-                // Copy the caller's options, then deep-merge headers: the default
-                // auth header always applies and call-site headers (e.g.
-                // Content-Type) layer on top. A single Object.assign over the whole
-                // options object is a shallow merge -- any call site passing its own
-                // headers used to silently drop the auth header unless it repeated
-                // it, which is exactly how the Jellyfin 12 auth migration ended up
-                // needing the same fix at 14 sites (CODE-REVIEW-ARCHITECTURE.md H1).
-                var opts = Object.assign({}, options || {});
-                opts.headers = Object.assign(
-                    { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' },
-                    opts.headers || {});
-                return fetch(url, opts).then(function(resp) {
-                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                    return resp.json();
-                });
-            }
-
             function showError(msg) {
                 var el = document.getElementById('issues-error-msg');
                 el.textContent = msg;
@@ -252,16 +235,6 @@
 
             function hideError() {
                 document.getElementById('issues-error-msg').style.display = 'none';
-            }
-
-            function escapeHtml(str) {
-                if (!str) return '';
-                return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-            }
-
-            function formatDate(iso) {
-                if (!iso) return '—';
-                try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
             }
 
             // Arr Action chip text/class for a row's Remediation (null if this

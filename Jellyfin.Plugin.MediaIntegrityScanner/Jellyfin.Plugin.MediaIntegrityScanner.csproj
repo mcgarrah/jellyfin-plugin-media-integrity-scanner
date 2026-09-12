@@ -48,6 +48,7 @@
     <EmbeddedResource Include="Web\integrity_dashboard.html" />
     <EmbeddedResource Include="Web\integrity_issues.html" />
     <EmbeddedResource Include="Web\integrity_settings.html" />
+    <EmbeddedResource Include="Web\integrity_shared.js" />
   </ItemGroup>
 
   <!-- Ships alongside the plugin DLL in every publish/release output (see

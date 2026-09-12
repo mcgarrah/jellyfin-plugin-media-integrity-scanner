@@ -120,7 +120,36 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Label the changelog entry as an automated pre-release build.",
     )
+    parser.add_argument(
+        "--max-versions-per-abi",
+        type=int,
+        default=None,
+        help="If set, prune each targetAbi group down to its newest N entries after "
+        "inserting the new one (CODE-REVIEW-ARCHITECTURE.md L3). Intended for the "
+        "dev-channel manifest only -- the stable manifest's older entries are a "
+        "documented, intentional downgrade path (see RELEASE.md) and must not be "
+        "pruned, so this defaults to off (no --manifest default passes it).",
+    )
     return parser.parse_args()
+
+
+def prune_versions_per_abi(versions: list, max_per_abi: int) -> list:
+    """Keeps only the newest max_per_abi entries within each targetAbi group.
+
+    Entries are inserted at index 0 (see main()), so within any single
+    targetAbi group, list order is already newest-first -- a simple
+    per-group counter while walking the list preserves that and needs no
+    separate sort/timestamp comparison.
+    """
+    counts: dict = {}
+    pruned = []
+    for entry in versions:
+        abi = entry.get("targetAbi")
+        seen = counts.get(abi, 0)
+        if seen < max_per_abi:
+            pruned.append(entry)
+        counts[abi] = seen + 1
+    return pruned
 
 
 def main() -> None:
@@ -163,6 +192,8 @@ def main() -> None:
         if not (v.get("version") == version and v.get("targetAbi") == target_abi)
     ]
     versions.insert(0, entry)
+    if args.max_versions_per_abi is not None:
+        versions = prune_versions_per_abi(versions, args.max_versions_per_abi)
     plugin["versions"] = versions
 
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

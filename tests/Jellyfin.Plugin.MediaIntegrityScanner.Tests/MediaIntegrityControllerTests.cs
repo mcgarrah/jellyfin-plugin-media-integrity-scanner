@@ -544,7 +544,10 @@ public class MediaIntegrityControllerTests : IDisposable
 
         var result = await controller.GetItemDetail("missing-item");
 
-        Assert.IsType<NotFoundResult>(result);
+        // Regression test (CODE-REVIEW-ARCHITECTURE.md L2): this used to be a
+        // bare NotFoundResult with no body, leaving page JS reading err.message
+        // with nothing to show.
+        Assert.IsType<NotFoundObjectResult>(result);
     }
 
     [Fact]
@@ -803,7 +806,10 @@ public class MediaIntegrityControllerTests : IDisposable
 
         var result = await controller.TriggerArrRemediation(Guid.NewGuid().ToString());
 
-        Assert.IsType<NotFoundResult>(result.Result);
+        // Regression test (CODE-REVIEW-ARCHITECTURE.md L2): this used to be a
+        // bare NotFoundResult with no body, leaving page JS reading err.message
+        // with nothing to show.
+        Assert.IsType<NotFoundObjectResult>(result.Result);
     }
 
     [Fact]
@@ -813,7 +819,10 @@ public class MediaIntegrityControllerTests : IDisposable
 
         var result = await controller.TriggerArrRemediation("not-a-guid");
 
-        Assert.IsType<NotFoundResult>(result.Result);
+        // Regression test (CODE-REVIEW-ARCHITECTURE.md L2): this used to be a
+        // bare NotFoundResult with no body, leaving page JS reading err.message
+        // with nothing to show.
+        Assert.IsType<NotFoundObjectResult>(result.Result);
     }
 
     [Fact]
@@ -870,7 +879,10 @@ public class MediaIntegrityControllerTests : IDisposable
         var controller = CreateController();
         var result = await controller.ResetArrRemediationCycle(itemId);
 
-        Assert.IsType<NotFoundResult>(result.Result);
+        // Regression test (CODE-REVIEW-ARCHITECTURE.md L2): this used to be a
+        // bare NotFoundResult with no body, leaving page JS reading err.message
+        // with nothing to show.
+        Assert.IsType<NotFoundObjectResult>(result.Result);
     }
 
     [Fact]

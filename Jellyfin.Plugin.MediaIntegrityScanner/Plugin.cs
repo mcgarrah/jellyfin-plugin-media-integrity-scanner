@@ -184,6 +184,24 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             {
                 Name = "Media Integrity Scanner Settings",
                 EmbeddedResourcePath = GetType().Namespace + ".Web.integrity_settings.html"
+            },
+            new PluginPageInfo
+            {
+                // Not a real page -- shared JS helpers for the three pages
+                // above, served through Jellyfin's own GET
+                // web/ConfigurationPage?name=... mechanism (which already
+                // serves application/x-javascript for exactly this case; see
+                // Jellyfin's DashboardController.GetDashboardConfigurationPage)
+                // and loaded via a plain <script src> tag rather than a
+                // separate static-file route (CODE-REVIEW-ARCHITECTURE.md H1).
+                // No EnableInMainMenu/DisplayName -- confirmed against
+                // jellyfin-web's findBestConfigurationPage that a plugin with
+                // other EnableInMainMenu candidates (both real pages above
+                // have it) never surfaces a non-menu candidate as its
+                // "best"/linked configuration page, so this can't accidentally
+                // become a clickable link anywhere in the dashboard.
+                Name = "Media Integrity Scanner Shared JS",
+                EmbeddedResourcePath = GetType().Namespace + ".Web.integrity_shared.js"
             }
         };
     }

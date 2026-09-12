@@ -372,6 +372,12 @@
             </form>
         </div>
 
+        <!-- getApiUrl/apiFetch shared with integrity_dashboard.html/
+             integrity_issues.html (CODE-REVIEW-ARCHITECTURE.md H1) -- see the
+             comment on this same tag in integrity_dashboard.html for why a
+             plain <script src> here is safe despite putting these names on
+             window. -->
+        <script src="ConfigurationPage?name=Media%20Integrity%20Scanner%20Shared%20JS"></script>
         <script>
         // Wrapped in an IIFE so this page's top-level function/var names
         // never leak onto window -- a real, live bug found 2026-08-23:
@@ -472,29 +478,6 @@
                     .split(',')
                     .map(function(s) { return s.trim(); })
                     .filter(function(s) { return s.length > 0; });
-            }
-
-            function getApiUrl(path) {
-                return ApiClient.getUrl('MediaIntegrity/' + path);
-            }
-
-            function apiFetch(path, options) {
-                var url = getApiUrl(path);
-                // Copy the caller's options, then deep-merge headers: the default
-                // auth header always applies and call-site headers (e.g.
-                // Content-Type) layer on top. A single Object.assign over the whole
-                // options object is a shallow merge -- any call site passing its own
-                // headers used to silently drop the auth header unless it repeated
-                // it, which is exactly how the Jellyfin 12 auth migration ended up
-                // needing the same fix at 14 sites (CODE-REVIEW-ARCHITECTURE.md H1).
-                var opts = Object.assign({}, options || {});
-                opts.headers = Object.assign(
-                    { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' },
-                    opts.headers || {});
-                return fetch(url, opts).then(function (resp) {
-                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                    return resp.json();
-                });
             }
 
             function refreshFfmpegPaths() {

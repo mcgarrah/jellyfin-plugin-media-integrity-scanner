@@ -63,14 +63,31 @@ public class PluginTests : IDisposable
     }
 
     [Fact]
-    public void GetPages_ReturnsExactlyThreePages_DashboardIssuesAndSettings()
+    public void GetPages_ReturnsExactlyFourPages_DashboardIssuesSettingsAndSharedJs()
     {
         var pages = CreatePlugin().GetPages().ToList();
 
-        Assert.Equal(3, pages.Count);
+        Assert.Equal(4, pages.Count);
         Assert.Contains(pages, p => p.Name == "Media Integrity Scanner");
         Assert.Contains(pages, p => p.Name == "Media Issues");
         Assert.Contains(pages, p => p.Name == "Media Integrity Scanner Settings");
+        Assert.Contains(pages, p => p.Name == "Media Integrity Scanner Shared JS");
+    }
+
+    [Fact]
+    public void GetPages_SharedJsPage_IsNotInMainMenu()
+    {
+        // Regression test: this page is a JS resource, not a real UI page --
+        // if it were ever accidentally given EnableInMainMenu, it would show
+        // up as a broken/pointless sidebar entry. Also matters for
+        // jellyfin-web's findBestConfigurationPage, which prefers the first
+        // EnableInMainMenu candidate when picking which page to link from a
+        // plugin's details view -- this page must never be a candidate for
+        // that, which it already isn't as long as this stays false and at
+        // least one other page keeps EnableInMainMenu true.
+        var sharedJsPage = CreatePlugin().GetPages().Single(p => p.Name == "Media Integrity Scanner Shared JS");
+
+        Assert.False(sharedJsPage.EnableInMainMenu);
     }
 
     [Fact]

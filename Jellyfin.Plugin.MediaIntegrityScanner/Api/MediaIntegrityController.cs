@@ -282,7 +282,7 @@ public partial class MediaIntegrityController : ControllerBase
         var detail = await _db.GetItemDetailAsync(itemId).ConfigureAwait(false);
         if (detail == null)
         {
-            return NotFound();
+            return NotFound(new { message = "No scan record found for this item." });
         }
 
         return Ok(detail);
@@ -391,13 +391,13 @@ public partial class MediaIntegrityController : ControllerBase
     {
         if (!Guid.TryParse(itemId, out var guid))
         {
-            return NotFound();
+            return NotFound(new { message = "Invalid itemId." });
         }
 
         var item = _library.GetItemById(guid);
         if (item is null)
         {
-            return NotFound();
+            return NotFound(new { message = "No library item found with this itemId." });
         }
 
         var record = await _arrRemediation.RemediateAsync(item, scanRecordId: null, HttpContext.RequestAborted).ConfigureAwait(false);
@@ -452,7 +452,7 @@ public partial class MediaIntegrityController : ControllerBase
         var record = await _arrRemediation.ResetCycleAsync(itemId, HttpContext.RequestAborted).ConfigureAwait(false);
         if (record is null)
         {
-            return NotFound();
+            return NotFound(new { message = "This item is not currently blocked." });
         }
 
         return Ok(record);

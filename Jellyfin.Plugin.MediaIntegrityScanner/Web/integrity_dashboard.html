@@ -377,6 +377,17 @@
             </div>
         </div>
 
+        <!-- getApiUrl/apiFetch/escapeHtml/formatDate live here, shared with
+             integrity_settings.html/integrity_issues.html
+             (CODE-REVIEW-ARCHITECTURE.md H1). A plain <script src>, not
+             dynamically injected, so these are guaranteed defined before the
+             IIFE below runs. Loading this on all three pages does put these
+             four names on window rather than page-scoped -- safe specifically
+             because they're now the single canonical implementation instead
+             of three independently-maintained copies, so unlike the
+             goToPage-style bug below, a later page's load "clobbering" an
+             earlier one is a no-op (identical code both times). -->
+        <script src="ConfigurationPage?name=Media%20Integrity%20Scanner%20Shared%20JS"></script>
         <script>
         // Wrapped in an IIFE so this page's top-level function/var names
         // never leak onto window -- a real, live bug found 2026-08-23:
@@ -395,29 +406,6 @@
             var pageSize = 50;
             var refreshInterval = null;
             var currentResults = [];
-
-            function getApiUrl(path) {
-                return ApiClient.getUrl('MediaIntegrity/' + path);
-            }
-
-            function apiFetch(path, options) {
-                var url = getApiUrl(path);
-                // Copy the caller's options, then deep-merge headers: the default
-                // auth header always applies and call-site headers (e.g.
-                // Content-Type) layer on top. A single Object.assign over the whole
-                // options object is a shallow merge -- any call site passing its own
-                // headers used to silently drop the auth header unless it repeated
-                // it, which is exactly how the Jellyfin 12 auth migration ended up
-                // needing the same fix at 14 sites (CODE-REVIEW-ARCHITECTURE.md H1).
-                var opts = Object.assign({}, options || {});
-                opts.headers = Object.assign(
-                    { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' },
-                    opts.headers || {});
-                return fetch(url, opts).then(function(resp) {
-                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                    return resp.json();
-                });
-            }
 
             function setStatText(id, text) {
                 var el = document.getElementById(id);
@@ -899,23 +887,6 @@
             function getStatusLabel(status) {
                 var labels = ['Pending', 'Pass', 'Fail', 'Error'];
                 return labels[status] || 'Unknown';
-            }
-
-            function formatDate(iso) {
-                if (!iso) return '—';
-                try {
-                    return new Date(iso).toLocaleString();
-                } catch (e) {
-                    return iso;
-                }
-            }
-
-            function escapeHtml(str) {
-                if (!str) return '';
-                return str.replace(/&/g, '&amp;')
-                          .replace(/</g, '&lt;')
-                          .replace(/>/g, '&gt;')
-                          .replace(/"/g, '&quot;');
             }
 
             function showError(msg) {
