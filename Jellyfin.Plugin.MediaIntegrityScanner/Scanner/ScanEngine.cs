@@ -186,28 +186,7 @@ public partial class ScanEngine : IScanEngine, IDisposable
             {
                 var fileSizeMb = fileInfo.Length / (1024.0 * 1024.0);
                 var maxRate = config?.MaxReadRateMbPerSec ?? 0;
-                if (!_bandwidthLimiter.TryConsume(fileSizeMb, maxRate, phase))
-                {
-                    if (phase == ScanPhase.FullDecode)
-                    {
-                        _bandwidthLimiter.MarkDeepScanWaiting();
-                    }
-
-                    try
-                    {
-                        while (!_bandwidthLimiter.TryConsume(fileSizeMb, maxRate, phase))
-                        {
-                            await Task.Delay(BandwidthPollInterval, token).ConfigureAwait(false);
-                        }
-                    }
-                    finally
-                    {
-                        if (phase == ScanPhase.FullDecode)
-                        {
-                            _bandwidthLimiter.MarkDeepScanNoLongerWaiting();
-                        }
-                    }
-                }
+                await ConsumeBandwidthAsync(fileSizeMb, maxRate, phase, token).ConfigureAwait(false);
             }
 
             // Persist result
@@ -281,6 +260,50 @@ public partial class ScanEngine : IScanEngine, IDisposable
         {
             Interlocked.Decrement(ref _activeScanCount);
             _scanLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Spends <paramref name="megabytes"/> against the shared bandwidth
+    /// budget, waiting as long as it takes -- draining whatever's currently
+    /// available and polling for the remainder, rather than requiring the
+    /// full amount to be available atomically up front (see
+    /// <see cref="SharedBandwidthLimiter.ConsumeUpTo"/> remarks for why the
+    /// old all-or-nothing shape wedged indefinitely on any file bigger than
+    /// one second's configured rate -- a real incident, not a hypothetical).
+    /// A large file now finishes in roughly megabytes / maxRateMbPerSec
+    /// seconds instead of never.
+    /// </summary>
+    private async Task ConsumeBandwidthAsync(double megabytes, int maxRateMbPerSec, ScanPhase phase, CancellationToken cancellationToken)
+    {
+        var remainingMb = megabytes;
+        var markedDeepWaiting = false;
+
+        try
+        {
+            while (remainingMb > 0)
+            {
+                remainingMb -= _bandwidthLimiter.ConsumeUpTo(remainingMb, maxRateMbPerSec, phase);
+                if (remainingMb <= 0)
+                {
+                    break;
+                }
+
+                if (phase == ScanPhase.FullDecode && !markedDeepWaiting)
+                {
+                    _bandwidthLimiter.MarkDeepScanWaiting();
+                    markedDeepWaiting = true;
+                }
+
+                await Task.Delay(BandwidthPollInterval, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (markedDeepWaiting)
+            {
+                _bandwidthLimiter.MarkDeepScanNoLongerWaiting();
+            }
         }
     }
 

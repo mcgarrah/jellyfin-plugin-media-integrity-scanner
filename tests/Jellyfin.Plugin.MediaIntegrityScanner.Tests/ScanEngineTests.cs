@@ -1139,6 +1139,52 @@ public class ScanEngineTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task ScanItemAsync_CompletesEventually_ForAFileLargerThanOneSecondsBudget()
+    {
+        // Regression test for a real production incident (2026-09-13): two
+        // live jellyfin-test instances wedged completely -- zero scan
+        // progress for 7+ hours -- because the old SharedBandwidthLimiter
+        // shape required a file's entire size to be available in the budget
+        // atomically, and the budget is permanently capped at one second's
+        // worth of the configured rate (see SharedBandwidthLimiter remarks).
+        // Any real media file (routinely hundreds of MB+) is bigger than a
+        // modest MB/s throttle setting, so the wait never ended. This file
+        // (5 MB) is deliberately larger than the 2 MB/s cap's one-second
+        // ceiling -- under the old bug this test would hang forever; it must
+        // now complete in roughly (5-2)/2 = 1.5s.
+        TestPluginContext.SetConfiguration(new PluginConfiguration
+        {
+            MaxConcurrentScans = 1,
+            DelayBetweenFilesMs = 0,
+            PauseDuringPlayback = false,
+            UseQuietHoursOnly = false,
+            MaxReadRateMbPerSec = 2
+        });
+
+        var wrapper = CreateFakeWrapper();
+        wrapper.Setup(w => w.ProbeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanResult { Success = true, DurationMs = 1 });
+
+        var limiter = new SharedBandwidthLimiter();
+        var engine = CreateEngine(wrapper, bandwidthLimiter: limiter);
+
+        var file = CreateTempFile(5 * 1024 * 1024);
+        try
+        {
+            var item = new Movie { Id = Guid.NewGuid(), Path = file };
+
+            var scanTask = engine.ScanItemAsync(item, ScanPhase.Header, CancellationToken.None);
+            var completed = await Task.WhenAny(scanTask, Task.Delay(TimeSpan.FromSeconds(10)));
+
+            Assert.Same(scanTask, completed);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
     // --- Dispose ---
 
     [Fact]
